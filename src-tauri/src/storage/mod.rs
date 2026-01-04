@@ -1,0 +1,520 @@
+use chrono::{DateTime, Local, Duration, Timelike};
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::PathBuf;
+use std::collections::HashMap;
+
+// ============ 配置结构 ============
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Config {
+    pub model: ModelConfig,
+    pub capture: CaptureConfig,
+    pub storage: StorageConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelConfig {
+    pub provider: String,
+    pub api: ApiConfig,
+    pub ollama: OllamaConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiConfig {
+    #[serde(rename = "type")]
+    pub api_type: String,
+    pub endpoint: String,
+    pub api_key: String,
+    pub model: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OllamaConfig {
+    pub endpoint: String,
+    pub model: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptureConfig {
+    pub enabled: bool,
+    pub interval_ms: u64,
+    pub compress_quality: u8,
+    #[serde(default = "default_skip_unchanged")]
+    pub skip_unchanged: bool,  // 跳过无变化的画面，节省token
+    #[serde(default = "default_change_threshold")]
+    pub change_threshold: f32,  // 变化阈值 (0.0-1.0)，越小越敏感
+}
+
+fn default_skip_unchanged() -> bool {
+    true  // 默认启用，节省token
+}
+
+fn default_change_threshold() -> f32 {
+    0.95  // 相似度超过95%认为无变化
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageConfig {
+    pub retention_days: u32,
+    pub max_screenshots: u32,
+    #[serde(default = "default_max_context_chars")]
+    pub max_context_chars: usize,  // 上下文最大字符数，用户可调整
+}
+
+fn default_max_context_chars() -> usize {
+    10000  // 默认10000字符
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            model: ModelConfig {
+                provider: "api".to_string(),
+                api: ApiConfig {
+                    api_type: "openai".to_string(),
+                    endpoint: "https://api.openai.com/v1".to_string(),
+                    api_key: String::new(),
+                    model: "gpt-4-vision-preview".to_string(),
+                },
+                ollama: OllamaConfig {
+                    endpoint: "http://localhost:11434".to_string(),
+                    model: "llava".to_string(),
+                },
+            },
+            capture: CaptureConfig {
+                enabled: true,
+                interval_ms: 1000,
+                compress_quality: 80,
+                skip_unchanged: true,   // 默认启用，节省token
+                change_threshold: 0.95, // 相似度阈值
+            },
+            storage: StorageConfig {
+                retention_days: 7,
+                max_screenshots: 10000,
+                max_context_chars: 10000,  // 默认10000字符
+            },
+        }
+    }
+}
+
+// ============ 分层记录结构 ============
+
+/// 原始记录（每秒级别）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SummaryRecord {
+    pub timestamp: String,
+    pub summary: String,
+    pub app: String,
+    pub action: String,
+    pub keywords: Vec<String>,
+    #[serde(default)]
+    pub detail_ref: String,
+}
+
+/// 聚合记录（5分钟级别）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AggregatedRecord {
+    pub start_time: String,
+    pub end_time: String,
+    pub summary: String,           // 这5分钟的概要
+    pub apps: Vec<String>,         // 使用的应用列表
+    pub main_activities: Vec<String>, // 主要活动
+    pub keywords: Vec<String>,     // 关键词
+    pub record_count: u32,         // 原始记录数量
+    pub has_errors: bool,          // 是否有错误
+    pub error_summary: Option<String>, // 错误概要
+}
+
+/// 日摘要
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DailySummary {
+    pub date: String,
+    pub records: Vec<SummaryRecord>,
+    #[serde(default)]
+    pub aggregated: Vec<AggregatedRecord>,
+    #[serde(default)]
+    pub day_summary: Option<String>, // 当天总结
+}
+
+// ============ 存储管理器 ============
+
+pub struct StorageManager {
+    data_dir: PathBuf,
+}
+
+impl StorageManager {
+    pub fn new() -> Self {
+        let data_dir = dirs::data_local_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("screen-assistant")
+            .join("data");
+
+        Self { data_dir }
+    }
+
+    fn ensure_dirs(&self) -> Result<(), String> {
+        let dirs = [
+            self.data_dir.clone(),
+            self.data_dir.join("summaries"),
+            self.data_dir.join("aggregated"),
+        ];
+
+        for dir in dirs {
+            fs::create_dir_all(&dir)
+                .map_err(|e| format!("创建目录失败 {:?}: {}", dir, e))?;
+        }
+
+        Ok(())
+    }
+
+    // ============ 配置管理 ============
+
+    pub fn load_config(&self) -> Result<Config, String> {
+        self.ensure_dirs()?;
+        let config_path = self.data_dir.join("config.json");
+
+        if config_path.exists() {
+            let content = fs::read_to_string(&config_path)
+                .map_err(|e| format!("读取配置失败: {}", e))?;
+            serde_json::from_str(&content)
+                .map_err(|e| format!("解析配置失败: {}", e))
+        } else {
+            Ok(Config::default())
+        }
+    }
+
+    pub fn save_config(&self, config: &Config) -> Result<(), String> {
+        self.ensure_dirs()?;
+        let config_path = self.data_dir.join("config.json");
+        let content = serde_json::to_string_pretty(config)
+            .map_err(|e| format!("序列化配置失败: {}", e))?;
+        fs::write(&config_path, content)
+            .map_err(|e| format!("保存配置失败: {}", e))
+    }
+
+    // ============ 原始记录管理 ============
+
+    pub fn get_summaries(&self, date: &str) -> Result<Vec<SummaryRecord>, String> {
+        let summary_path = self.data_dir.join("summaries").join(format!("{}.json", date));
+
+        if !summary_path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let content = fs::read_to_string(&summary_path)
+            .map_err(|e| format!("读取摘要失败: {}", e))?;
+
+        let daily: DailySummary = serde_json::from_str(&content)
+            .map_err(|e| format!("解析摘要失败: {}", e))?;
+
+        Ok(daily.records)
+    }
+
+    pub fn save_summary(&self, record: &SummaryRecord) -> Result<(), String> {
+        self.ensure_dirs()?;
+
+        let date = &record.timestamp[..10];
+        let summary_path = self.data_dir.join("summaries").join(format!("{}.json", date));
+
+        let mut daily = if summary_path.exists() {
+            let content = fs::read_to_string(&summary_path)
+                .map_err(|e| format!("读取摘要失败: {}", e))?;
+            serde_json::from_str(&content).unwrap_or(DailySummary {
+                date: date.to_string(),
+                records: Vec::new(),
+                aggregated: Vec::new(),
+                day_summary: None,
+            })
+        } else {
+            DailySummary {
+                date: date.to_string(),
+                records: Vec::new(),
+                aggregated: Vec::new(),
+                day_summary: None,
+            }
+        };
+
+        daily.records.push(record.clone());
+
+        // 检查是否需要聚合（每300条触发一次，约5分钟）
+        if daily.records.len() % 300 == 0 {
+            self.trigger_aggregation(&mut daily)?;
+        }
+
+        let content = serde_json::to_string_pretty(&daily)
+            .map_err(|e| format!("序列化摘要失败: {}", e))?;
+
+        fs::write(&summary_path, content)
+            .map_err(|e| format!("保存摘要失败: {}", e))
+    }
+
+    // ============ 聚合管理 ============
+
+    fn trigger_aggregation(&self, daily: &mut DailySummary) -> Result<(), String> {
+        // 获取最后300条记录进行聚合
+        let records_to_aggregate: Vec<_> = daily.records.iter()
+            .rev()
+            .take(300)
+            .cloned()
+            .collect();
+
+        if records_to_aggregate.is_empty() {
+            return Ok(());
+        }
+
+        let aggregated = self.aggregate_records(&records_to_aggregate);
+        daily.aggregated.push(aggregated);
+
+        Ok(())
+    }
+
+    fn aggregate_records(&self, records: &[SummaryRecord]) -> AggregatedRecord {
+        let start_time = records.last().map(|r| r.timestamp.clone()).unwrap_or_default();
+        let end_time = records.first().map(|r| r.timestamp.clone()).unwrap_or_default();
+
+        // 统计应用使用
+        let mut app_counts: HashMap<String, u32> = HashMap::new();
+        let mut all_keywords: HashMap<String, u32> = HashMap::new();
+        let mut activities: Vec<String> = Vec::new();
+        let mut has_errors = false;
+        let mut error_messages: Vec<String> = Vec::new();
+
+        for record in records {
+            *app_counts.entry(record.app.clone()).or_insert(0) += 1;
+
+            for kw in &record.keywords {
+                *all_keywords.entry(kw.clone()).or_insert(0) += 1;
+            }
+
+            if record.action == "error" {
+                has_errors = true;
+                error_messages.push(record.summary.clone());
+            }
+
+            // 提取主要活动（去重）
+            if !activities.contains(&record.summary) && activities.len() < 5 {
+                activities.push(record.summary.clone());
+            }
+        }
+
+        // 排序获取最常用的应用
+        let mut apps: Vec<_> = app_counts.into_iter().collect();
+        apps.sort_by(|a, b| b.1.cmp(&a.1));
+        let top_apps: Vec<String> = apps.into_iter().take(3).map(|(k, _)| k).collect();
+
+        // 排序获取最常见的关键词
+        let mut keywords: Vec<_> = all_keywords.into_iter().collect();
+        keywords.sort_by(|a, b| b.1.cmp(&a.1));
+        let top_keywords: Vec<String> = keywords.into_iter().take(10).map(|(k, _)| k).collect();
+
+        // 生成概要
+        let summary = format!(
+            "使用 {} 进行了 {} 等操作",
+            top_apps.join("、"),
+            activities.first().unwrap_or(&"未知".to_string())
+        );
+
+        AggregatedRecord {
+            start_time,
+            end_time,
+            summary,
+            apps: top_apps,
+            main_activities: activities,
+            keywords: top_keywords,
+            record_count: records.len() as u32,
+            has_errors,
+            error_summary: if has_errors {
+                Some(error_messages.join("; "))
+            } else {
+                None
+            },
+        }
+    }
+
+    // ============ 智能检索 ============
+
+    /// 根据时间范围和关键词智能检索记录
+    pub fn smart_search(&self, query: &SearchQuery) -> Result<SearchResult, String> {
+        let today = Local::now().format("%Y-%m-%d").to_string();
+
+        match query.time_range {
+            TimeRange::Recent(minutes) => {
+                // 最近N分钟：使用原始记录
+                let records = self.get_summaries(&today)?;
+                let cutoff = Local::now() - Duration::minutes(minutes as i64);
+                let cutoff_str = cutoff.format("%Y-%m-%dT%H:%M:%S").to_string();
+
+                let filtered: Vec<_> = records.into_iter()
+                    .filter(|r| r.timestamp >= cutoff_str)
+                    .filter(|r| query.matches_keywords(r))
+                    .collect();
+
+                Ok(SearchResult {
+                    records: filtered,
+                    aggregated: Vec::new(),
+                    source: "原始记录".to_string(),
+                })
+            }
+            TimeRange::Today => {
+                // 今天：优先使用聚合记录
+                let daily = self.load_daily(&today)?;
+
+                if !query.keywords.is_empty() {
+                    // 有关键词：搜索原始记录
+                    let filtered: Vec<_> = daily.records.into_iter()
+                        .filter(|r| query.matches_keywords(r))
+                        .collect();
+                    Ok(SearchResult {
+                        records: filtered,
+                        aggregated: Vec::new(),
+                        source: "关键词搜索".to_string(),
+                    })
+                } else {
+                    // 无关键词：返回聚合记录 + 最近的原始记录
+                    let recent: Vec<_> = daily.records.into_iter().rev().take(20).collect();
+                    Ok(SearchResult {
+                        records: recent,
+                        aggregated: daily.aggregated,
+                        source: "聚合记录".to_string(),
+                    })
+                }
+            }
+            TimeRange::Days(days) => {
+                // 多天：只使用聚合记录
+                let mut all_aggregated = Vec::new();
+
+                for i in 0..days {
+                    let date = (Local::now() - Duration::days(i as i64))
+                        .format("%Y-%m-%d").to_string();
+                    if let Ok(daily) = self.load_daily(&date) {
+                        all_aggregated.extend(daily.aggregated);
+                    }
+                }
+
+                Ok(SearchResult {
+                    records: Vec::new(),
+                    aggregated: all_aggregated,
+                    source: "历史聚合".to_string(),
+                })
+            }
+        }
+    }
+
+    fn load_daily(&self, date: &str) -> Result<DailySummary, String> {
+        let path = self.data_dir.join("summaries").join(format!("{}.json", date));
+
+        if !path.exists() {
+            return Ok(DailySummary {
+                date: date.to_string(),
+                records: Vec::new(),
+                aggregated: Vec::new(),
+                day_summary: None,
+            });
+        }
+
+        let content = fs::read_to_string(&path)
+            .map_err(|e| format!("读取失败: {}", e))?;
+
+        serde_json::from_str(&content)
+            .map_err(|e| format!("解析失败: {}", e))
+    }
+}
+
+// ============ 搜索相关结构 ============
+
+#[derive(Debug, Clone)]
+pub enum TimeRange {
+    Recent(u32),  // 最近N分钟
+    Today,        // 今天
+    Days(u32),    // 最近N天
+}
+
+#[derive(Debug, Clone)]
+pub struct SearchQuery {
+    pub time_range: TimeRange,
+    pub keywords: Vec<String>,
+}
+
+impl SearchQuery {
+    pub fn matches_keywords(&self, record: &SummaryRecord) -> bool {
+        if self.keywords.is_empty() {
+            return true;
+        }
+
+        let text = format!("{} {} {}",
+            record.summary,
+            record.app,
+            record.keywords.join(" ")
+        ).to_lowercase();
+
+        self.keywords.iter().any(|kw| text.contains(&kw.to_lowercase()))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SearchResult {
+    pub records: Vec<SummaryRecord>,
+    pub aggregated: Vec<AggregatedRecord>,
+    pub source: String,
+}
+
+impl SearchResult {
+    /// 构建上下文字符串，控制在指定token数内
+    pub fn build_context(&self, max_chars: usize) -> String {
+        let mut context = String::new();
+        let mut current_len = 0;
+
+        // 先添加聚合记录（概要）
+        if !self.aggregated.is_empty() {
+            context.push_str("## 操作概要\n\n");
+            for agg in &self.aggregated {
+                let line = format!(
+                    "- [{} ~ {}] {}\n",
+                    &agg.start_time[11..16],
+                    &agg.end_time[11..16],
+                    agg.summary
+                );
+                if current_len + line.len() > max_chars {
+                    break;
+                }
+                context.push_str(&line);
+                current_len += line.len();
+
+                // 如果有错误，添加错误信息
+                if let Some(ref err) = agg.error_summary {
+                    let err_line = format!("  ⚠️ 错误: {}\n", err);
+                    if current_len + err_line.len() <= max_chars {
+                        context.push_str(&err_line);
+                        current_len += err_line.len();
+                    }
+                }
+            }
+            context.push('\n');
+        }
+
+        // 再添加详细记录
+        if !self.records.is_empty() {
+            context.push_str("## 详细记录\n\n");
+            for record in &self.records {
+                let line = format!(
+                    "- [{}] {}\n",
+                    &record.timestamp[11..19],
+                    record.summary
+                );
+                if current_len + line.len() > max_chars {
+                    context.push_str("...(更多记录已省略)\n");
+                    break;
+                }
+                context.push_str(&line);
+                current_len += line.len();
+            }
+        }
+
+        if context.is_empty() {
+            context = "目前没有相关的操作记录。".to_string();
+        }
+
+        context
+    }
+}
