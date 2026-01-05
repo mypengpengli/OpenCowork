@@ -18,8 +18,11 @@ npm run dev
 vue-tsc --noEmit
 
 # Rust-only commands (from src-tauri directory)
+cd src-tauri
 cargo check
 cargo build
+cargo clippy          # Lint Rust code
+cargo test            # Run Rust tests
 ```
 
 ## Architecture Overview
@@ -43,26 +46,30 @@ Vue Frontend (IPC) → Tauri Commands → Rust Backend
 
 | Module | Purpose |
 |--------|---------|
+| `lib.rs` | Tauri app setup, command registration |
 | `commands/mod.rs` | Tauri IPC command handlers - entry point for all frontend calls |
 | `capture/mod.rs` | Screen capture loop with perceptual hash comparison to skip unchanged frames |
 | `capture/screen.rs` | Screenshot capture and base64 encoding |
-| `model/mod.rs` | Unified AI model interface |
+| `model/mod.rs` | ModelManager - unified AI model interface |
 | `model/api.rs` | OpenAI/Claude API client |
 | `model/ollama.rs` | Ollama local model client |
 | `storage/mod.rs` | Config, SummaryRecord, AggregatedRecord, smart search |
+| `assistant/` | Intent parsing and context building for chat |
 
 ### Key Frontend Files (`src/`)
 
 | File | Purpose |
 |------|---------|
 | `views/MainView.vue` | Chat interface, capture controls, alert listener |
-| `views/SettingsView.vue` | Model/capture/storage configuration |
+| `views/SettingsView.vue` | Profile management, model/capture/storage config |
 | `views/HistoryView.vue` | Timeline of recorded activities |
-| `stores/capture.ts` | Capture state management |
+| `stores/capture.ts` | Capture state management with auto-restart |
+| `stores/chat.ts` | Chat messages state |
+| `stores/settings.ts` | Settings state |
 
 ### Important Patterns
 
-**Tauri Commands**: All backend functions exposed to frontend are in `commands/mod.rs` with `#[tauri::command]` attribute.
+**Tauri Commands**: All backend functions exposed to frontend are in `commands/mod.rs` with `#[tauri::command]` attribute. Commands are registered in `lib.rs`.
 
 **Event Emission**: Backend emits `assistant-alert` events when errors detected on screen. Frontend listens via `@tauri-apps/api/event`.
 
@@ -73,18 +80,31 @@ Vue Frontend (IPC) → Tauri Commands → Rust Backend
 - `AggregatedRecord` every 300 records (~5 min)
 - Smart search uses aggregated data for longer time ranges
 
+**Natural Language Query Parsing**: `storage/mod.rs` contains `smart_search` that parses time expressions like "刚才", "最近N分钟", "今天", "昨天" and extracts keywords.
+
 ### Data Storage Location
 ```
-{LocalAppData}/screen-assistant/data/
-├── config.json
-└── summaries/YYYY-MM-DD.json
+Windows: %LOCALAPPDATA%\screen-assistant\data\
+macOS:   ~/Library/Application Support/screen-assistant/data/
+Linux:   ~/.local/share/screen-assistant/data/
+
+Structure:
+├── config.json              # Current configuration
+├── profiles/                # Named configuration profiles
+├── summaries/YYYY-MM-DD.json  # Daily activity records
+└── logs/                    # API exchange logs
 ```
+
+Note: Screenshots are NOT saved to disk by default. They are converted to base64, sent to AI for analysis, and only the text summary is persisted.
 
 ## Configuration Structure
 
 Key config fields in `storage/mod.rs`:
 - `model.provider`: "api" | "ollama"
+- `model.api.type`: "openai" | "claude" | "custom"
 - `capture.interval_ms`: Screenshot interval (default 1000ms)
 - `capture.skip_unchanged`: Enable frame comparison (default true)
 - `capture.change_threshold`: Similarity threshold 0.0-1.0 (default 0.95)
+- `capture.recent_summary_limit`: Max recent summaries for context
 - `storage.max_context_chars`: Max chars for AI context (default 10000)
+- `storage.retention_days`: How long to keep history (default 7)

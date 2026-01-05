@@ -118,6 +118,8 @@ pub struct SummaryRecord {
     #[serde(default)]
     pub confidence: f32,
     #[serde(default)]
+    pub detail: String,
+    #[serde(default)]
     pub detail_ref: String,
 }
 
@@ -168,6 +170,8 @@ impl StorageManager {
             self.data_dir.join("summaries"),
             self.data_dir.join("aggregated"),
             self.data_dir.join("profiles"),
+            self.data_dir.join("screenshots"),
+            self.data_dir.join("logs"),
         ];
 
         for dir in dirs {
@@ -176,6 +180,30 @@ impl StorageManager {
         }
 
         Ok(())
+    }
+
+    pub fn screenshots_dir(&self) -> Result<PathBuf, String> {
+        self.ensure_dirs()?;
+        Ok(self.data_dir.join("screenshots"))
+    }
+
+    pub fn logs_dir(&self) -> Result<PathBuf, String> {
+        self.ensure_dirs()?;
+        Ok(self.data_dir.join("logs"))
+    }
+
+    pub fn write_log_snapshot(&self, prefix: &str, content: &str) -> Result<PathBuf, String> {
+        let dir = self.logs_dir()?;
+        let now = Local::now();
+        let filename = format!(
+            "{}-{:03}-{}.log",
+            now.format("%Y%m%d-%H%M%S"),
+            now.timestamp_subsec_millis(),
+            sanitize_log_prefix(prefix),
+        );
+        let path = dir.join(filename);
+        fs::write(&path, content).map_err(|e| format!("写入日志失败 {:?}: {}", path, e))?;
+        Ok(path)
     }
 
     // ============ 配置管理 ============
@@ -528,6 +556,20 @@ fn sanitize_profile_name(name: &str) -> Result<String, String> {
     Ok(base.to_string())
 }
 
+fn sanitize_log_prefix(prefix: &str) -> String {
+    let mut clean = String::new();
+    for ch in prefix.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            clean.push(ch);
+        }
+    }
+    if clean.is_empty() {
+        "log".to_string()
+    } else {
+        clean
+    }
+}
+
 // ============ 搜索相关结构 ============
 
 #[derive(Debug, Clone)]
@@ -541,6 +583,7 @@ pub enum TimeRange {
 pub struct SearchQuery {
     pub time_range: TimeRange,
     pub keywords: Vec<String>,
+    pub include_detail: bool,
 }
 
 impl SearchQuery {
@@ -552,7 +595,7 @@ impl SearchQuery {
         let text = format!("{} {} {}",
             record.summary,
             record.app,
-            record.keywords.join(" ")
+            format!("{} {}", record.detail, record.keywords.join(" "))
         ).to_lowercase();
 
         self.keywords.iter().any(|kw| text.contains(&kw.to_lowercase()))
@@ -568,7 +611,7 @@ pub struct SearchResult {
 
 impl SearchResult {
     /// 构建上下文字符串，控制在指定token数内
-    pub fn build_context(&self, max_chars: usize) -> String {
+    pub fn build_context(&self, max_chars: usize, include_detail: bool) -> String {
         let mut context = String::new();
         let mut current_len = 0;
 
@@ -615,6 +658,17 @@ impl SearchResult {
                 }
                 context.push_str(&line);
                 current_len += line.len();
+
+                if include_detail && !record.detail.is_empty() {
+                    let detail_text = record.detail.replace('\n', ' ');
+                    let detail_line = format!("  细节: {}\n", detail_text);
+                    if current_len + detail_line.len() > max_chars {
+                        context.push_str("  ...(细节已省略)\n");
+                        break;
+                    }
+                    context.push_str(&detail_line);
+                    current_len += detail_line.len();
+                }
             }
         }
 

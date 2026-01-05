@@ -5,14 +5,25 @@ export const useCaptureStore = defineStore('capture', () => {
   const isCapturing = ref(false)
   const recordCount = ref(0)
   const lastCaptureTime = ref<string | null>(null)
+  const desiredCapturing = ref(false)
+  const autoRestarting = ref(false)
+  const lastEvent = ref<{ id: number; type: 'warning' | 'success' | 'error'; message: string } | null>(null)
 
   let statusInterval: number | null = null
+  let eventSeq = 0
+  let lastAutoRestartAt = 0
+
+  function pushEvent(type: 'warning' | 'success' | 'error', message: string) {
+    eventSeq += 1
+    lastEvent.value = { id: eventSeq, type, message }
+  }
 
   async function startCapture() {
     try {
       const { invoke } = await import('@tauri-apps/api/core')
       await invoke('start_capture')
       isCapturing.value = true
+      desiredCapturing.value = true
     } catch (error) {
       console.error('Failed to start capture:', error)
       throw error
@@ -24,6 +35,7 @@ export const useCaptureStore = defineStore('capture', () => {
       const { invoke } = await import('@tauri-apps/api/core')
       await invoke('stop_capture')
       isCapturing.value = false
+      desiredCapturing.value = false
     } catch (error) {
       console.error('Failed to stop capture:', error)
       throw error
@@ -42,8 +54,32 @@ export const useCaptureStore = defineStore('capture', () => {
       isCapturing.value = status.is_capturing
       recordCount.value = status.record_count
       lastCaptureTime.value = status.last_capture_time
+
+      if (desiredCapturing.value && !status.is_capturing) {
+        await attemptAutoRestart()
+      }
     } catch (error) {
       console.error('Failed to refresh status:', error)
+    }
+  }
+
+  async function attemptAutoRestart() {
+    const now = Date.now()
+    if (autoRestarting.value || now - lastAutoRestartAt < 5000) {
+      return
+    }
+
+    autoRestarting.value = true
+    lastAutoRestartAt = now
+    pushEvent('warning', '监控意外暂停，正在尝试自动恢复...')
+
+    try {
+      await startCapture()
+      pushEvent('success', '监控已自动恢复')
+    } catch (error) {
+      pushEvent('error', `自动恢复失败: ${error}`)
+    } finally {
+      autoRestarting.value = false
     }
   }
 
@@ -63,6 +99,9 @@ export const useCaptureStore = defineStore('capture', () => {
     isCapturing,
     recordCount,
     lastCaptureTime,
+    desiredCapturing,
+    autoRestarting,
+    lastEvent,
     startCapture,
     stopCapture,
     refreshStatus,

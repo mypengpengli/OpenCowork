@@ -6,7 +6,7 @@ pub use scheduler::*;
 
 use crate::model::{build_model_error_alert, ModelManager};
 use crate::storage::{Config, StorageManager, SummaryRecord};
-use chrono::{Duration, Local};
+use chrono::{DateTime, Duration, Local};
 use image::DynamicImage;
 use parking_lot::Mutex as ParkingMutex;
 use std::collections::HashSet;
@@ -145,6 +145,32 @@ fn compute_image_hash(image: &DynamicImage) -> u64 {
     hash
 }
 
+fn save_screenshot(
+    storage_manager: &StorageManager,
+    image: &DynamicImage,
+    now: &DateTime<Local>,
+    quality: u8,
+) -> Option<String> {
+    let dir = match storage_manager.screenshots_dir() {
+        Ok(dir) => dir,
+        Err(err) => {
+            eprintln!("获取截图目录失败: {}", err);
+            return None;
+        }
+    };
+
+    let filename = format!("{}.jpg", now.format("%Y%m%d-%H%M%S-%.3f"));
+    let path = dir.join(&filename);
+    let path_str = path.to_string_lossy();
+
+    if let Err(err) = ScreenCapture::save_to_file(image, path_str.as_ref(), quality) {
+        eprintln!("保存截图失败: {}", err);
+        return None;
+    }
+
+    Some(filename)
+}
+
 /// 计算两个哈希的相似度 (0.0 - 1.0)
 fn hash_similarity(hash1: u64, hash2: u64) -> f32 {
     let xor = hash1 ^ hash2;
@@ -163,6 +189,8 @@ async fn capture_and_analyze_with_diff(
 ) -> Result<bool, String> {
     // 1. 截屏
     let image = ScreenCapture::capture_primary()?;
+    let now = Local::now();
+    let screenshot_ref = save_screenshot(storage_manager, &image, &now, config.capture.compress_quality);
 
     // 2. 如果启用了跳过无变化，进行对比
     if config.capture.skip_unchanged {
@@ -190,37 +218,46 @@ async fn capture_and_analyze_with_diff(
         config.capture.recent_summary_limit,
     );
     let prompt = format!(
-        r#"请分析这个屏幕截图，返回JSON格式：
+        r#"你是屏幕截图分析器。请严格只输出一个可解析的 JSON 对象，不要输出任何解释、Markdown 或代码块。
+
+必须包含以下字段：
 {{
-  "summary": "一句话描述当前操作",
-  "app": "应用程序名称",
-  "has_issue": true/false,
-  "issue_type": "困难/问题类型（如果有）",
-  "issue_summary": "困难/问题摘要（如果有）",
-  "suggestion": "解决建议（如果有）",
-  "confidence": 0.0-1.0
+  "summary": "30-50字的操作概述，描述用户正在做什么、使用什么工具、处理什么内容",
+  "detail": "对画面的详细描述：包含主要窗口/界面区域、可见文本、按钮、输入输出、错误提示等具体细节",
+  "app": "主要应用或窗口名称，无法判断写 Unknown",
+  "has_issue": true 或 false（布尔值）,
+  "issue_type": "问题类型（仅在 has_issue 为 true 时填写，否则空字符串）",
+  "issue_summary": "问题摘要（仅在 has_issue 为 true 时填写，否则空字符串）",
+  "suggestion": "解决建议（仅在 has_issue 为 true 时填写，否则空字符串）",
+  "confidence": 对整体分析结果准确性的置信度，0.0-1.0 之间的数值
 }}
 
-重点检测：
-- 编程错误或异常（编译错误、运行时错误、语法错误）
-- 命令行报错或失败
-- 弹窗提示导致无法继续
-- 网页错误页面或加载失败
-- 明显的“找不到”“无法完成”的困难
+示例输出：
+{{
+  "summary": "在 VS Code 中编辑 screen-assistant 项目的 Rust 后端代码，正在修改 capture 模块的截图分析提示词",
+  "detail": "VS Code 编辑器窗口最大化显示。左侧资源管理器展开 src-tauri/src/capture 目录，当前打开文件为 mod.rs。编辑区域显示第 215-260 行的 Rust 代码，包含 format! 宏和 JSON 字符串。光标位于第 238 行。右上角显示 Git 分支为 master。底部状态栏显示 UTF-8 编码、LF 换行符、Rust 语言模式。底部终端面板已折叠。窗口标题为 'mod.rs - screen-assistant - Visual Studio Code'。",
+  "app": "Visual Studio Code",
+  "has_issue": false,
+  "issue_type": "",
+  "issue_summary": "",
+  "suggestion": "",
+  "confidence": 0.95
+}}
 
-注意：
-- 只有在截图或近期记录中有明确线索时，才判定为困难
-- confidence 反映你对判断的确定度（0-1）
+判定规则：
+- 只有当截图中出现明确错误/失败/阻塞提示时，has_issue 才为 true
+- issue_type 用 2-6 个词概括问题（如 编译错误/网络错误/权限不足/界面卡死）
+- issue_summary 必须具体指出错误内容或提示文本，不要泛泛而谈
+- detail 只描述可见信息，不要猜测未显示的内容
 
 近期记录（仅供参考，可能不完整）：
 {}
-
-如果没有明确困难，has_issue设为false，issue相关字段留空。"#,
+"#,
         recent_context
     );
 
     let analysis = match model_manager
-        .analyze_image(&config.model, &image_base64, prompt)
+        .analyze_image(&config.model, &image_base64, &prompt)
         .await
     {
         Ok(result) => result,
@@ -234,7 +271,7 @@ async fn capture_and_analyze_with_diff(
     let parsed = parse_analysis(&analysis);
 
     // 6. 保存摘要
-    let timestamp = Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+    let timestamp = now.format("%Y-%m-%dT%H:%M:%S").to_string();
 
     let summary = SummaryRecord {
         timestamp: timestamp.clone(),
@@ -243,7 +280,8 @@ async fn capture_and_analyze_with_diff(
         action: if parsed.has_issue { "issue".to_string() } else { "active".to_string() },
         keywords: extract_keywords_from_analysis(&parsed.summary),
         confidence: parsed.confidence,
-        detail_ref: String::new(),
+        detail: parsed.detail.clone(),
+        detail_ref: screenshot_ref.unwrap_or_default(),
     };
 
     storage_manager.save_summary(&summary)?;
@@ -313,6 +351,7 @@ fn emit_model_error_once(
 struct AnalysisResult {
     summary: String,
     app: String,
+    detail: String,
     has_issue: bool,
     issue_type: String,
     issue_message: String,
@@ -339,11 +378,21 @@ fn parse_analysis(analysis: &str) -> AnalysisResult {
             .or_else(|| json.get("error_message").and_then(|v| v.as_str()))
             .unwrap_or("")
             .to_string();
+        let detail = json
+            .get("detail")
+            .or_else(|| json.get("detail_description"))
+            .or_else(|| json.get("image_detail"))
+            .or_else(|| json.get("image_description"))
+            .or_else(|| json.get("screen_detail"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let confidence = parse_confidence(&json, has_issue);
 
         return AnalysisResult {
             summary: json.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             app: json.get("app").and_then(|v| v.as_str()).unwrap_or("Unknown").to_string(),
+            detail,
             has_issue,
             issue_type,
             issue_message,
@@ -365,6 +414,7 @@ fn parse_analysis(analysis: &str) -> AnalysisResult {
     AnalysisResult {
         summary: analysis.lines().next().unwrap_or(analysis).to_string(),
         app: extract_app_from_text(analysis),
+        detail: analysis.to_string(),
         has_issue,
         issue_type: if has_issue { "detected".to_string() } else { String::new() },
         issue_message: if has_issue { analysis.to_string() } else { String::new() },

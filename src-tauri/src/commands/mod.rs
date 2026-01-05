@@ -32,9 +32,31 @@ pub async fn save_config(config: Config) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn test_model_connection() -> Result<(), String> {
+pub async fn list_profiles() -> Result<Vec<String>, String> {
     let storage = StorageManager::new();
-    let config = storage.load_config().map_err(|e| e.to_string())?;
+    storage.list_profiles().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn save_profile(name: String, config: Config) -> Result<(), String> {
+    let storage = StorageManager::new();
+    storage.save_profile(&name, &config).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn load_profile(name: String) -> Result<Config, String> {
+    let storage = StorageManager::new();
+    storage.load_profile(&name).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_profile(name: String) -> Result<(), String> {
+    let storage = StorageManager::new();
+    storage.delete_profile(&name).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn test_model_connection(config: Config) -> Result<(), String> {
     let model_manager = ModelManager::new();
     model_manager.test_connection(&config.model).await
 }
@@ -89,7 +111,7 @@ pub async fn chat_with_assistant(message: String) -> Result<String, String> {
     let search_result = storage.smart_search(&query)?;
 
     // 构建上下文（使用配置中的最大字符数）
-    let context = search_result.build_context(config.storage.max_context_chars);
+    let context = search_result.build_context(config.storage.max_context_chars, query.include_detail);
 
     // 调用模型
     model_manager
@@ -121,10 +143,12 @@ fn parse_user_query(message: &str) -> SearchQuery {
 
     // 提取关键词
     let keywords = extract_keywords(message);
+    let include_detail = wants_detail(message);
 
     SearchQuery {
         time_range,
         keywords,
+        include_detail,
     }
 }
 
@@ -180,6 +204,17 @@ fn extract_keywords(message: &str) -> Vec<String> {
     }
 
     keywords
+}
+
+fn wants_detail(message: &str) -> bool {
+    let msg = message.to_lowercase();
+    let triggers = [
+        "详细", "细节", "具体", "截图", "画面", "界面", "内容", "显示", "文本", "按钮", "输入", "输出",
+        "哪一页", "哪个页面", "哪一个文件", "哪行", "哪一行", "日志", "报错内容",
+        "detail", "details", "screenshot", "screen", "page", "error log",
+    ];
+
+    triggers.iter().any(|kw| msg.contains(kw))
 }
 
 #[tauri::command]

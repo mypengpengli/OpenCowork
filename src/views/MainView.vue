@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
-import { NLayout, NLayoutContent, NInput, NButton, NSpace, NSpin, NTag, NIcon } from 'naive-ui'
+import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { NLayout, NLayoutContent, NInput, NButton, NSpace, NSpin, NTag, NIcon, useMessage } from 'naive-ui'
 import { Send, PlayCircleOutline, StopCircleOutline } from '@vicons/ionicons5'
 import { useChatStore } from '../stores/chat'
 import { useCaptureStore } from '../stores/capture'
@@ -8,12 +8,27 @@ import MessageItem from '../components/Chat/MessageItem.vue'
 
 const chatStore = useChatStore()
 const captureStore = useCaptureStore()
+const message = useMessage()
 
 const inputMessage = ref('')
 const messagesContainer = ref<HTMLElement | null>(null)
 const isLoading = ref(false)
 
 let unlistenAlert: (() => void) | null = null
+
+watch(
+  () => captureStore.lastEvent,
+  (event) => {
+    if (!event) return
+    if (event.type === 'warning') {
+      message.warning(event.message)
+    } else if (event.type === 'success') {
+      message.success(event.message)
+    } else {
+      message.error(event.message)
+    }
+  }
+)
 
 async function sendMessage() {
   if (!inputMessage.value.trim() || isLoading.value) return
@@ -68,13 +83,10 @@ function handleKeydown(e: KeyboardEvent) {
 
 async function toggleCapture() {
   try {
-    const { invoke } = await import('@tauri-apps/api/core')
     if (captureStore.isCapturing) {
-      await invoke('stop_capture')
-      captureStore.isCapturing = false
+      await captureStore.stopCapture()
     } else {
-      await invoke('start_capture')
-      captureStore.isCapturing = true
+      await captureStore.startCapture()
     }
   } catch (error) {
     console.error('切换监控状态失败:', error)

@@ -1,5 +1,6 @@
-use crate::storage::ApiConfig;
-use reqwest::Client;
+use crate::storage::{ApiConfig, StorageManager};
+use chrono::Local;
+use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 
 pub struct ApiClient {
@@ -74,12 +75,19 @@ impl ApiClient {
             .header("Authorization", format!("Bearer {}", self.config.api_key))
             .send()
             .await
-            .map_err(|e| format!("连接失败: {}", e))?;
+            .map_err(|e| {
+                write_exchange_log("api-test", &url, "(none)", None, None, Some(&e.to_string()));
+                format!("连接失败: {}", e)
+            })?;
 
-        if response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        write_exchange_log("api-test", &url, "(none)", Some(status), Some(&text), None);
+
+        if status.is_success() {
             Ok(())
         } else {
-            Err(format!("API 返回错误: {}", response.status()))
+            Err(format!("API 返回错误 {}: {}", status, text))
         }
     }
 
@@ -101,6 +109,9 @@ impl ApiClient {
             max_tokens: 2048,
         };
 
+        let request_json = serde_json::to_string_pretty(&request)
+            .unwrap_or_else(|e| format!("无法序列化请求: {}", e));
+
         let response = self
             .client
             .post(&url)
@@ -109,17 +120,20 @@ impl ApiClient {
             .json(&request)
             .send()
             .await
-            .map_err(|e| format!("请求失败: {}", e))?;
+            .map_err(|e| {
+                write_exchange_log("api-chat", &url, &request_json, None, None, Some(&e.to_string()));
+                format!("请求失败: {}", e)
+            })?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        write_exchange_log("api-chat", &url, &request_json, Some(status), Some(&text), None);
+
+        if !status.is_success() {
             return Err(format!("API 错误 {}: {}", status, text));
         }
 
-        let chat_response: ChatResponse = response
-            .json()
-            .await
+        let chat_response: ChatResponse = serde_json::from_str(&text)
             .map_err(|e| format!("解析响应失败: {}", e))?;
 
         chat_response
@@ -154,6 +168,9 @@ impl ApiClient {
             max_tokens: 1024,
         };
 
+        let request_json = serde_json::to_string_pretty(&request)
+            .unwrap_or_else(|e| format!("无法序列化请求: {}", e));
+
         let response = self
             .client
             .post(&url)
@@ -162,17 +179,20 @@ impl ApiClient {
             .json(&request)
             .send()
             .await
-            .map_err(|e| format!("请求失败: {}", e))?;
+            .map_err(|e| {
+                write_exchange_log("api-image", &url, &request_json, None, None, Some(&e.to_string()));
+                format!("请求失败: {}", e)
+            })?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        write_exchange_log("api-image", &url, &request_json, Some(status), Some(&text), None);
+
+        if !status.is_success() {
             return Err(format!("API 错误 {}: {}", status, text));
         }
 
-        let chat_response: ChatResponse = response
-            .json()
-            .await
+        let chat_response: ChatResponse = serde_json::from_str(&text)
             .map_err(|e| format!("解析响应失败: {}", e))?;
 
         chat_response
@@ -180,5 +200,39 @@ impl ApiClient {
             .first()
             .map(|c| c.message.content.clone())
             .ok_or_else(|| "没有返回内容".to_string())
+    }
+}
+
+fn write_exchange_log(
+    prefix: &str,
+    url: &str,
+    request_body: &str,
+    status: Option<StatusCode>,
+    response_body: Option<&str>,
+    error: Option<&str>,
+) {
+    let mut log = String::new();
+    log.push_str(&format!("time: {}\n", Local::now().to_rfc3339()));
+    log.push_str(&format!("url: {}\n", url));
+    log.push_str("request:\n");
+    log.push_str(request_body);
+    log.push('\n');
+
+    if let Some(status) = status {
+        log.push_str(&format!("\nstatus: {}\n", status));
+    }
+    if let Some(body) = response_body {
+        log.push_str("\nresponse:\n");
+        log.push_str(body);
+        log.push('\n');
+    }
+    if let Some(err) = error {
+        log.push_str("\nerror:\n");
+        log.push_str(err);
+        log.push('\n');
+    }
+
+    if let Err(err) = StorageManager::new().write_log_snapshot(prefix, &log) {
+        eprintln!("写入日志失败: {}", err);
     }
 }

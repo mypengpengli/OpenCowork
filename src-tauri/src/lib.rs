@@ -7,7 +7,8 @@ mod assistant;
 
 use commands::{
     AppState,
-    get_config, save_config, test_model_connection,
+    get_config, save_config, list_profiles, save_profile, load_profile, delete_profile,
+    test_model_connection,
     start_capture, stop_capture, get_capture_status,
     chat_with_assistant, get_summaries,
 };
@@ -20,6 +21,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_config,
             save_config,
+            list_profiles,
+            save_profile,
+            load_profile,
+            delete_profile,
             test_model_connection,
             start_capture,
             stop_capture,

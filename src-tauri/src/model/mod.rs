@@ -1,8 +1,10 @@
 mod api;
+mod error;
 mod ollama;
 pub mod traits;
 
 pub use api::*;
+pub use error::*;
 pub use ollama::*;
 
 use crate::storage::ModelConfig;
