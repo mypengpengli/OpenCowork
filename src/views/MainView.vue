@@ -14,8 +14,6 @@ const inputMessage = ref('')
 const messagesContainer = ref<HTMLElement | null>(null)
 const isLoading = ref(false)
 
-let unlistenAlert: (() => void) | null = null
-
 watch(
   () => captureStore.lastEvent,
   (event) => {
@@ -27,6 +25,14 @@ watch(
     } else {
       message.error(event.message)
     }
+  }
+)
+
+watch(
+  () => chatStore.messages.length,
+  async () => {
+    await nextTick()
+    scrollToBottom()
   }
 )
 
@@ -93,50 +99,12 @@ async function toggleCapture() {
   }
 }
 
-async function setupAlertListener() {
-  try {
-    const { listen } = await import('@tauri-apps/api/event')
-
-    unlistenAlert = await listen<{
-      timestamp: string
-      error_type: string
-      message: string
-      suggestion: string
-    }>('assistant-alert', (event) => {
-      const alert = event.payload
-
-      // 构建提示消息
-      let content = `⚠️ **检测到错误**\n\n`
-      content += `**类型**: ${alert.error_type}\n`
-      content += `**信息**: ${alert.message}\n`
-      if (alert.suggestion) {
-        content += `\n**建议**: ${alert.suggestion}`
-      }
-
-      chatStore.addMessage({
-        role: 'assistant',
-        content,
-        timestamp: alert.timestamp,
-        isAlert: true
-      })
-
-      nextTick(() => scrollToBottom())
-    })
-  } catch (error) {
-    console.error('设置事件监听失败:', error)
-  }
-}
-
 onMounted(async () => {
   scrollToBottom()
-  await setupAlertListener()
   captureStore.startStatusPolling()
 })
 
 onUnmounted(() => {
-  if (unlistenAlert) {
-    unlistenAlert()
-  }
   captureStore.stopStatusPolling()
 })
 </script>
@@ -234,6 +202,10 @@ onUnmounted(() => {
 }
 
 .status-bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: #0f0f10;
   padding: 8px 0;
   border-bottom: 1px solid rgba(255, 255, 255, 0.09);
   margin-bottom: 16px;

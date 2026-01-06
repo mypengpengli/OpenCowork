@@ -73,6 +73,10 @@ impl CaptureManager {
             // 上一帧的图像哈希（用于对比）
             let mut prev_image_hash: Option<u64> = None;
             let mut cleanup_counter = 0u32;
+            let alert_cooldown_ticks = compute_alert_cooldown_ticks(
+                config.capture.alert_cooldown_seconds,
+                interval_ms,
+            );
 
             loop {
                 tokio::select! {
@@ -103,7 +107,7 @@ impl CaptureManager {
                         }
 
                         cleanup_counter += 1;
-                        if cleanup_counter >= 60 {
+                        if cleanup_counter >= alert_cooldown_ticks {
                             recent_alerts.lock().clear();
                             cleanup_counter = 0;
                         }
@@ -216,6 +220,7 @@ async fn capture_and_analyze_with_diff(
     let recent_context = build_recent_summary_context(
         storage_manager,
         config.capture.recent_summary_limit,
+        config.capture.recent_detail_limit,
     );
     let prompt = format!(
         r#"你是屏幕截图分析器。请严格只输出一个可解析的 JSON 对象，不要输出任何解释、Markdown 或代码块。
@@ -268,29 +273,18 @@ async fn capture_and_analyze_with_diff(
     };
 
     // 5. 解析分析结果
-    let parsed = parse_analysis(&analysis);
-
-    // 6. 保存摘要
-    let timestamp = now.format("%Y-%m-%dT%H:%M:%S").to_string();
-
-    let summary = SummaryRecord {
-        timestamp: timestamp.clone(),
-        summary: parsed.summary.clone(),
-        app: parsed.app.clone(),
-        action: if parsed.has_issue { "issue".to_string() } else { "active".to_string() },
-        keywords: extract_keywords_from_analysis(&parsed.summary),
-        confidence: parsed.confidence,
-        detail: parsed.detail.clone(),
-        detail_ref: screenshot_ref.unwrap_or_default(),
+    let mut parsed = parse_analysis(&analysis);
+    let alert_threshold = config.capture.alert_confidence_threshold.clamp(0.0, 1.0);
+    let issue_message = if parsed.issue_message.is_empty() {
+        parsed.summary.clone()
+    } else {
+        parsed.issue_message.clone()
     };
+    let mut should_emit = false;
 
-    storage_manager.save_summary(&summary)?;
-
-    // 7. 如果检测到困难，主动推送提示
-    if parsed.has_issue {
-        let error_key = format!("{}:{}", parsed.issue_type, parsed.issue_message);
-
-        let should_alert = {
+    if parsed.has_issue && parsed.confidence >= alert_threshold {
+        let error_key = format!("{}:{}", &parsed.issue_type, &issue_message);
+        should_emit = {
             let mut alerts = recent_alerts.lock();
             if alerts.contains(&error_key) {
                 false
@@ -300,15 +294,64 @@ async fn capture_and_analyze_with_diff(
             }
         };
 
-        if should_alert {
-            let alert_message = AssistantAlert {
-                timestamp: timestamp.clone(),
-                issue_type: parsed.issue_type,
-                message: parsed.issue_message,
-                suggestion: parsed.suggestion,
-            };
+        if should_emit && parsed.suggestion.trim().is_empty() {
+            match generate_issue_suggestion(&model_manager, &config, &recent_context, &parsed).await {
+                Ok(suggestion) => parsed.suggestion = suggestion,
+                Err(err) => {
+                    eprintln!("生成建议失败: {}", err);
+                    parsed.suggestion = "建议生成失败，请查看详情或稍后重试。".to_string();
+                }
+            }
+        }
+    }
 
-            let _ = app_handle.emit("assistant-alert", alert_message);
+    // 6. 保存摘要
+    let timestamp = now.format("%Y-%m-%dT%H:%M:%S").to_string();
+    let issue_summary = issue_message.clone();
+
+    let summary = SummaryRecord {
+        timestamp: timestamp.clone(),
+        summary: parsed.summary.clone(),
+        app: parsed.app.clone(),
+        action: if parsed.has_issue { "issue".to_string() } else { "active".to_string() },
+        keywords: extract_keywords_from_analysis(&parsed.summary),
+        has_issue: parsed.has_issue,
+        issue_type: parsed.issue_type.clone(),
+        issue_summary,
+        suggestion: parsed.suggestion.clone(),
+        confidence: parsed.confidence,
+        detail: parsed.detail.clone(),
+        detail_ref: screenshot_ref.unwrap_or_default(),
+    };
+
+    storage_manager.save_summary(&summary)?;
+
+    // 7. 如果检测到困难，主动推送提示
+    if parsed.has_issue && should_emit {
+        let alert_message = AssistantAlert {
+            timestamp: timestamp.clone(),
+            issue_type: parsed.issue_type,
+            message: issue_message,
+            suggestion: parsed.suggestion,
+        };
+
+        let mut alert_log = String::new();
+        alert_log.push_str(&format!("time: {}\n", timestamp));
+        alert_log.push_str(&format!("issue_type: {}\n", alert_message.issue_type));
+        alert_log.push_str(&format!("message: {}\n", alert_message.message));
+        if !alert_message.suggestion.is_empty() {
+            alert_log.push_str(&format!("suggestion: {}\n", alert_message.suggestion));
+        }
+        alert_log.push_str(&format!(
+            "confidence: {:.2}\nthreshold: {:.2}\n",
+            parsed.confidence, alert_threshold
+        ));
+        if let Err(err) = storage_manager.write_log_snapshot("assistant-alert", &alert_log) {
+            eprintln!("写入提醒日志失败: {}", err);
+        }
+
+        if let Err(err) = app_handle.emit("assistant-alert", alert_message) {
+            eprintln!("发送提醒失败: {}", err);
         }
     }
 
@@ -360,8 +403,8 @@ struct AnalysisResult {
 }
 
 fn parse_analysis(analysis: &str) -> AnalysisResult {
-    if let Ok(json) = serde_json::from_str::<serde_json::Value>(analysis) {
-        let has_issue = json
+    if let Some(json) = extract_json_value(analysis) {
+        let mut has_issue = json
             .get("has_issue")
             .and_then(|v| v.as_bool())
             .or_else(|| json.get("has_error").and_then(|v| v.as_bool()))
@@ -387,7 +430,12 @@ fn parse_analysis(analysis: &str) -> AnalysisResult {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+        let suggestion = json.get("suggestion").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let confidence = parse_confidence(&json, has_issue);
+
+        if !has_issue && (!issue_type.is_empty() || !issue_message.is_empty() || !suggestion.is_empty()) {
+            has_issue = true;
+        }
 
         return AnalysisResult {
             summary: json.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_string(),
@@ -396,7 +444,7 @@ fn parse_analysis(analysis: &str) -> AnalysisResult {
             has_issue,
             issue_type,
             issue_message,
-            suggestion: json.get("suggestion").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            suggestion,
             confidence,
         };
     }
@@ -421,6 +469,97 @@ fn parse_analysis(analysis: &str) -> AnalysisResult {
         suggestion: String::new(),
         confidence: if has_issue { 0.4 } else { 0.2 },
     }
+}
+
+fn compute_alert_cooldown_ticks(alert_cooldown_seconds: u64, interval_ms: u64) -> u32 {
+    let cooldown_ms = alert_cooldown_seconds.max(5) * 1000;
+    let interval = interval_ms.max(1);
+    let ticks = cooldown_ms / interval;
+    if ticks == 0 { 1 } else { ticks as u32 }
+}
+
+fn extract_json_value(text: &str) -> Option<serde_json::Value> {
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(text) {
+        return Some(json);
+    }
+
+    if let Some(inner) = extract_fenced_json(text) {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&inner) {
+            return Some(json);
+        }
+    }
+
+    if let Some(inner) = extract_braced_json(text) {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&inner) {
+            return Some(json);
+        }
+    }
+
+    None
+}
+
+fn extract_fenced_json(text: &str) -> Option<String> {
+    if let Some(start) = text.find("```json") {
+        let rest = &text[start + 7..];
+        return extract_fence_body(rest);
+    }
+
+    if let Some(start) = text.find("```") {
+        let rest = &text[start + 3..];
+        return extract_fence_body(rest);
+    }
+
+    None
+}
+
+fn extract_fence_body(text: &str) -> Option<String> {
+    let end = text.find("```")?;
+    let mut body = text[..end].trim().to_string();
+    if let Some(stripped) = body.strip_prefix("json") {
+        body = stripped.trim_start().to_string();
+    }
+    Some(body)
+}
+
+fn extract_braced_json(text: &str) -> Option<String> {
+    let start = text.find('{')?;
+    let end = text.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    Some(text[start..=end].to_string())
+}
+
+async fn generate_issue_suggestion(
+    model_manager: &ModelManager,
+    config: &Config,
+    recent_context: &str,
+    parsed: &AnalysisResult,
+) -> Result<String, String> {
+    let issue_summary = if parsed.issue_message.is_empty() {
+        parsed.summary.as_str()
+    } else {
+        parsed.issue_message.as_str()
+    };
+    let issue_type = if parsed.issue_type.is_empty() {
+        "未分类"
+    } else {
+        parsed.issue_type.as_str()
+    };
+
+    let context = format!(
+        "当前截图分析:\n- summary: {}\n- detail: {}\n- issue_type: {}\n- issue_summary: {}\n- confidence: {:.2}\n\n近期记录:\n{}",
+        parsed.summary,
+        parsed.detail,
+        issue_type,
+        issue_summary,
+        parsed.confidence,
+        recent_context
+    );
+
+    let question = "基于以上信息给出 1-3 条可执行的解决建议，尽量具体，不要复述背景。";
+
+    model_manager.chat(&config.model, &context, question).await
 }
 
 fn extract_app_from_text(text: &str) -> String {
@@ -463,7 +602,11 @@ fn extract_keywords_from_analysis(analysis: &str) -> Vec<String> {
     keywords
 }
 
-fn build_recent_summary_context(storage_manager: &StorageManager, max_items: usize) -> String {
+fn build_recent_summary_context(
+    storage_manager: &StorageManager,
+    max_items: usize,
+    detail_limit: usize,
+) -> String {
     let now = Local::now();
     let date = now.format("%Y-%m-%d").to_string();
     let cutoff = (now - Duration::minutes(RECENT_CONTEXT_MINUTES))
@@ -485,20 +628,29 @@ fn build_recent_summary_context(storage_manager: &StorageManager, max_items: usi
     }
 
     let max_items = max_items.clamp(1, 100);
+    let detail_limit = detail_limit.min(max_items);
     recent.reverse();
     let mut recent = recent.into_iter().take(max_items).collect::<Vec<_>>();
     recent.reverse();
 
+    let detail_start = recent.len().saturating_sub(detail_limit);
+
     recent
         .into_iter()
-        .map(|record| {
+        .enumerate()
+        .map(|(idx, record)| {
             let time = record.timestamp.get(11..19).unwrap_or(&record.timestamp);
             let app = if record.app.is_empty() || record.app == "Unknown" {
                 String::new()
             } else {
                 format!(" [{}]", record.app)
             };
-            format!("- {}{} {}", time, app, record.summary)
+            let mut line = format!("- {}{} {}", time, app, record.summary);
+            if idx >= detail_start && !record.detail.is_empty() {
+                let detail = record.detail.replace('\n', " ");
+                line.push_str(&format!("\n  细节: {}", detail));
+            }
+            line
         })
         .collect::<Vec<_>>()
         .join("\n")

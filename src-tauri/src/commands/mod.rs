@@ -1,14 +1,19 @@
 use crate::capture::CaptureManager;
 use crate::model::ModelManager;
 use crate::storage::{Config, StorageManager, SummaryRecord, SearchQuery, TimeRange};
+use chrono::{Duration, Local, NaiveDateTime, TimeZone};
+use std::collections::HashSet;
 use std::sync::Arc;
 use tauri::{AppHandle, State};
+use tauri_plugin_shell::ShellExt;
 use tokio::sync::Mutex as TokioMutex;
 
 pub struct AppState {
     pub capture_manager: Arc<TokioMutex<CaptureManager>>,
     pub storage_manager: Arc<StorageManager>,
 }
+
+const MIN_RECENT_DETAIL_RECORDS: usize = 20;
 
 impl AppState {
     pub fn new() -> Self {
@@ -108,7 +113,33 @@ pub async fn chat_with_assistant(message: String) -> Result<String, String> {
     let query = parse_user_query(&message);
 
     // 智能检索相关记录
-    let search_result = storage.smart_search(&query)?;
+    let mut search_result = storage.smart_search(&query)?;
+
+    if search_result.records.is_empty() && !query.keywords.is_empty() {
+        let mut relaxed = query.clone();
+        relaxed.keywords.clear();
+        if let Ok(relaxed_result) = storage.smart_search(&relaxed) {
+            if !relaxed_result.records.is_empty() || !relaxed_result.aggregated.is_empty() {
+                search_result = relaxed_result;
+            }
+        }
+    }
+
+    if matches!(query.time_range, TimeRange::Recent(_))
+        && search_result.records.len() < MIN_RECENT_DETAIL_RECORDS
+    {
+        let fallback = storage.get_recent_records(
+            MIN_RECENT_DETAIL_RECORDS,
+            config.storage.retention_days,
+        );
+        if !fallback.is_empty() {
+            search_result.records = merge_recent_records(
+                search_result.records,
+                fallback,
+                MIN_RECENT_DETAIL_RECORDS,
+            );
+        }
+    }
 
     // 构建上下文（使用配置中的最大字符数）
     let context = search_result.build_context(config.storage.max_context_chars, query.include_detail);
@@ -143,7 +174,7 @@ fn parse_user_query(message: &str) -> SearchQuery {
 
     // 提取关键词
     let keywords = extract_keywords(message);
-    let include_detail = wants_detail(message);
+    let include_detail = wants_detail(message) || matches!(time_range, TimeRange::Recent(_));
 
     SearchQuery {
         time_range,
@@ -211,14 +242,151 @@ fn wants_detail(message: &str) -> bool {
     let triggers = [
         "详细", "细节", "具体", "截图", "画面", "界面", "内容", "显示", "文本", "按钮", "输入", "输出",
         "哪一页", "哪个页面", "哪一个文件", "哪行", "哪一行", "日志", "报错内容",
+        "报错", "错误", "失败", "异常", "无法", "连不上", "连接不上", "原因", "为什么", "提示", "配置",
         "detail", "details", "screenshot", "screen", "page", "error log",
     ];
 
     triggers.iter().any(|kw| msg.contains(kw))
 }
 
+fn merge_recent_records(
+    records: Vec<SummaryRecord>,
+    fallback: Vec<SummaryRecord>,
+    limit: usize,
+) -> Vec<SummaryRecord> {
+    if limit == 0 {
+        return records;
+    }
+
+    let mut seen = HashSet::new();
+    let mut merged = Vec::new();
+
+    for record in records.into_iter().chain(fallback.into_iter()) {
+        let key = format!("{}|{}|{}", record.timestamp, record.app, record.summary);
+        if seen.insert(key) {
+            merged.push(record);
+        }
+    }
+
+    merged.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+
+    if merged.len() > limit {
+        let start = merged.len() - limit;
+        merged = merged.split_off(start);
+    }
+
+    merged
+}
+
 #[tauri::command]
 pub async fn get_summaries(date: String) -> Result<Vec<SummaryRecord>, String> {
     let storage = StorageManager::new();
     storage.get_summaries(&date).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn clear_summaries(date: String) -> Result<usize, String> {
+    let storage = StorageManager::new();
+    storage.delete_summaries_for_date(&date).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn clear_all_summaries() -> Result<usize, String> {
+    let storage = StorageManager::new();
+    storage.delete_all_summaries().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn open_screenshots_dir(app_handle: AppHandle) -> Result<(), String> {
+    let storage = StorageManager::new();
+    let dir = storage.screenshots_dir()?;
+    let dir_str = dir.to_string_lossy().to_string();
+    app_handle
+        .shell()
+        .open(dir_str, None)
+        .map_err(|e| e.to_string())
+}
+
+#[derive(serde::Serialize)]
+pub struct AlertRecord {
+    pub timestamp: String,
+    pub issue_type: String,
+    pub message: String,
+    pub suggestion: String,
+    pub confidence: f32,
+}
+
+#[tauri::command]
+pub async fn get_recent_alerts(since: Option<String>) -> Result<Vec<AlertRecord>, String> {
+    let storage = StorageManager::new();
+    let config = storage.load_config().map_err(|e| e.to_string())?;
+    let threshold = config.capture.alert_confidence_threshold.clamp(0.0, 1.0);
+    let cooldown = config.capture.alert_cooldown_seconds as i64;
+    let days = config.storage.retention_days.max(1);
+
+    let since_dt = since
+        .as_deref()
+        .and_then(|s| NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").ok())
+        .and_then(|dt| Local.from_local_datetime(&dt).single());
+
+    let mut records = Vec::new();
+    for i in 0..days {
+        let date = (Local::now() - Duration::days(i as i64))
+            .format("%Y-%m-%d")
+            .to_string();
+        if let Ok(mut daily) = storage.get_summaries(&date) {
+            records.append(&mut daily);
+        }
+    }
+
+    records.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+
+    let mut last_seen: std::collections::HashMap<String, chrono::DateTime<Local>> =
+        std::collections::HashMap::new();
+    let mut alerts = Vec::new();
+
+    for record in records {
+        if !record.has_issue || record.confidence < threshold {
+            continue;
+        }
+        let dt = match NaiveDateTime::parse_from_str(&record.timestamp, "%Y-%m-%dT%H:%M:%S")
+            .ok()
+            .and_then(|v| Local.from_local_datetime(&v).single())
+        {
+            Some(value) => value,
+            None => continue,
+        };
+        if let Some(since_dt) = since_dt {
+            if dt <= since_dt {
+                continue;
+            }
+        }
+
+        let message = if record.issue_summary.is_empty() {
+            record.summary.clone()
+        } else {
+            record.issue_summary.clone()
+        };
+        let key = format!("{}:{}", record.issue_type, message);
+        if let Some(prev) = last_seen.get(&key) {
+            if dt.signed_duration_since(*prev).num_seconds() < cooldown {
+                continue;
+            }
+        }
+        last_seen.insert(key, dt);
+
+        alerts.push(AlertRecord {
+            timestamp: record.timestamp,
+            issue_type: if record.issue_type.is_empty() {
+                "unknown".to_string()
+            } else {
+                record.issue_type
+            },
+            message,
+            suggestion: record.suggestion,
+            confidence: record.confidence,
+        });
+    }
+
+    Ok(alerts)
 }

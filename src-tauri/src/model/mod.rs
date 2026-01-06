@@ -20,7 +20,7 @@ impl ModelManager {
         match config.provider.as_str() {
             "api" => {
                 let api_client = ApiClient::new(&config.api);
-                api_client.test_connection().await
+                api_client.test_connection_with_fallback().await
             }
             "ollama" => {
                 let ollama_client = OllamaClient::new(&config.ollama);

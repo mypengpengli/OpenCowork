@@ -58,11 +58,15 @@ const formValue = ref({
   skipUnchanged: true,
   changeThreshold: 0.95,
   recentSummaryLimit: 8,
+  recentDetailLimit: 3,
+  alertConfidenceThreshold: 0.7,
+  alertCooldownSeconds: 120,
 
   // 存储配置
   retentionDays: 7,
   maxScreenshots: 10000,
   maxContextChars: 10000,
+  autoClearOnStart: false,
 })
 
 const providerOptions = [
@@ -104,11 +108,15 @@ function normalizeConfig(raw: any) {
       skip_unchanged: raw?.capture?.skip_unchanged ?? true,
       change_threshold: raw?.capture?.change_threshold ?? 0.95,
       recent_summary_limit: raw?.capture?.recent_summary_limit ?? 8,
+      recent_detail_limit: raw?.capture?.recent_detail_limit ?? 3,
+      alert_confidence_threshold: raw?.capture?.alert_confidence_threshold ?? 0.7,
+      alert_cooldown_seconds: raw?.capture?.alert_cooldown_seconds ?? 120,
     },
     storage: {
       retention_days: raw?.storage?.retention_days || 7,
       max_screenshots: raw?.storage?.max_screenshots || 10000,
       max_context_chars: raw?.storage?.max_context_chars || 10000,
+      auto_clear_on_start: raw?.storage?.auto_clear_on_start ?? false,
     },
   }
 }
@@ -133,9 +141,13 @@ function applyConfigToForm(config: any) {
     skipUnchanged: normalized.capture.skip_unchanged,
     changeThreshold: normalized.capture.change_threshold,
     recentSummaryLimit: normalized.capture.recent_summary_limit ?? 8,
+    recentDetailLimit: normalized.capture.recent_detail_limit ?? 3,
+    alertConfidenceThreshold: normalized.capture.alert_confidence_threshold ?? 0.7,
+    alertCooldownSeconds: normalized.capture.alert_cooldown_seconds ?? 120,
     retentionDays: normalized.storage.retention_days,
     maxScreenshots: normalized.storage.max_screenshots,
     maxContextChars: normalized.storage.max_context_chars,
+    autoClearOnStart: normalized.storage.auto_clear_on_start ?? false,
   }
 }
 
@@ -161,11 +173,15 @@ function buildConfigFromForm() {
       skip_unchanged: formValue.value.skipUnchanged,
       change_threshold: formValue.value.changeThreshold,
       recent_summary_limit: formValue.value.recentSummaryLimit,
+      recent_detail_limit: formValue.value.recentDetailLimit,
+      alert_confidence_threshold: formValue.value.alertConfidenceThreshold,
+      alert_cooldown_seconds: formValue.value.alertCooldownSeconds,
     },
     storage: {
       retention_days: formValue.value.retentionDays,
       max_screenshots: formValue.value.maxScreenshots,
       max_context_chars: formValue.value.maxContextChars,
+      auto_clear_on_start: formValue.value.autoClearOnStart,
     },
   })
 }
@@ -492,6 +508,52 @@ onMounted(async () => {
                   截图分析时带入最近的摘要条数（1-100）
                 </NTooltip>
               </NFormItem>
+              <NFormItem label="近期 detail 条数">
+                <NTooltip trigger="hover">
+                  <template #trigger>
+                    <NInputNumber
+                      v-model:value="formValue.recentDetailLimit"
+                      :min="0"
+                      :max="20"
+                      :step="1"
+                    >
+                      <template #suffix>条</template>
+                    </NInputNumber>
+                  </template>
+                  截图分析时带入最近的 detail 条数（0 表示不带）
+                </NTooltip>
+              </NFormItem>
+              <NFormItem label="提醒置信度阈值">
+                <NTooltip trigger="hover">
+                  <template #trigger>
+                    <NInputNumber
+                      v-model:value="formValue.alertConfidenceThreshold"
+                      :min="0"
+                      :max="1"
+                      :step="0.05"
+                      :precision="2"
+                    >
+                      <template #suffix>置信度</template>
+                    </NInputNumber>
+                  </template>
+                  有问题且置信度高于阈值时，自动在对话框提示建议
+                </NTooltip>
+              </NFormItem>
+              <NFormItem label="提醒冷却时间">
+                <NTooltip trigger="hover">
+                  <template #trigger>
+                    <NInputNumber
+                      v-model:value="formValue.alertCooldownSeconds"
+                      :min="10"
+                      :max="3600"
+                      :step="10"
+                    >
+                      <template #suffix>秒</template>
+                    </NInputNumber>
+                  </template>
+                  相同问题在冷却时间内不重复提示，避免刷屏
+                </NTooltip>
+              </NFormItem>
             </NCard>
 
             <NDivider />
@@ -516,6 +578,14 @@ onMounted(async () => {
                     </NInputNumber>
                   </template>
                   对话时加载的历史记录最大字符数，越大越详细但消耗更多Token
+                </NTooltip>
+              </NFormItem>
+              <NFormItem label="启动时清空历史">
+                <NTooltip trigger="hover">
+                  <template #trigger>
+                    <NSwitch v-model:value="formValue.autoClearOnStart" />
+                  </template>
+                  开启后每次启动自动清空历史记录
                 </NTooltip>
               </NFormItem>
             </NCard>

@@ -19,10 +19,18 @@ export interface AppConfig {
     enabled: boolean
     interval_ms: number
     compress_quality: number
+    skip_unchanged: boolean
+    change_threshold: number
+    recent_summary_limit: number
+    recent_detail_limit: number
+    alert_confidence_threshold: number
+    alert_cooldown_seconds: number
   }
   storage: {
     retention_days: number
     max_screenshots: number
+    max_context_chars: number
+    auto_clear_on_start: boolean
   }
 }
 
@@ -45,10 +53,18 @@ export const useSettingsStore = defineStore('settings', () => {
       enabled: true,
       interval_ms: 1000,
       compress_quality: 80,
+      skip_unchanged: true,
+      change_threshold: 0.95,
+      recent_summary_limit: 8,
+      recent_detail_limit: 3,
+      alert_confidence_threshold: 0.7,
+      alert_cooldown_seconds: 120,
     },
     storage: {
       retention_days: 7,
       max_screenshots: 10000,
+      max_context_chars: 10000,
+      auto_clear_on_start: false,
     },
   })
 

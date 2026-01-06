@@ -165,7 +165,7 @@ impl ApiClient {
                     },
                 ]),
             }],
-            max_tokens: 1024,
+            max_tokens: 10000,
         };
 
         let request_json = serde_json::to_string_pretty(&request)
@@ -200,6 +200,53 @@ impl ApiClient {
             .first()
             .map(|c| c.message.content.clone())
             .ok_or_else(|| "没有返回内容".to_string())
+    }
+    pub async fn test_connection_with_fallback(&self) -> Result<(), String> {
+        if self.test_connection().await.is_ok() {
+            return Ok(());
+        }
+
+        // Some providers block /models; fall back to a minimal chat request.
+        self.test_chat_connection().await
+    }
+
+    async fn test_chat_connection(&self) -> Result<(), String> {
+        let url = format!("{}/chat/completions", self.config.endpoint);
+
+        let request = ChatRequest {
+            model: self.config.model.clone(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: MessageContent::Text("ping".to_string()),
+            }],
+            max_tokens: 1,
+        };
+
+        let request_json = serde_json::to_string_pretty(&request)
+            .unwrap_or_else(|e| format!("Unable to serialize request: {}", e));
+
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.config.api_key))
+            .header("Content-Type", "application/json")
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| {
+                write_exchange_log("api-test-chat", &url, &request_json, None, None, Some(&e.to_string()));
+                format!("Request failed: {}", e)
+            })?;
+
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        write_exchange_log("api-test-chat", &url, &request_json, Some(status), Some(&text), None);
+
+        if status.is_success() {
+            Ok(())
+        } else {
+            Err(format!("API error {}: {}", status, text))
+        }
     }
 }
 

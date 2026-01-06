@@ -46,6 +46,12 @@ pub struct CaptureConfig {
     pub change_threshold: f32,  // 变化阈值 (0.0-1.0)，越小越敏感
     #[serde(default = "default_recent_summary_limit")]
     pub recent_summary_limit: usize,  // 近期摘要条数（用于上下文参考）
+    #[serde(default = "default_recent_detail_limit")]
+    pub recent_detail_limit: usize,  // 近期 detail 条数（用于截图分析上下文）
+    #[serde(default = "default_alert_confidence_threshold")]
+    pub alert_confidence_threshold: f32,  // issue 提醒触发阈值
+    #[serde(default = "default_alert_cooldown_seconds")]
+    pub alert_cooldown_seconds: u64,  // issue 提醒冷却时间（秒）
 }
 
 fn default_skip_unchanged() -> bool {
@@ -60,12 +66,26 @@ fn default_recent_summary_limit() -> usize {
     8
 }
 
+fn default_recent_detail_limit() -> usize {
+    3
+}
+
+fn default_alert_confidence_threshold() -> f32 {
+    0.7
+}
+
+fn default_alert_cooldown_seconds() -> u64 {
+    120
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageConfig {
     pub retention_days: u32,
     pub max_screenshots: u32,
     #[serde(default = "default_max_context_chars")]
     pub max_context_chars: usize,  // 上下文最大字符数，用户可调整
+    #[serde(default)]
+    pub auto_clear_on_start: bool,  // 启动时自动清空历史
 }
 
 fn default_max_context_chars() -> usize {
@@ -95,11 +115,15 @@ impl Default for Config {
                 skip_unchanged: true,   // 默认启用，节省token
                 change_threshold: 0.95, // 相似度阈值
                 recent_summary_limit: 8,
+                recent_detail_limit: 3,
+                alert_confidence_threshold: 0.7,
+                alert_cooldown_seconds: 120,
             },
             storage: StorageConfig {
                 retention_days: 7,
                 max_screenshots: 10000,
                 max_context_chars: 10000,  // 默认10000字符
+                auto_clear_on_start: false,
             },
         }
     }
@@ -115,6 +139,14 @@ pub struct SummaryRecord {
     pub app: String,
     pub action: String,
     pub keywords: Vec<String>,
+    #[serde(default)]
+    pub has_issue: bool,
+    #[serde(default)]
+    pub issue_type: String,
+    #[serde(default)]
+    pub issue_summary: String,
+    #[serde(default)]
+    pub suggestion: String,
     #[serde(default)]
     pub confidence: f32,
     #[serde(default)]
@@ -311,6 +343,39 @@ impl StorageManager {
         Ok(daily.records)
     }
 
+    pub fn get_recent_records(&self, limit: usize, days: u32) -> Vec<SummaryRecord> {
+        if limit == 0 {
+            return Vec::new();
+        }
+
+        let max_days = days.max(1);
+        let mut recent_rev = Vec::new();
+
+        for offset in 0..max_days {
+            let date = (Local::now() - Duration::days(offset as i64))
+                .format("%Y-%m-%d")
+                .to_string();
+            let records = match self.get_summaries(&date) {
+                Ok(data) => data,
+                Err(_) => continue,
+            };
+
+            for record in records.into_iter().rev() {
+                recent_rev.push(record);
+                if recent_rev.len() >= limit {
+                    break;
+                }
+            }
+
+            if recent_rev.len() >= limit {
+                break;
+            }
+        }
+
+        recent_rev.reverse();
+        recent_rev
+    }
+
     pub fn save_summary(&self, record: &SummaryRecord) -> Result<(), String> {
         self.ensure_dirs()?;
 
@@ -347,6 +412,79 @@ impl StorageManager {
 
         fs::write(&summary_path, content)
             .map_err(|e| format!("保存摘要失败: {}", e))
+    }
+
+    pub fn delete_summaries_for_date(&self, date: &str) -> Result<usize, String> {
+        self.ensure_dirs()?;
+        let summary_path = self.data_dir.join("summaries").join(format!("{}.json", date));
+        if !summary_path.exists() {
+            return Ok(0);
+        }
+
+        let content = fs::read_to_string(&summary_path)
+            .map_err(|e| format!("读取摘要失败: {}", e))?;
+        let daily: DailySummary = serde_json::from_str(&content)
+            .map_err(|e| format!("解析摘要失败: {}", e))?;
+
+        let mut removed = 0usize;
+        for record in daily.records {
+            removed += 1;
+            if !record.detail_ref.is_empty() {
+                if let Ok(dir) = self.screenshots_dir() {
+                    let path = dir.join(&record.detail_ref);
+                    let _ = fs::remove_file(&path);
+                }
+            }
+        }
+
+        fs::remove_file(&summary_path)
+            .map_err(|e| format!("删除摘要失败: {}", e))?;
+
+        Ok(removed)
+    }
+
+    pub fn delete_all_summaries(&self) -> Result<usize, String> {
+        self.ensure_dirs()?;
+        let summaries_dir = self.data_dir.join("summaries");
+        if !summaries_dir.exists() {
+            return Ok(0);
+        }
+
+        let mut total_removed = 0usize;
+        let entries = fs::read_dir(&summaries_dir)
+            .map_err(|e| format!("读取摘要目录失败: {}", e))?;
+
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("读取摘要目录失败: {}", e))?;
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+
+            let content = match fs::read_to_string(&path) {
+                Ok(value) => value,
+                Err(_) => {
+                    let _ = fs::remove_file(&path);
+                    continue;
+                }
+            };
+
+            if let Ok(daily) = serde_json::from_str::<DailySummary>(&content) {
+                for record in daily.records {
+                    total_removed += 1;
+                    if !record.detail_ref.is_empty() {
+                        if let Ok(dir) = self.screenshots_dir() {
+                            let shot = dir.join(&record.detail_ref);
+                            let _ = fs::remove_file(&shot);
+                        }
+                    }
+                }
+            }
+
+            let _ = fs::remove_file(&path);
+        }
+
+        Ok(total_removed)
     }
 
     // ============ 聚合管理 ============
@@ -646,29 +784,47 @@ impl SearchResult {
         // 再添加详细记录
         if !self.records.is_empty() {
             context.push_str("## 详细记录\n\n");
-            for record in &self.records {
+            let mut entries: Vec<String> = Vec::new();
+            let mut truncated = false;
+
+            for record in self.records.iter().rev() {
                 let line = format!(
                     "- [{}] {}\n",
                     &record.timestamp[11..19],
                     record.summary
                 );
                 if current_len + line.len() > max_chars {
-                    context.push_str("...(更多记录已省略)\n");
+                    truncated = true;
                     break;
                 }
-                context.push_str(&line);
+
+                let mut entry = String::new();
+                entry.push_str(&line);
                 current_len += line.len();
 
                 if include_detail && !record.detail.is_empty() {
                     let detail_text = record.detail.replace('\n', " ");
                     let detail_line = format!("  细节: {}\n", detail_text);
                     if current_len + detail_line.len() > max_chars {
-                        context.push_str("  ...(细节已省略)\n");
+                        entry.push_str("  ...(细节已省略)\n");
+                        current_len += "  ...(细节已省略)\n".len();
+                        truncated = true;
+                        entries.push(entry);
                         break;
                     }
-                    context.push_str(&detail_line);
+                    entry.push_str(&detail_line);
                     current_len += detail_line.len();
                 }
+
+                entries.push(entry);
+            }
+
+            entries.reverse();
+            for entry in entries {
+                context.push_str(&entry);
+            }
+            if truncated {
+                context.push_str("...(更多记录已省略)\n");
             }
         }
 
