@@ -233,7 +233,7 @@ async fn capture_and_analyze_with_diff(
   "has_issue": true 或 false（布尔值）,
   "issue_type": "问题类型（仅在 has_issue 为 true 时填写，否则空字符串）",
   "issue_summary": "问题摘要（仅在 has_issue 为 true 时填写，否则空字符串）",
-  "suggestion": "解决建议（仅在 has_issue 为 true 时填写，否则空字符串）",
+  "suggestion": "解决建议（仅在 has_issue 为 true 时填写，否则空字符串）：根据 detail 中的错误信息，指出最可能的原因，并给出具体可操作的解决步骤",
   "confidence": 对整体分析结果准确性的置信度，0.0-1.0 之间的数值
 }}
 
