@@ -24,7 +24,12 @@ app.use(router)
 app.mount('#app')
 
 const chatStore = useChatStore(pinia)
-let lastAlertTimestamp: string | null = null
+let lastAlertTimestamp: string | null = formatLocalTimestamp(new Date())
+
+function formatLocalTimestamp(date: Date): string {
+  const pad = (value: number) => value.toString().padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
 
 async function setupAlertListener() {
   try {

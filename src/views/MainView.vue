@@ -13,6 +13,7 @@ const message = useMessage()
 const inputMessage = ref('')
 const messagesContainer = ref<HTMLElement | null>(null)
 const isLoading = ref(false)
+const isHistoryLoading = ref(false)
 
 watch(
   () => captureStore.lastEvent,
@@ -74,6 +75,66 @@ async function sendMessage() {
   }
 }
 
+async function loadAlertHistory() {
+  if (isHistoryLoading.value) return
+  isHistoryLoading.value = true
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const since = startOfTodayTimestamp()
+    const alerts = await invoke<Array<{
+      timestamp: string
+      issue_type: string
+      message: string
+      suggestion?: string
+    }>>('get_recent_alerts', { since })
+
+    if (!alerts || alerts.length === 0) {
+      message.info('今天没有历史提醒')
+      return
+    }
+
+    for (const alert of alerts) {
+      const alertType = alert.issue_type || 'unknown'
+      let content = `⚠️ **检测到问题**\n\n`
+      content += `**类型**: ${alertType}\n`
+      content += `**信息**: ${alert.message}\n`
+      if (alert.suggestion) {
+        content += `\n**建议**: ${alert.suggestion}`
+      }
+
+      chatStore.addAlert({
+        role: 'assistant',
+        content,
+        timestamp: alert.timestamp,
+        alertKey: `${alertType}|${alert.message}|${alert.timestamp}`,
+      })
+    }
+
+    message.success(`已加载今天 ${alerts.length} 条提醒`)
+  } catch (error) {
+    message.error(`加载今天提醒失败: ${error}`)
+  } finally {
+    isHistoryLoading.value = false
+  }
+}
+
+function startOfTodayTimestamp(): string {
+  const now = new Date()
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0)
+  return formatLocalTimestamp(start)
+}
+
+function formatLocalTimestamp(date: Date): string {
+  const pad = (value: number) => value.toString().padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
+function clearChat() {
+  const confirmed = window.confirm('确定清空当前对话吗？')
+  if (!confirmed) return
+  chatStore.clearMessages()
+}
+
 function scrollToBottom() {
   if (messagesContainer.value) {
     messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
@@ -123,19 +184,25 @@ onUnmounted(() => {
               记录: {{ captureStore.recordCount }}
             </NTag>
           </NSpace>
-          <NButton
-            size="small"
-            :type="captureStore.isCapturing ? 'error' : 'success'"
-            @click="toggleCapture"
-          >
-            <template #icon>
-              <NIcon>
-                <StopCircleOutline v-if="captureStore.isCapturing" />
-                <PlayCircleOutline v-else />
-              </NIcon>
-            </template>
-            {{ captureStore.isCapturing ? '停止' : '开始' }}
-          </NButton>
+          <NSpace align="center">
+            <NButton size="small" secondary :loading="isHistoryLoading" @click="loadAlertHistory">
+              加载今天
+            </NButton>
+            <NButton size="small" secondary @click="clearChat">清空对话</NButton>
+            <NButton
+              size="small"
+              :type="captureStore.isCapturing ? 'error' : 'success'"
+              @click="toggleCapture"
+            >
+              <template #icon>
+                <NIcon>
+                  <StopCircleOutline v-if="captureStore.isCapturing" />
+                  <PlayCircleOutline v-else />
+                </NIcon>
+              </template>
+              {{ captureStore.isCapturing ? '停止' : '开始' }}
+            </NButton>
+          </NSpace>
         </NSpace>
       </div>
 
