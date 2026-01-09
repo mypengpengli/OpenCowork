@@ -103,8 +103,17 @@ pub struct CaptureStatus {
     pub last_capture_time: Option<String>,
 }
 
+#[derive(serde::Deserialize)]
+pub struct ChatHistoryMessage {
+    pub role: String,
+    pub content: String,
+}
+
 #[tauri::command]
-pub async fn chat_with_assistant(message: String) -> Result<String, String> {
+pub async fn chat_with_assistant(
+    message: String,
+    history: Option<Vec<ChatHistoryMessage>>,
+) -> Result<String, String> {
     let storage = StorageManager::new();
     let config = storage.load_config().map_err(|e| e.to_string())?;
     let model_manager = ModelManager::new();
@@ -144,9 +153,9 @@ pub async fn chat_with_assistant(message: String) -> Result<String, String> {
     // 构建上下文（使用配置中的最大字符数）
     let context = search_result.build_context(config.storage.max_context_chars, query.include_detail);
 
-    // 调用模型
+    // 调用模型（传递对话历史）
     model_manager
-        .chat(&config.model, &context, &message)
+        .chat_with_history(&config.model, &context, &message, history)
         .await
 }
 

@@ -8,6 +8,7 @@ pub use error::*;
 pub use ollama::*;
 
 use crate::storage::ModelConfig;
+use crate::commands::ChatHistoryMessage;
 
 pub struct ModelManager;
 
@@ -58,6 +59,36 @@ impl ModelManager {
         }
     }
 
+
+
+    pub async fn chat_with_history(
+        &self,
+        config: &ModelConfig,
+        context: &str,
+        message: &str,
+        history: Option<Vec<ChatHistoryMessage>>,
+    ) -> Result<String, String> {
+        let system_prompt = format!(
+            r#"你是一个屏幕监控助手，帮助用户回顾和理解他们的操作历史。
+
+{}
+
+请根据上述操作记录，回答用户的问题。如果记录中没有相关信息，请如实告知。"#,
+            context
+        );
+
+        match config.provider.as_str() {
+            "api" => {
+                let api_client = ApiClient::new(&config.api);
+                api_client.chat_with_history(&system_prompt, message, history).await
+            }
+            "ollama" => {
+                let ollama_client = OllamaClient::new(&config.ollama);
+                ollama_client.chat_with_history(&system_prompt, message, history).await
+            }
+            _ => Err("未知的模型提供者".to_string()),
+        }
+    }
     pub async fn analyze_image(
         &self,
         config: &ModelConfig,

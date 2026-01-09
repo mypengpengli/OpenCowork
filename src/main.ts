@@ -24,7 +24,8 @@ app.use(router)
 app.mount('#app')
 
 const chatStore = useChatStore(pinia)
-let lastAlertTimestamp: string | null = formatLocalTimestamp(new Date())
+const startupGraceMs = 2000
+let lastAlertTimestamp: string | null = formatLocalTimestamp(new Date(Date.now() - startupGraceMs))
 
 function formatLocalTimestamp(date: Date): string {
   const pad = (value: number) => value.toString().padStart(2, '0')

@@ -1,4 +1,5 @@
 use crate::storage::{OllamaConfig, StorageManager};
+use crate::commands::ChatHistoryMessage;
 use chrono::Local;
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
@@ -119,6 +120,63 @@ impl OllamaClient {
         Ok(generate_response.response)
     }
 
+
+
+    pub async fn chat_with_history(
+        &self,
+        system_prompt: &str,
+        user_message: &str,
+        history: Option<Vec<ChatHistoryMessage>>,
+    ) -> Result<String, String> {
+        let url = format!("{}/api/generate", self.config.endpoint);
+
+        // Build prompt with history
+        let mut full_prompt = String::new();
+        if let Some(hist) = history {
+            for msg in hist {
+                let role_label = if msg.role == "user" { "用户" } else { "助手" };
+                full_prompt.push_str(&format!("{}：{}
+
+", role_label, msg.content));
+            }
+        }
+        full_prompt.push_str(&format!("用户：{}", user_message));
+
+        let request = GenerateRequest {
+            model: self.config.model.clone(),
+            prompt: full_prompt,
+            system: Some(system_prompt.to_string()),
+            images: None,
+            stream: false,
+        };
+
+        let request_json = serde_json::to_string_pretty(&request)
+            .unwrap_or_else(|e| format!("无法序列化请求: {}", e));
+
+        let response = self
+            .client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| {
+                write_exchange_log("ollama-chat-history", &url, &request_json, None, None, Some(&e.to_string()));
+                format!("请求失败: {}", e)
+            })?;
+
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        write_exchange_log("ollama-chat-history", &url, &request_json, Some(status), Some(&text), None);
+
+        if !status.is_success() {
+            return Err(format!("Ollama 错误 {}: {}", status, text));
+        }
+
+        let generate_response: GenerateResponse = serde_json::from_str(&text)
+            .map_err(|e| format!("解析响应失败: {}", e))?;
+
+        Ok(generate_response.response)
+    }
     pub async fn analyze_image(&self, image_base64: &str, prompt: &str) -> Result<String, String> {
         let url = format!("{}/api/generate", self.config.endpoint);
 

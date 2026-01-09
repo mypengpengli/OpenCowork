@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
-import { NLayout, NLayoutContent, NInput, NButton, NSpace, NSpin, NTag, NIcon, useMessage } from 'naive-ui'
-import { Send, PlayCircleOutline, StopCircleOutline } from '@vicons/ionicons5'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { NLayout, NLayoutContent, NInput, NButton, NSpace, NSpin, NTag, NIcon, NDropdown, useMessage } from 'naive-ui'
+import { Send, PlayCircleOutline, StopCircleOutline, AddOutline, SaveOutline } from '@vicons/ionicons5'
 import { useChatStore } from '../stores/chat'
 import { useCaptureStore } from '../stores/capture'
 import MessageItem from '../components/Chat/MessageItem.vue'
@@ -53,8 +53,14 @@ async function sendMessage() {
 
   try {
     const { invoke } = await import('@tauri-apps/api/core')
+    // Get chat history for context (excluding the message we just added)
+    const historyForModel = chatStore.chatHistoryForModel
+      .slice(0, -1)  // Exclude the user message we just added
+      .map(m => ({ role: m.role, content: m.content }))
+
     const response = await invoke<string>('chat_with_assistant', {
-      message: userMessage
+      message: userMessage,
+      history: historyForModel.length > 0 ? historyForModel : null
     })
 
     chatStore.addMessage({
@@ -129,6 +135,38 @@ function formatLocalTimestamp(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
 
+
+function newConversation() {
+  if (chatStore.messages.length > 0) {
+    const confirmed = window.confirm('确定新建对话吗？当前对话将被清空。')
+    if (!confirmed) return
+  }
+  chatStore.newConversation()
+  message.success('已新建对话')
+}
+
+function saveConversation() {
+  const result = chatStore.saveCurrentConversation()
+  if (result) {
+    message.success(`对话已保存: ${result.title}`)
+  } else {
+    message.warning('没有可保存的对话内容')
+  }
+}
+
+function loadSavedConversation(id: string) {
+  if (chatStore.loadConversation(id)) {
+    message.success('对话已加载')
+  }
+}
+
+const savedConversationOptions = computed(() => {
+  return chatStore.savedConversations.map(conv => ({
+    label: conv.title,
+    key: conv.id,
+  }))
+})
+
 function clearChat() {
   const confirmed = window.confirm('确定清空当前对话吗？')
   if (!confirmed) return
@@ -185,10 +223,31 @@ onUnmounted(() => {
             </NTag>
           </NSpace>
           <NSpace align="center">
-            <NButton size="small" secondary :loading="isHistoryLoading" @click="loadAlertHistory">
-              加载今天
+            <NButton size="small" secondary @click="newConversation">
+              <template #icon>
+                <NIcon><AddOutline /></NIcon>
+              </template>
+              新建
             </NButton>
-            <NButton size="small" secondary @click="clearChat">清空对话</NButton>
+            <NButton size="small" secondary @click="saveConversation">
+              <template #icon>
+                <NIcon><SaveOutline /></NIcon>
+              </template>
+              保存
+            </NButton>
+            <NDropdown
+              v-if="savedConversationOptions.length > 0"
+              :options="savedConversationOptions"
+              @select="loadSavedConversation"
+            >
+              <NButton size="small" secondary>
+                历史对话 ({{ savedConversationOptions.length }})
+              </NButton>
+            </NDropdown>
+            <NButton size="small" secondary :loading="isHistoryLoading" @click="loadAlertHistory">
+              加载提醒
+            </NButton>
+            <NButton size="small" secondary @click="clearChat">清空</NButton>
             <NButton
               size="small"
               :type="captureStore.isCapturing ? 'error' : 'success'"

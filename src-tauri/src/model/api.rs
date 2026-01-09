@@ -1,4 +1,5 @@
 use crate::storage::{ApiConfig, StorageManager};
+use crate::commands::ChatHistoryMessage;
 use chrono::Local;
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
@@ -143,6 +144,76 @@ impl ApiClient {
             .ok_or_else(|| "没有返回内容".to_string())
     }
 
+
+
+    pub async fn chat_with_history(
+        &self,
+        system_prompt: &str,
+        user_message: &str,
+        history: Option<Vec<ChatHistoryMessage>>,
+    ) -> Result<String, String> {
+        let url = format!("{}/chat/completions", self.config.endpoint);
+
+        let mut messages = vec![Message {
+            role: "system".to_string(),
+            content: MessageContent::Text(system_prompt.to_string()),
+        }];
+
+        // Add conversation history if provided
+        if let Some(hist) = history {
+            for msg in hist {
+                messages.push(Message {
+                    role: msg.role,
+                    content: MessageContent::Text(msg.content),
+                });
+            }
+        }
+
+        // Add current user message
+        messages.push(Message {
+            role: "user".to_string(),
+            content: MessageContent::Text(user_message.to_string()),
+        });
+
+        let request = ChatRequest {
+            model: self.config.model.clone(),
+            messages,
+            max_tokens: 2048,
+        };
+
+        let request_json = serde_json::to_string_pretty(&request)
+            .unwrap_or_else(|e| format!("无法序列化请求: {}", e));
+
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.config.api_key))
+            .header("Content-Type", "application/json")
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| {
+                write_exchange_log("api-chat-history", &url, &request_json, None, None, Some(&e.to_string()));
+                format!("请求失败: {}", e)
+            })?;
+
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        write_exchange_log("api-chat-history", &url, &request_json, Some(status), Some(&text), None);
+
+        if !status.is_success() {
+            return Err(format!("API 错误 {}: {}", status, text));
+        }
+
+        let chat_response: ChatResponse = serde_json::from_str(&text)
+            .map_err(|e| format!("解析响应失败: {}", e))?;
+
+        chat_response
+            .choices
+            .first()
+            .map(|c| c.message.content.clone())
+            .ok_or_else(|| "没有返回内容".to_string())
+    }
     pub async fn analyze_image(&self, image_base64: &str, prompt: &str) -> Result<String, String> {
         let url = format!("{}/chat/completions", self.config.endpoint);
 
