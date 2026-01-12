@@ -427,12 +427,17 @@ async function handleDeleteSkill(name: string) {
 }
 
 async function openSkillsFolder() {
-  // 复制路径到剪贴板
   try {
-    await navigator.clipboard.writeText(skillsDir.value)
-    message.success(`技能文件夹路径已复制到剪贴板: ${skillsDir.value}`)
+    const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('open_skills_dir')
   } catch (error) {
-    message.info(`技能文件夹: ${skillsDir.value}`)
+    // 如果打开失败，回退到复制路径
+    try {
+      await navigator.clipboard.writeText(skillsDir.value)
+      message.success(`技能文件夹路径已复制到剪贴板: ${skillsDir.value}`)
+    } catch {
+      message.info(`技能文件夹: ${skillsDir.value}`)
+    }
   }
 }
 </script>

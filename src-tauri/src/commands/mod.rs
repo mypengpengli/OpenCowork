@@ -622,3 +622,22 @@ pub async fn get_skills_dir() -> Result<String, String> {
     let skill_manager = SkillManager::new();
     Ok(skill_manager.get_skills_dir().to_string_lossy().to_string())
 }
+
+/// 打开 skills 目录
+#[tauri::command]
+pub async fn open_skills_dir(app_handle: AppHandle) -> Result<(), String> {
+    let skill_manager = SkillManager::new();
+    let dir = skill_manager.get_skills_dir();
+
+    // 确保目录存在
+    if !dir.exists() {
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("创建 skills 目录失败: {}", e))?;
+    }
+
+    let dir_str = dir.to_string_lossy().to_string();
+    app_handle
+        .shell()
+        .open(dir_str, None)
+        .map_err(|e| e.to_string())
+}
