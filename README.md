@@ -1,4 +1,4 @@
-# Screen Assistant - 你的 AI 编程伴侣
+# Screen Assistant - 你的 AI 工作伴侣
 
 [![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/mypengpengli/screen-assistant)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
