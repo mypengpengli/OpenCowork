@@ -9,6 +9,7 @@ pub use ollama::*;
 
 use crate::storage::ModelConfig;
 use crate::commands::ChatHistoryMessage;
+use crate::skills::SkillMetadata;
 
 pub struct ModelManager;
 
@@ -89,6 +90,64 @@ impl ModelManager {
             _ => Err("未知的模型提供者".to_string()),
         }
     }
+
+    /// 使用自定义 system prompt 进行对话（用于 skills）
+    pub async fn chat_with_system_prompt(
+        &self,
+        config: &ModelConfig,
+        system_prompt: &str,
+        message: &str,
+        history: Option<Vec<ChatHistoryMessage>>,
+    ) -> Result<String, String> {
+        match config.provider.as_str() {
+            "api" => {
+                let api_client = ApiClient::new(&config.api);
+                api_client.chat_with_history(system_prompt, message, history).await
+            }
+            "ollama" => {
+                let ollama_client = OllamaClient::new(&config.ollama);
+                ollama_client.chat_with_history(system_prompt, message, history).await
+            }
+            _ => Err("未知的模型提供者".to_string()),
+        }
+    }
+
+    /// 带 Tool Use 的对话（仅 API 模式支持）
+    pub async fn chat_with_tools(
+        &self,
+        config: &ModelConfig,
+        context: &str,
+        message: &str,
+        history: Option<Vec<ChatHistoryMessage>>,
+        available_skills: &[SkillMetadata],
+    ) -> Result<ChatWithToolsResult, String> {
+        let system_prompt = format!(
+            r#"你是一个屏幕监控助手，帮助用户回顾和理解他们的操作历史。
+
+{}
+
+请根据上述操作记录，回答用户的问题。如果记录中没有相关信息，请如实告知。
+
+如果用户的请求需要使用某个技能来完成，请调用 invoke_skill 工具。"#,
+            context
+        );
+
+        match config.provider.as_str() {
+            "api" => {
+                let api_client = ApiClient::new(&config.api);
+                let tools = ApiClient::create_skill_tool(available_skills);
+                api_client.chat_with_tools(&system_prompt, message, history, tools).await
+            }
+            "ollama" => {
+                // Ollama 不支持 tool use，回退到普通对话
+                let ollama_client = OllamaClient::new(&config.ollama);
+                let result = ollama_client.chat_with_history(&system_prompt, message, history).await?;
+                Ok(ChatWithToolsResult::Text(result))
+            }
+            _ => Err("未知的模型提供者".to_string()),
+        }
+    }
+
     pub async fn analyze_image(
         &self,
         config: &ModelConfig,

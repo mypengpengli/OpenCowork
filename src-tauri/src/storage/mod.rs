@@ -196,6 +196,11 @@ impl StorageManager {
         Self { data_dir }
     }
 
+    /// 获取数据目录路径
+    pub fn get_data_dir(&self) -> &PathBuf {
+        &self.data_dir
+    }
+
     fn ensure_dirs(&self) -> Result<(), String> {
         let dirs = [
             self.data_dir.clone(),
@@ -745,6 +750,16 @@ pub struct SearchResult {
     pub records: Vec<SummaryRecord>,
     pub aggregated: Vec<AggregatedRecord>,
     pub source: String,
+}
+
+impl Default for SearchResult {
+    fn default() -> Self {
+        Self {
+            records: Vec::new(),
+            aggregated: Vec::new(),
+            source: String::new(),
+        }
+    }
 }
 
 impl SearchResult {

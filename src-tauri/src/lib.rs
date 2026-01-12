@@ -4,6 +4,7 @@ mod model;
 mod storage;
 mod analysis;
 mod assistant;
+mod skills;
 
 use crate::storage::StorageManager;
 use commands::{
@@ -15,6 +16,8 @@ use commands::{
     get_recent_alerts,
     clear_summaries, clear_all_summaries,
     open_screenshots_dir,
+    // Skills 相关命令
+    list_skills, get_skill, invoke_skill, create_skill, delete_skill, get_skills_dir,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -48,6 +51,13 @@ pub fn run() {
             clear_summaries,
             clear_all_summaries,
             open_screenshots_dir,
+            // Skills 相关命令
+            list_skills,
+            get_skill,
+            invoke_skill,
+            create_skill,
+            delete_skill,
+            get_skills_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

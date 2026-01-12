@@ -18,8 +18,13 @@ import {
   NDrawerContent,
   NTag,
   NSpin,
+  NTabs,
+  NTabPane,
+  NEmpty,
+  NModal,
   useMessage,
 } from 'naive-ui'
+import { useSkillsStore, type SkillMetadata } from '../stores/skills'
 
 interface ProfileEntry {
   name: string
@@ -32,6 +37,15 @@ interface ProfileEntry {
 type DrawerMode = 'new' | 'edit' | 'copy'
 
 const message = useMessage()
+const skillsStore = useSkillsStore()
+
+// Skills 相关状态
+const activeTab = ref('profiles')
+const skillModalVisible = ref(false)
+const newSkillName = ref('')
+const newSkillDescription = ref('')
+const newSkillInstructions = ref('')
+const skillsDir = ref('')
 
 const profiles = ref<ProfileEntry[]>([])
 const isLoading = ref(false)
@@ -354,56 +368,183 @@ async function testConnection() {
 onMounted(async () => {
   await loadCurrentConfig()
   await refreshProfiles()
+  // 加载 Skills
+  await skillsStore.loadSkills()
+  skillsDir.value = await skillsStore.getSkillsDir()
 })
+
+// Skills 相关函数
+function openCreateSkillModal() {
+  newSkillName.value = ''
+  newSkillDescription.value = ''
+  newSkillInstructions.value = `# 技能名称
+
+## 使用场景
+描述何时使用此技能。
+
+## 执行步骤
+1. 第一步
+2. 第二步
+3. 第三步
+`
+  skillModalVisible.value = true
+}
+
+async function createNewSkill() {
+  if (!newSkillName.value.trim()) {
+    message.warning('请输入技能名称')
+    return
+  }
+  if (!newSkillDescription.value.trim()) {
+    message.warning('请输入技能描述')
+    return
+  }
+
+  const success = await skillsStore.createSkill(
+    newSkillName.value.trim(),
+    newSkillDescription.value.trim(),
+    newSkillInstructions.value.trim()
+  )
+
+  if (success) {
+    message.success('技能创建成功')
+    skillModalVisible.value = false
+  } else {
+    message.error('技能创建失败')
+  }
+}
+
+async function handleDeleteSkill(name: string) {
+  const confirmed = window.confirm(`确定删除技能 "${name}" 吗？`)
+  if (!confirmed) return
+
+  const success = await skillsStore.deleteSkill(name)
+  if (success) {
+    message.success('技能已删除')
+  } else {
+    message.error('删除技能失败')
+  }
+}
+
+async function openSkillsFolder() {
+  // 复制路径到剪贴板
+  try {
+    await navigator.clipboard.writeText(skillsDir.value)
+    message.success(`技能文件夹路径已复制到剪贴板: ${skillsDir.value}`)
+  } catch (error) {
+    message.info(`技能文件夹: ${skillsDir.value}`)
+  }
+}
 </script>
 
 <template>
   <NLayout class="settings-layout">
     <NLayoutContent class="settings-content">
-      <div class="settings-header">
-        <h2>配置方案</h2>
-        <NButton type="primary" @click="openNewProfile">新建方案</NButton>
-      </div>
+      <NTabs v-model:value="activeTab" type="line">
+        <!-- 配置方案 Tab -->
+        <NTabPane name="profiles" tab="配置方案">
+          <div class="settings-header">
+            <h2>配置方案</h2>
+            <NButton type="primary" @click="openNewProfile">新建方案</NButton>
+          </div>
 
-      <div v-if="isLoading" class="loading-state">
-        <NSpin size="small" />
-        <span>正在加载方案...</span>
-      </div>
+          <div v-if="isLoading" class="loading-state">
+            <NSpin size="small" />
+            <span>正在加载方案...</span>
+          </div>
 
-      <div v-else>
-        <div v-if="profiles.length === 0" class="empty-state">
-          <p>暂无配置方案</p>
-          <p class="muted">点击“新建方案”创建一个</p>
-        </div>
-
-        <div v-else class="profiles-list">
-          <NCard
-            v-for="profile in profiles"
-            :key="profile.name"
-            class="profile-card"
-            :class="{ active: profile.isActive }"
-          >
-            <div class="profile-row">
-              <div class="profile-info">
-                <div class="profile-title">
-                  <span>{{ profile.name }}</span>
-                  <NTag v-if="profile.isActive" type="success" size="small">当前使用</NTag>
-                </div>
-                <div class="profile-sub">{{ profile.subtitle }}</div>
-                <div class="profile-desc">{{ profile.detail }}</div>
-              </div>
-              <div class="profile-actions">
-                <NButton size="small" type="primary" @click="enableProfile(profile.name)">启用</NButton>
-                <NButton size="small" @click="editProfile(profile.name)">编辑</NButton>
-                <NButton size="small" @click="copyProfile(profile.name)">复制</NButton>
-                <NButton size="small" type="error" secondary @click="deleteProfile(profile.name)">
-                  删除
-                </NButton>
-              </div>
+          <div v-else>
+            <div v-if="profiles.length === 0" class="empty-state">
+              <p>暂无配置方案</p>
+              <p class="muted">点击"新建方案"创建一个</p>
             </div>
-          </NCard>
-        </div>
-      </div>
+
+            <div v-else class="profiles-list">
+              <NCard
+                v-for="profile in profiles"
+                :key="profile.name"
+                class="profile-card"
+                :class="{ active: profile.isActive }"
+              >
+                <div class="profile-row">
+                  <div class="profile-info">
+                    <div class="profile-title">
+                      <span>{{ profile.name }}</span>
+                      <NTag v-if="profile.isActive" type="success" size="small">当前使用</NTag>
+                    </div>
+                    <div class="profile-sub">{{ profile.subtitle }}</div>
+                    <div class="profile-desc">{{ profile.detail }}</div>
+                  </div>
+                  <div class="profile-actions">
+                    <NButton size="small" type="primary" @click="enableProfile(profile.name)">启用</NButton>
+                    <NButton size="small" @click="editProfile(profile.name)">编辑</NButton>
+                    <NButton size="small" @click="copyProfile(profile.name)">复制</NButton>
+                    <NButton size="small" type="error" secondary @click="deleteProfile(profile.name)">
+                      删除
+                    </NButton>
+                  </div>
+                </div>
+              </NCard>
+            </div>
+          </div>
+        </NTabPane>
+
+        <!-- Skills Tab -->
+        <NTabPane name="skills" tab="技能管理">
+          <div class="settings-header">
+            <h2>技能管理</h2>
+            <NSpace>
+              <NButton @click="openSkillsFolder">打开技能文件夹</NButton>
+              <NButton type="primary" @click="openCreateSkillModal">新建技能</NButton>
+            </NSpace>
+          </div>
+
+          <div v-if="skillsStore.isLoading" class="loading-state">
+            <NSpin size="small" />
+            <span>正在加载技能...</span>
+          </div>
+
+          <div v-else>
+            <div v-if="skillsStore.availableSkills.length === 0" class="empty-state">
+              <p>暂无可用技能</p>
+              <p class="muted">点击"新建技能"创建一个，或在技能文件夹中添加 SKILL.md 文件</p>
+              <p class="muted" style="margin-top: 8px;">技能文件夹: {{ skillsDir }}</p>
+            </div>
+
+            <div v-else class="skills-list">
+              <NCard
+                v-for="skill in skillsStore.availableSkills"
+                :key="skill.name"
+                class="skill-card"
+              >
+                <div class="skill-row">
+                  <div class="skill-info">
+                    <div class="skill-title">
+                      <span>/{{ skill.name }}</span>
+                    </div>
+                    <div class="skill-desc">{{ skill.description }}</div>
+                  </div>
+                  <div class="skill-actions">
+                    <NButton size="small" type="error" secondary @click="handleDeleteSkill(skill.name)">
+                      删除
+                    </NButton>
+                  </div>
+                </div>
+              </NCard>
+            </div>
+          </div>
+
+          <div class="skills-help">
+            <NDivider />
+            <h3>使用说明</h3>
+            <ul>
+              <li>在聊天框中输入 <code>/技能名</code> 即可调用技能</li>
+              <li>例如：<code>/export 今天</code> 导出今天的屏幕活动记录</li>
+              <li>技能会自动出现在 AI 的提示中，AI 会在合适的时候建议使用</li>
+            </ul>
+          </div>
+        </NTabPane>
+      </NTabs>
 
       <NDrawer v-model:show="drawerVisible" placement="right" width="520">
         <NDrawerContent :title="drawerTitle" closable>
@@ -599,6 +740,40 @@ onMounted(async () => {
           </NForm>
         </NDrawerContent>
       </NDrawer>
+
+      <!-- 创建技能模态框 -->
+      <NModal v-model:show="skillModalVisible" preset="card" title="新建技能" style="width: 600px;">
+        <NForm label-placement="left" label-width="100">
+          <NFormItem label="技能名称">
+            <NInput
+              v-model:value="newSkillName"
+              placeholder="小写字母、数字和连字符，如 my-skill"
+            />
+          </NFormItem>
+          <NFormItem label="技能描述">
+            <NInput
+              v-model:value="newSkillDescription"
+              type="textarea"
+              :autosize="{ minRows: 2, maxRows: 4 }"
+              placeholder="描述技能的功能和使用场景"
+            />
+          </NFormItem>
+          <NFormItem label="技能指令">
+            <NInput
+              v-model:value="newSkillInstructions"
+              type="textarea"
+              :autosize="{ minRows: 8, maxRows: 16 }"
+              placeholder="Markdown 格式的技能指令"
+            />
+          </NFormItem>
+        </NForm>
+        <template #footer>
+          <NSpace justify="end">
+            <NButton @click="skillModalVisible = false">取消</NButton>
+            <NButton type="primary" @click="createNewSkill">创建</NButton>
+          </NSpace>
+        </template>
+      </NModal>
     </NLayoutContent>
   </NLayout>
 </template>
@@ -698,5 +873,71 @@ onMounted(async () => {
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+/* Skills 样式 */
+.skills-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.skill-card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.skill-row {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.skill-info {
+  flex: 1;
+  min-width: 240px;
+}
+
+.skill-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #63e2b7;
+}
+
+.skill-desc {
+  margin-top: 6px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 14px;
+}
+
+.skill-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.skills-help {
+  margin-top: 24px;
+}
+
+.skills-help h3 {
+  color: rgba(255, 255, 255, 0.8);
+  margin-bottom: 12px;
+}
+
+.skills-help ul {
+  color: rgba(255, 255, 255, 0.6);
+  padding-left: 20px;
+}
+
+.skills-help li {
+  margin: 8px 0;
+}
+
+.skills-help code {
+  background: rgba(99, 226, 183, 0.1);
+  color: #63e2b7;
+  padding: 2px 6px;
+  border-radius: 4px;
 }
 </style>

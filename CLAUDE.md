@@ -50,24 +50,23 @@ Vue Frontend (IPC) → Tauri Commands → Rust Backend
 | `commands/mod.rs` | Tauri IPC command handlers - entry point for all frontend calls |
 | `capture/mod.rs` | Screen capture loop with perceptual hash comparison to skip unchanged frames |
 | `capture/screen.rs` | Screenshot capture and base64 encoding |
-| `capture/scheduler.rs` | Tokio-based interval scheduler with stop channel |
-| `model/mod.rs` | ModelManager - unified AI model interface |
-| `model/api.rs` | OpenAI/Claude API client |
+| `model/mod.rs` | ModelManager - unified AI model interface with Tool Use support |
+| `model/api.rs` | OpenAI/Claude API client with function calling |
 | `model/ollama.rs` | Ollama local model client |
 | `storage/mod.rs` | Config, SummaryRecord, AggregatedRecord, smart search |
-| `analysis/diff.rs` | Text similarity comparison (Jaccard index) for change detection |
-| `assistant/` | Intent parsing and context building for chat |
+| `skills/mod.rs` | SkillManager - skill discovery, loading, creation |
+| `skills/parser.rs` | SKILL.md parser (YAML frontmatter + Markdown) |
 
 ### Key Frontend Files (`src/`)
 
 | File | Purpose |
 |------|---------|
-| `views/MainView.vue` | Chat interface, capture controls, alert listener |
-| `views/SettingsView.vue` | Profile management, model/capture/storage config |
+| `views/MainView.vue` | Chat interface, capture controls, `/skill-name` syntax detection |
+| `views/SettingsView.vue` | Profile management, model/capture/storage config, Skills management |
 | `views/HistoryView.vue` | Timeline of recorded activities |
 | `stores/capture.ts` | Capture state management with auto-restart |
 | `stores/chat.ts` | Chat messages state |
-| `stores/settings.ts` | Settings state |
+| `stores/skills.ts` | Skills state management (list, create, delete) |
 
 ### Important Patterns
 
@@ -110,3 +109,50 @@ Key config fields in `storage/mod.rs`:
 - `capture.recent_summary_limit`: Max recent summaries for context
 - `storage.max_context_chars`: Max chars for AI context (default 10000)
 - `storage.retention_days`: How long to keep history (default 7)
+
+## Skills System
+
+Skills are reusable AI capabilities that can be invoked manually (`/skill-name`) or automatically via Tool Use.
+
+### Skills Directory Structure
+```
+data/skills/
+├── calculator/
+│   └── SKILL.md
+├── export/
+│   └── SKILL.md
+└── custom-skill/
+    └── SKILL.md
+```
+
+### SKILL.md Format
+```markdown
+---
+name: skill-name
+description: Description used by AI to decide when to invoke this skill
+metadata:
+  author: screen-assistant
+  version: "1.0"
+---
+
+# Skill Title
+
+## Instructions
+Markdown content with skill instructions...
+```
+
+### Skill Invocation Flow
+1. **Manual**: User types `/skill-name args` in chat
+2. **Auto (Tool Use)**: AI decides to call `invoke_skill` tool based on user request and skill descriptions (API mode only)
+
+### Key Skill Commands (Tauri)
+- `list_skills`: Get all available skill metadata
+- `get_skill`: Load full skill with instructions
+- `invoke_skill`: Execute a skill with args
+- `create_skill`: Create new skill
+- `delete_skill`: Remove a skill
+
+### Tool Use Implementation
+- `model/api.rs`: `ChatWithToolsResult` enum, `chat_with_tools()` method
+- `commands/mod.rs`: `chat_with_assistant()` handles tool calls loop
+- Only works with API providers (OpenAI/Claude), Ollama falls back to text hints

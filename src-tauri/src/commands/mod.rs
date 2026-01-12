@@ -1,6 +1,7 @@
 use crate::capture::CaptureManager;
-use crate::model::ModelManager;
+use crate::model::{ModelManager, ChatWithToolsResult};
 use crate::storage::{Config, StorageManager, SummaryRecord, SearchQuery, TimeRange};
+use crate::skills::{SkillManager, SkillMetadata, Skill};
 use chrono::{Duration, Local, NaiveDateTime, TimeZone};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -103,7 +104,7 @@ pub struct CaptureStatus {
     pub last_capture_time: Option<String>,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Clone)]
 pub struct ChatHistoryMessage {
     pub role: String,
     pub content: String,
@@ -117,6 +118,10 @@ pub async fn chat_with_assistant(
     let storage = StorageManager::new();
     let config = storage.load_config().map_err(|e| e.to_string())?;
     let model_manager = ModelManager::new();
+    let skill_manager = SkillManager::new();
+
+    // 获取可用 skills 列表（用于自动发现和 Tool Use）
+    let available_skills = skill_manager.discover_skills().unwrap_or_default();
 
     // 分析用户问题，提取时间范围和关键词
     let query = parse_user_query(&message);
@@ -153,9 +158,133 @@ pub async fn chat_with_assistant(
     // 构建上下文（使用配置中的最大字符数）
     let context = search_result.build_context(config.storage.max_context_chars, query.include_detail);
 
-    // 调用模型（传递对话历史）
+    // 如果有可用 skills 且使用 API 模式，使用 Tool Use
+    if !available_skills.is_empty() && config.model.provider == "api" {
+        // 使用 Tool Use 进行对话
+        let result = model_manager
+            .chat_with_tools(&config.model, &context, &message, history.clone(), &available_skills)
+            .await?;
+
+        match result {
+            ChatWithToolsResult::Text(text) => {
+                return Ok(text);
+            }
+            ChatWithToolsResult::ToolCalls(tool_calls) => {
+                // 处理工具调用
+                let mut final_response = String::new();
+
+                for tool_call in tool_calls {
+                    if tool_call.function.name == "invoke_skill" {
+                        // 解析参数
+                        let args: serde_json::Value = serde_json::from_str(&tool_call.function.arguments)
+                            .map_err(|e| format!("解析工具参数失败: {}", e))?;
+
+                        let skill_name = args.get("skill_name")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| "缺少 skill_name 参数".to_string())?;
+
+                        let skill_args = args.get("args")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+
+                        // 执行 skill
+                        let skill_result = execute_skill_internal(
+                            &storage,
+                            &config,
+                            &model_manager,
+                            &skill_manager,
+                            skill_name,
+                            skill_args,
+                            history.clone(),
+                        ).await?;
+
+                        // 将 skill 结果作为最终响应
+                        // 在实际应用中，可能需要将结果返回给 AI 继续处理
+                        final_response = format!("🔧 已调用技能 `/{}`\n\n{}", skill_name, skill_result);
+                    }
+                }
+
+                if !final_response.is_empty() {
+                    return Ok(final_response);
+                }
+            }
+        }
+    }
+
+    // 回退到普通对话（无 Tool Use 或 Ollama 模式）
+    let skills_hint = if !available_skills.is_empty() {
+        let skills_list: Vec<String> = available_skills
+            .iter()
+            .filter(|s| s.user_invocable.unwrap_or(true))
+            .map(|s| format!("- /{}: {}", s.name, s.description))
+            .collect();
+
+        if skills_list.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\n\n## 可用技能\n用户可以使用以下技能（输入 /技能名 调用）：\n{}\n\n如果用户的请求与某个技能相关，你可以建议用户使用该技能。",
+                skills_list.join("\n")
+            )
+        }
+    } else {
+        String::new()
+    };
+
+    let context_with_skills = format!("{}{}", context, skills_hint);
     model_manager
-        .chat_with_history(&config.model, &context, &message, history)
+        .chat_with_history(&config.model, &context_with_skills, &message, history)
+        .await
+}
+
+/// 内部执行 skill 的函数
+async fn execute_skill_internal(
+    storage: &StorageManager,
+    config: &Config,
+    model_manager: &ModelManager,
+    skill_manager: &SkillManager,
+    skill_name: &str,
+    args: Option<String>,
+    history: Option<Vec<ChatHistoryMessage>>,
+) -> Result<String, String> {
+    // 加载 skill
+    let skill = skill_manager.load_skill(skill_name)?;
+
+    // 构建用户消息（包含参数）
+    let user_message = if let Some(ref args_str) = args {
+        format!("执行技能 /{}: {}", skill_name, args_str)
+    } else {
+        format!("执行技能 /{}", skill_name)
+    };
+
+    // 获取屏幕记录上下文
+    let query = parse_user_query(&args.unwrap_or_default());
+    let search_result = storage.smart_search(&query).unwrap_or_default();
+    let screen_context = search_result.build_context(config.storage.max_context_chars, true);
+
+    // 构建 system prompt，注入 skill 指令
+    let system_prompt = format!(
+        r#"你是一个屏幕监控助手。现在用户调用了技能 "{}"。
+
+## 技能说明
+{}
+
+## 技能指令
+{}
+
+## 屏幕活动记录
+{}
+
+请根据技能指令和屏幕活动记录，完成用户的请求。"#,
+        skill.metadata.name,
+        skill.metadata.description,
+        skill.instructions,
+        screen_context
+    );
+
+    // 调用模型
+    model_manager
+        .chat_with_system_prompt(&config.model, &system_prompt, &user_message, history)
         .await
 }
 
@@ -398,4 +527,98 @@ pub async fn get_recent_alerts(since: Option<String>) -> Result<Vec<AlertRecord>
     }
 
     Ok(alerts)
+}
+
+// ==================== Skills 相关命令 ====================
+
+/// 列出所有可用的 skills
+#[tauri::command]
+pub async fn list_skills() -> Result<Vec<SkillMetadata>, String> {
+    let skill_manager = SkillManager::new();
+    skill_manager.discover_skills()
+}
+
+/// 获取完整的 skill 信息
+#[tauri::command]
+pub async fn get_skill(name: String) -> Result<Skill, String> {
+    let skill_manager = SkillManager::new();
+    skill_manager.load_skill(&name)
+}
+
+/// 调用 skill
+#[tauri::command]
+pub async fn invoke_skill(
+    name: String,
+    args: Option<String>,
+    history: Option<Vec<ChatHistoryMessage>>,
+) -> Result<String, String> {
+    let storage = StorageManager::new();
+    let config = storage.load_config().map_err(|e| e.to_string())?;
+    let model_manager = ModelManager::new();
+    let skill_manager = SkillManager::new();
+
+    // 加载 skill
+    let skill = skill_manager.load_skill(&name)?;
+
+    // 构建用户消息（包含参数）
+    let user_message = if let Some(ref args_str) = args {
+        format!("执行技能 /{}: {}", name, args_str)
+    } else {
+        format!("执行技能 /{}", name)
+    };
+
+    // 获取屏幕记录上下文
+    let query = parse_user_query(&args.unwrap_or_default());
+    let search_result = storage.smart_search(&query).unwrap_or_default();
+    let screen_context = search_result.build_context(config.storage.max_context_chars, true);
+
+    // 构建 system prompt，注入 skill 指令
+    let system_prompt = format!(
+        r#"你是一个屏幕监控助手。现在用户调用了技能 "{}"。
+
+## 技能说明
+{}
+
+## 技能指令
+{}
+
+## 屏幕活动记录
+{}
+
+请根据技能指令和屏幕活动记录，完成用户的请求。"#,
+        skill.metadata.name,
+        skill.metadata.description,
+        skill.instructions,
+        screen_context
+    );
+
+    // 调用模型
+    model_manager
+        .chat_with_system_prompt(&config.model, &system_prompt, &user_message, history)
+        .await
+}
+
+/// 创建新的 skill
+#[tauri::command]
+pub async fn create_skill(
+    name: String,
+    description: String,
+    instructions: String,
+) -> Result<(), String> {
+    let skill_manager = SkillManager::new();
+    skill_manager.create_skill(&name, &description, &instructions)
+}
+
+/// 删除 skill
+#[tauri::command]
+pub async fn delete_skill(name: String) -> Result<(), String> {
+    let skill_manager = SkillManager::new();
+    skill_manager.delete_skill(&name)
+}
+
+/// 获取 skills 目录路径
+#[tauri::command]
+pub async fn get_skills_dir() -> Result<String, String> {
+    let skill_manager = SkillManager::new();
+    Ok(skill_manager.get_skills_dir().to_string_lossy().to_string())
 }

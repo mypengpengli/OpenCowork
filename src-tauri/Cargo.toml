@@ -28,6 +28,7 @@ thiserror = "1"
 parking_lot = "0.12"
 regex = "1"
 async-trait = "0.1"
+serde_yaml = "0.9"
 
 [features]
 default = ["custom-protocol"]

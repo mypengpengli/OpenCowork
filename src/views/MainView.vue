@@ -58,10 +58,36 @@ async function sendMessage() {
       .slice(0, -1)  // Exclude the user message we just added
       .map(m => ({ role: m.role, content: m.content }))
 
-    const response = await invoke<string>('chat_with_assistant', {
-      message: userMessage,
-      history: historyForModel.length > 0 ? historyForModel : null
-    })
+    let response: string
+
+    // 检测 /skill-name 语法
+    const skillMatch = userMessage.match(/^\/([a-z0-9-]+)(?:\s+(.*))?$/i)
+    if (skillMatch) {
+      const [, skillName, args] = skillMatch
+
+      // 显示正在调用 skill 的提示
+      chatStore.addMessage({
+        role: 'assistant',
+        content: `🔧 正在调用技能 \`/${skillName}\`...`,
+        timestamp: new Date().toISOString()
+      })
+
+      // 调用 skill
+      response = await invoke<string>('invoke_skill', {
+        name: skillName.toLowerCase(),
+        args: args || null,
+        history: historyForModel.length > 0 ? historyForModel : null
+      })
+
+      // 移除"正在调用"的临时消息，替换为实际结果
+      chatStore.messages.pop()
+    } else {
+      // 普通对话
+      response = await invoke<string>('chat_with_assistant', {
+        message: userMessage,
+        history: historyForModel.length > 0 ? historyForModel : null
+      })
+    }
 
     chatStore.addMessage({
       role: 'assistant',
