@@ -1,8 +1,175 @@
-# Screen Assistant - 你的 AI 工作伴侣
+# Screen Assistant - Your AI Work Companion
 
 [![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/mypengpengli/screen-assistant)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/mypengpengli/screen-assistant?style=social)](https://github.com/mypengpengli/screen-assistant)
+
+**[English](#english) | [中文](#中文)**
+
+---
+
+<a name="english"></a>
+
+> **Never miss an error message again.**
+
+Have you ever experienced this?
+
+- During deployment, a red error flashes by in the terminal before you can read it
+- While debugging, the error message is too long and gets overwritten before you can copy it
+- You want to ask AI for help but can't remember what the error was
+- Constantly switching between coding and searching, breaking your flow
+
+**Screen Assistant was built to solve these pain points.**
+
+## What Can It Do?
+
+### 🎯 Automatically Capture Every Error
+
+From the moment you click "Start Monitoring", Screen Assistant works like a tireless assistant, continuously watching your screen. Whether it's compilation errors, runtime exceptions, or console warnings — **every detail is recorded**.
+
+When an error is detected, AI proactively notifies you:
+- What error occurred
+- Possible causes
+- Suggested solutions
+
+**No more frantically taking screenshots or copy-pasting.**
+
+### 💬 Instant Recall with Natural Conversation
+
+Forgot what that error was? Just ask:
+
+- *"What was that error just now?"*
+- *"What errors did I encounter in the last 10 minutes?"*
+- *"How many compilation failures did I have this afternoon?"*
+
+Screen Assistant understands natural language and supports multi-turn conversations, like chatting with a colleague who knows your entire work history.
+
+### 🔧 Skills System — Infinitely Extensible
+
+This is Screen Assistant's most powerful feature.
+
+**Skills are reusable AI capability modules**. You can:
+
+- Type `/export` to export activity records as a report
+- Type `/analyze` for AI to deeply analyze your work patterns
+- Create custom Skills to have AI perform specific tasks
+
+Even more powerful: **AI can automatically invoke Skills**. When you say "summarize my work today", AI automatically determines which Skill to use.
+
+### 🚀 2.0 New Feature: AI-Managed Skills
+
+**This is a revolutionary update.**
+
+In version 2.0, you no longer need to manually write SKILL.md files. Just tell AI in natural language:
+
+- *"Create a code review skill for me"* → AI automatically generates the complete Skill
+- *"Modify the export skill to support Markdown format"* → AI automatically updates the Skill
+- *"Delete the test skill"* → AI automatically cleans up
+
+**AI becomes your skill factory.** Just describe your needs, and AI will:
+1. Understand your intent
+2. Design the skill structure
+3. Write detailed instructions
+4. Automatically save to the system
+
+This means:
+- **Zero barrier to creation**: No need to understand SKILL.md format or write code
+- **Rapid iteration**: Skill not working well? One sentence to improve it
+- **Unlimited possibilities**: Any workflow you can imagine can become a Skill
+
+**For enterprise users**: Create team-specific Skills to standardize workflows and boost collaboration.
+
+**For individual developers**: Encapsulate common operations into Skills, completing complex tasks with a single sentence.
+
+### 🧠 Smart Frame Skipping, Save Money
+
+Worried about token consumption? Screen Assistant uses perceptual hashing to compare frames. **When the screen hasn't changed, analysis is automatically skipped**, significantly reducing API costs while ensuring no important information is missed.
+
+## Use Cases
+
+| Scenario | Pain Point | Screen Assistant's Solution |
+|----------|------------|----------------------------|
+| **Deployment** | Logs scroll too fast, errors flash by | Automatically capture and save all errors |
+| **Debugging** | Error too long, can't copy in time | Complete recording, query anytime |
+| **Learning** | Don't know what went wrong | AI proactively analyzes and suggests |
+| **Remote Collaboration** | Hard to describe the problem | Export records to precisely reproduce issues |
+| **Work Review** | Forgot what you did today | Natural language query for any time period |
+
+## Technical Highlights
+
+- **Tauri 2 + Rust**: Native performance, minimal resource usage
+- **Vue 3 + TypeScript**: Modern frontend, smooth experience
+- **Dual Model Support**: Cloud API (OpenAI/Claude) or local Ollama
+- **Two-Layer Storage**: Raw records + smart aggregation, balancing detail and efficiency
+- **Privacy First**: All data stored locally, screenshots never saved to disk
+- **Tool Use Support**: AI can autonomously create, modify, and delete skills
+
+## Quick Start
+
+### Requirements
+
+- Node.js 18+
+- Rust 1.70+
+- Optional: Ollama (for local models)
+
+### Installation
+
+```bash
+git clone https://github.com/mypengpengli/screen-assistant.git
+cd screen-assistant
+npm install
+npm run tauri dev
+```
+
+### Configure AI Model
+
+#### Cloud API (Recommended)
+
+1. Settings → Model Source → `API (Cloud)`
+2. Select API Type: `OpenAI` / `Claude` / `Custom`
+3. Enter API URL and key
+4. Recommended models: `gpt-4o` or `claude-3-opus-20240229`
+
+#### Local Ollama
+
+```bash
+ollama pull llava
+```
+
+Then select `Ollama (Local)` in settings, URL: `http://localhost:11434`
+
+## Data Storage
+
+```
+Windows: %LOCALAPPDATA%\screen-assistant\data\
+macOS:   ~/Library/Application Support/screen-assistant/data/
+Linux:   ~/.local/share/screen-assistant/data/
+```
+
+**Privacy Guarantee**:
+- All data stored locally only
+- Screenshots are not saved to disk, only AI-analyzed text summaries
+- Images are sent to AI providers during API calls
+
+## Build
+
+```bash
+# Development
+npm run tauri dev
+
+# Production
+npm run tauri build
+```
+
+## License
+
+MIT
+
+---
+
+<a name="中文"></a>
+
+# Screen Assistant - 你的 AI 工作伴侣
 
 > **再也不用担心错过任何一个报错信息了。**
 
