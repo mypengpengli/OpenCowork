@@ -143,7 +143,7 @@ Markdown content with skill instructions...
 
 ### Skill Invocation Flow
 1. **Manual**: User types `/skill-name args` in chat
-2. **Auto (Tool Use)**: AI decides to call `invoke_skill` tool based on user request and skill descriptions (API mode only)
+2. **Auto (Tool Use)**: AI decides to call `invoke_skill` or `manage_skill` tool based on user request (API mode only)
 
 ### Key Skill Commands (Tauri)
 - `list_skills`: Get all available skill metadata
@@ -153,6 +153,8 @@ Markdown content with skill instructions...
 - `delete_skill`: Remove a skill
 
 ### Tool Use Implementation
-- `model/api.rs`: `ChatWithToolsResult` enum, `chat_with_tools()` method
+- `model/api.rs`: `create_skill_tools()` creates two tools:
+  - `invoke_skill`: Call an existing skill
+  - `manage_skill`: Create/update/delete skills (action: "create" | "update" | "delete")
 - `commands/mod.rs`: `chat_with_assistant()` handles tool calls loop
 - Only works with API providers (OpenAI/Claude), Ollama falls back to text hints

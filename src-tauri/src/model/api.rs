@@ -387,54 +387,86 @@ impl ApiClient {
         }
     }
 
-    /// 创建 invoke_skill 工具定义
-    pub fn create_skill_tool(skills: &[crate::skills::SkillMetadata]) -> Vec<Tool> {
-        if skills.is_empty() {
-            return vec![];
-        }
+    /// 创建技能相关工具定义（invoke_skill + manage_skill）
+    pub fn create_skill_tools(skills: &[crate::skills::SkillMetadata]) -> Vec<Tool> {
+        let mut tools = Vec::new();
 
-        // 构建 skills 的 enum 描述
-        let skill_names: Vec<String> = skills
-            .iter()
-            .filter(|s| s.user_invocable.unwrap_or(true))
-            .map(|s| s.name.clone())
-            .collect();
-
-        if skill_names.is_empty() {
-            return vec![];
-        }
-
-        let skill_descriptions: Vec<String> = skills
-            .iter()
-            .filter(|s| s.user_invocable.unwrap_or(true))
-            .map(|s| format!("- {}: {}", s.name, s.description))
-            .collect();
-
-        vec![Tool {
+        // 1. manage_skill 工具 - 始终可用，用于创建/更新/删除技能
+        tools.push(Tool {
             tool_type: "function".to_string(),
             function: ToolFunction {
-                name: "invoke_skill".to_string(),
-                description: format!(
-                    "调用一个技能来完成特定任务。可用的技能有：\n{}",
-                    skill_descriptions.join("\n")
-                ),
+                name: "manage_skill".to_string(),
+                description: "管理技能：创建新技能、更新现有技能或删除技能。当用户想要创建、修改或删除技能时使用此工具。".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
-                        "skill_name": {
+                        "action": {
                             "type": "string",
-                            "enum": skill_names,
-                            "description": "要调用的技能名称"
+                            "enum": ["create", "update", "delete"],
+                            "description": "操作类型：create=创建新技能，update=更新现有技能，delete=删除技能"
                         },
-                        "args": {
+                        "name": {
                             "type": "string",
-                            "description": "传递给技能的参数（可选）"
+                            "description": "技能名称，只能包含小写字母、数字和连字符，1-64字符，不能以连字符开头或结尾"
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "技能描述，说明这个技能做什么、什么时候使用（create/update 时必填）"
+                        },
+                        "instructions": {
+                            "type": "string",
+                            "description": "技能的详细指令，Markdown 格式（create/update 时必填）"
                         }
                     },
-                    "required": ["skill_name"]
+                    "required": ["action", "name"]
                 }),
             },
-        }]
+        });
+
+        // 2. invoke_skill 工具 - 仅当有可用技能时添加
+        if !skills.is_empty() {
+            let skill_names: Vec<String> = skills
+                .iter()
+                .filter(|s| s.user_invocable.unwrap_or(true))
+                .map(|s| s.name.clone())
+                .collect();
+
+            if !skill_names.is_empty() {
+                let skill_descriptions: Vec<String> = skills
+                    .iter()
+                    .filter(|s| s.user_invocable.unwrap_or(true))
+                    .map(|s| format!("- {}: {}", s.name, s.description))
+                    .collect();
+
+                tools.push(Tool {
+                    tool_type: "function".to_string(),
+                    function: ToolFunction {
+                        name: "invoke_skill".to_string(),
+                        description: format!(
+                            "调用一个技能来完成特定任务。可用的技能有：\n{}",
+                            skill_descriptions.join("\n")
+                        ),
+                        parameters: serde_json::json!({
+                            "type": "object",
+                            "properties": {
+                                "skill_name": {
+                                    "type": "string",
+                                    "enum": skill_names,
+                                    "description": "要调用的技能名称"
+                                },
+                                "args": {
+                                    "type": "string",
+                                    "description": "传递给技能的参数（可选）"
+                                }
+                            },
+                            "required": ["skill_name"]
+                        }),
+                    },
+                });
+            }
+        }
+
+        tools
     }
 
     /// 带 Tool Use 的对话

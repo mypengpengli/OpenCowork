@@ -158,8 +158,8 @@ pub async fn chat_with_assistant(
     // 构建上下文（使用配置中的最大字符数）
     let context = search_result.build_context(config.storage.max_context_chars, query.include_detail);
 
-    // 如果有可用 skills 且使用 API 模式，使用 Tool Use
-    if !available_skills.is_empty() && config.model.provider == "api" {
+    // 使用 API 模式时启用 Tool Use
+    if config.model.provider == "api" {
         // 使用 Tool Use 进行对话
         let result = model_manager
             .chat_with_tools(&config.model, &context, &message, history.clone(), &available_skills)
@@ -174,33 +174,104 @@ pub async fn chat_with_assistant(
                 let mut final_response = String::new();
 
                 for tool_call in tool_calls {
-                    if tool_call.function.name == "invoke_skill" {
-                        // 解析参数
-                        let args: serde_json::Value = serde_json::from_str(&tool_call.function.arguments)
-                            .map_err(|e| format!("解析工具参数失败: {}", e))?;
+                    match tool_call.function.name.as_str() {
+                        "invoke_skill" => {
+                            // 解析参数
+                            let args: serde_json::Value = serde_json::from_str(&tool_call.function.arguments)
+                                .map_err(|e| format!("解析工具参数失败: {}", e))?;
 
-                        let skill_name = args.get("skill_name")
-                            .and_then(|v| v.as_str())
-                            .ok_or_else(|| "缺少 skill_name 参数".to_string())?;
+                            let skill_name = args.get("skill_name")
+                                .and_then(|v| v.as_str())
+                                .ok_or_else(|| "缺少 skill_name 参数".to_string())?;
 
-                        let skill_args = args.get("args")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
+                            let skill_args = args.get("args")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
 
-                        // 执行 skill
-                        let skill_result = execute_skill_internal(
-                            &storage,
-                            &config,
-                            &model_manager,
-                            &skill_manager,
-                            skill_name,
-                            skill_args,
-                            history.clone(),
-                        ).await?;
+                            // 执行 skill
+                            let skill_result = execute_skill_internal(
+                                &storage,
+                                &config,
+                                &model_manager,
+                                &skill_manager,
+                                skill_name,
+                                skill_args,
+                                history.clone(),
+                            ).await?;
 
-                        // 将 skill 结果作为最终响应
-                        // 在实际应用中，可能需要将结果返回给 AI 继续处理
-                        final_response = format!("🔧 已调用技能 `/{}`\n\n{}", skill_name, skill_result);
+                            // 将 skill 结果作为最终响应
+                            final_response = format!("🔧 已调用技能 `/{}`\n\n{}", skill_name, skill_result);
+                        }
+                        "manage_skill" => {
+                            // 解析参数
+                            let args: serde_json::Value = serde_json::from_str(&tool_call.function.arguments)
+                                .map_err(|e| format!("解析工具参数失败: {}", e))?;
+
+                            let action = args.get("action")
+                                .and_then(|v| v.as_str())
+                                .ok_or_else(|| "缺少 action 参数".to_string())?;
+
+                            let name = args.get("name")
+                                .and_then(|v| v.as_str())
+                                .ok_or_else(|| "缺少 name 参数".to_string())?;
+
+                            match action {
+                                "create" => {
+                                    let description = args.get("description")
+                                        .and_then(|v| v.as_str())
+                                        .ok_or_else(|| "创建技能需要 description 参数".to_string())?;
+                                    let instructions = args.get("instructions")
+                                        .and_then(|v| v.as_str())
+                                        .ok_or_else(|| "创建技能需要 instructions 参数".to_string())?;
+
+                                    match skill_manager.create_skill(name, description, instructions) {
+                                        Ok(_) => {
+                                            final_response = format!(
+                                                "✅ 技能 `{}` 创建成功！\n\n**描述**: {}\n\n你现在可以通过 `/{name}` 来调用它。",
+                                                name, description
+                                            );
+                                        }
+                                        Err(e) => {
+                                            final_response = format!("❌ 创建技能失败: {}", e);
+                                        }
+                                    }
+                                }
+                                "update" => {
+                                    let description = args.get("description")
+                                        .and_then(|v| v.as_str())
+                                        .ok_or_else(|| "更新技能需要 description 参数".to_string())?;
+                                    let instructions = args.get("instructions")
+                                        .and_then(|v| v.as_str())
+                                        .ok_or_else(|| "更新技能需要 instructions 参数".to_string())?;
+
+                                    match skill_manager.update_skill(name, description, instructions) {
+                                        Ok(_) => {
+                                            final_response = format!(
+                                                "✅ 技能 `{}` 更新成功！\n\n**新描述**: {}",
+                                                name, description
+                                            );
+                                        }
+                                        Err(e) => {
+                                            final_response = format!("❌ 更新技能失败: {}", e);
+                                        }
+                                    }
+                                }
+                                "delete" => {
+                                    match skill_manager.delete_skill(name) {
+                                        Ok(_) => {
+                                            final_response = format!("✅ 技能 `{}` 已删除。", name);
+                                        }
+                                        Err(e) => {
+                                            final_response = format!("❌ 删除技能失败: {}", e);
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    final_response = format!("❌ 未知操作: {}", action);
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
 

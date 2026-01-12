@@ -128,14 +128,16 @@ impl ModelManager {
 
 请根据上述操作记录，回答用户的问题。如果记录中没有相关信息，请如实告知。
 
-如果用户的请求需要使用某个技能来完成，请调用 invoke_skill 工具。"#,
+你有以下能力：
+1. 如果用户的请求需要使用某个技能来完成，请调用 invoke_skill 工具。
+2. 如果用户想要创建、修改或删除技能，请调用 manage_skill 工具。"#,
             context
         );
 
         match config.provider.as_str() {
             "api" => {
                 let api_client = ApiClient::new(&config.api);
-                let tools = ApiClient::create_skill_tool(available_skills);
+                let tools = ApiClient::create_skill_tools(available_skills);
                 api_client.chat_with_tools(&system_prompt, message, history, tools).await
             }
             "ollama" => {

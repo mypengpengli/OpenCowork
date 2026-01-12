@@ -142,6 +142,32 @@ impl SkillManager {
         Ok(())
     }
 
+    /// 更新已存在的 skill
+    pub fn update_skill(
+        &self,
+        name: &str,
+        description: &str,
+        instructions: &str,
+    ) -> Result<(), String> {
+        Self::validate_skill_name(name)?;
+
+        let skill_dir = self.skills_dir.join(name);
+        if !skill_dir.exists() {
+            return Err(format!("Skill '{}' 不存在", name));
+        }
+
+        let skill_md = skill_dir.join("SKILL.md");
+        let content = format!(
+            "---\nname: {}\ndescription: {}\n---\n\n{}",
+            name, description, instructions
+        );
+
+        std::fs::write(&skill_md, content)
+            .map_err(|e| format!("更新 SKILL.md 失败: {}", e))?;
+
+        Ok(())
+    }
+
     /// 删除 skill
     pub fn delete_skill(&self, name: &str) -> Result<(), String> {
         Self::validate_skill_name(name)?;

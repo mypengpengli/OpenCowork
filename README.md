@@ -1,5 +1,9 @@
 # Screen Assistant - 你的 AI 编程伴侣
 
+[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/mypengpengli/screen-assistant)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/mypengpengli/screen-assistant?style=social)](https://github.com/mypengpengli/screen-assistant)
+
 > **再也不用担心错过任何一个报错信息了。**
 
 你是否有过这样的经历？
@@ -46,6 +50,27 @@ Screen Assistant 理解自然语言，支持多轮对话，就像和一个了解
 
 更强大的是，**AI 可以自动调用 Skills**。当你说"帮我总结一下今天的工作"，AI 会自动判断需要调用哪个 Skill 来完成任务。
 
+### 🚀 2.0 新特性：AI 自主管理 Skills
+
+**这是一个革命性的更新。**
+
+在 2.0 版本中，你不再需要手动编写 SKILL.md 文件。只需用自然语言告诉 AI：
+
+- *"帮我创建一个代码审查技能"* → AI 自动生成完整的 Skill
+- *"修改 export 技能，让它支持 Markdown 格式"* → AI 自动更新 Skill 内容
+- *"删除 test 技能"* → AI 自动清理
+
+**AI 成为了你的技能工厂。** 你只需要描述需求，AI 会：
+1. 理解你的意图
+2. 设计技能结构
+3. 编写详细指令
+4. 自动保存到系统
+
+这意味着：
+- **零门槛创建**：不需要了解 SKILL.md 格式，不需要写代码
+- **快速迭代**：发现技能不好用？一句话让 AI 改进
+- **无限可能**：任何你能想到的工作流，都可以变成一个 Skill
+
 **对于企业用户**：可以为团队定制专属 Skills，统一工作流程，提升协作效率。
 
 **对于个人开发者**：可以把常用的操作封装成 Skill，一句话完成复杂任务。
@@ -71,6 +96,7 @@ Screen Assistant 理解自然语言，支持多轮对话，就像和一个了解
 - **双模型支持**：云端 API (OpenAI/Claude) 或本地 Ollama，灵活选择
 - **两层存储架构**：原始记录 + 智能聚合，平衡详细度与存储效率
 - **隐私优先**：所有数据本地存储，截图不落盘
+- **Tool Use 支持**：AI 可自主调用工具，实现技能的创建、修改、删除
 
 ## 快速开始
 
