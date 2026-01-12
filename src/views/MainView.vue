@@ -4,16 +4,52 @@ import { NLayout, NLayoutContent, NInput, NButton, NSpace, NSpin, NTag, NIcon, N
 import { Send, PlayCircleOutline, StopCircleOutline, AddOutline, SaveOutline } from '@vicons/ionicons5'
 import { useChatStore } from '../stores/chat'
 import { useCaptureStore } from '../stores/capture'
+import { useSkillsStore } from '../stores/skills'
 import MessageItem from '../components/Chat/MessageItem.vue'
 
 const chatStore = useChatStore()
 const captureStore = useCaptureStore()
+const skillsStore = useSkillsStore()
 const message = useMessage()
 
 const inputMessage = ref('')
 const messagesContainer = ref<HTMLElement | null>(null)
 const isLoading = ref(false)
 const isHistoryLoading = ref(false)
+
+// Skill 提示相关
+const showSkillHints = ref(false)
+const skillFilterText = ref('')
+const selectedSkillIndex = ref(0)
+
+// 过滤后的 Skills 列表
+const filteredSkills = computed(() => {
+  const skills = skillsStore.availableSkills.filter(s => s.user_invocable !== false)
+  if (!skillFilterText.value) return skills
+  const filter = skillFilterText.value.toLowerCase()
+  return skills.filter(s =>
+    s.name.toLowerCase().includes(filter) ||
+    s.description.toLowerCase().includes(filter)
+  )
+})
+
+// 监听输入变化，检测 / 触发
+watch(inputMessage, (newVal) => {
+  // 检测是否以 / 开头
+  if (newVal.startsWith('/')) {
+    const afterSlash = newVal.slice(1)
+    // 如果 / 后面没有空格，显示提示
+    if (!afterSlash.includes(' ')) {
+      skillFilterText.value = afterSlash
+      showSkillHints.value = true
+      selectedSkillIndex.value = 0
+    } else {
+      showSkillHints.value = false
+    }
+  } else {
+    showSkillHints.value = false
+  }
+})
 
 watch(
   () => captureStore.lastEvent,
@@ -206,10 +242,39 @@ function scrollToBottom() {
 }
 
 function handleKeydown(e: KeyboardEvent) {
+  // 如果 Skill 提示列表显示中，处理上下键和回车
+  if (showSkillHints.value && filteredSkills.value.length > 0) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      selectedSkillIndex.value = (selectedSkillIndex.value + 1) % filteredSkills.value.length
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      selectedSkillIndex.value = (selectedSkillIndex.value - 1 + filteredSkills.value.length) % filteredSkills.value.length
+      return
+    }
+    if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+      e.preventDefault()
+      selectSkill(filteredSkills.value[selectedSkillIndex.value].name)
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      showSkillHints.value = false
+      return
+    }
+  }
+
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     sendMessage()
   }
+}
+
+function selectSkill(skillName: string) {
+  inputMessage.value = `/${skillName} `
+  showSkillHints.value = false
 }
 
 async function toggleCapture() {
@@ -227,6 +292,8 @@ async function toggleCapture() {
 onMounted(async () => {
   scrollToBottom()
   captureStore.startStatusPolling()
+  // 加载 Skills 列表
+  await skillsStore.loadSkills()
 })
 
 onUnmounted(() => {
@@ -319,23 +386,43 @@ onUnmounted(() => {
       </div>
 
       <!-- 输入区域 -->
-      <div class="input-area">
-        <NInput
-          v-model:value="inputMessage"
-          type="textarea"
-          placeholder="输入你的问题..."
-          :autosize="{ minRows: 1, maxRows: 4 }"
-          @keydown="handleKeydown"
-        />
-        <NButton
-          type="primary"
-          :disabled="!inputMessage.trim() || isLoading"
-          @click="sendMessage"
-        >
-          <template #icon>
-            <NIcon><Send /></NIcon>
-          </template>
-        </NButton>
+      <div class="input-area-wrapper">
+        <!-- Skill 提示列表 -->
+        <div v-if="showSkillHints && filteredSkills.length > 0" class="skill-hints">
+          <div
+            v-for="(skill, index) in filteredSkills"
+            :key="skill.name"
+            class="skill-hint-item"
+            :class="{ selected: index === selectedSkillIndex }"
+            @click="selectSkill(skill.name)"
+            @mouseenter="selectedSkillIndex = index"
+          >
+            <span class="skill-name">/{{ skill.name }}</span>
+            <span class="skill-desc">{{ skill.description }}</span>
+          </div>
+        </div>
+        <div v-else-if="showSkillHints && filteredSkills.length === 0" class="skill-hints">
+          <div class="skill-hint-empty">没有匹配的技能</div>
+        </div>
+
+        <div class="input-area">
+          <NInput
+            v-model:value="inputMessage"
+            type="textarea"
+            placeholder="输入你的问题... (输入 / 查看可用技能)"
+            :autosize="{ minRows: 1, maxRows: 4 }"
+            @keydown="handleKeydown"
+          />
+          <NButton
+            type="primary"
+            :disabled="!inputMessage.trim() || isLoading"
+            @click="sendMessage"
+          >
+            <template #icon>
+              <NIcon><Send /></NIcon>
+            </template>
+          </NButton>
+        </div>
       </div>
     </NLayoutContent>
   </NLayout>
@@ -396,6 +483,59 @@ onUnmounted(() => {
   gap: 8px;
   padding: 16px;
   color: rgba(255, 255, 255, 0.6);
+}
+
+.input-area-wrapper {
+  position: relative;
+}
+
+.skill-hints {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 60px;
+  background: #1a1a1c;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.skill-hint-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.skill-hint-item:hover,
+.skill-hint-item.selected {
+  background: rgba(99, 226, 183, 0.1);
+}
+
+.skill-name {
+  color: #63e2b7;
+  font-weight: 500;
+  font-family: monospace;
+  white-space: nowrap;
+}
+
+.skill-desc {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-hint-empty {
+  padding: 12px 14px;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 13px;
 }
 
 .input-area {
