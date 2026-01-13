@@ -1,4 +1,4 @@
-import { createApp } from 'vue'
+import { createApp, watch } from 'vue'
 import { createPinia } from 'pinia'
 import { createRouter, createWebHistory } from 'vue-router'
 import App from './App.vue'
@@ -6,6 +6,8 @@ import MainView from './views/MainView.vue'
 import SettingsView from './views/SettingsView.vue'
 import HistoryView from './views/HistoryView.vue'
 import { useChatStore } from './stores/chat'
+import { useLocaleStore } from './stores/locale'
+import { translate } from './i18n'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -24,12 +26,39 @@ app.use(router)
 app.mount('#app')
 
 const chatStore = useChatStore(pinia)
+const localeStore = useLocaleStore(pinia)
 const startupGraceMs = 2000
 let lastAlertTimestamp: string | null = formatLocalTimestamp(new Date(Date.now() - startupGraceMs))
+
+watch(
+  localeStore.locale,
+  (locale) => {
+    document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en'
+  },
+  { immediate: true }
+)
+
+const t = (key: string, params?: Record<string, string | number>) =>
+  translate(localeStore.locale.value, key, params)
 
 function formatLocalTimestamp(date: Date): string {
   const pad = (value: number) => value.toString().padStart(2, '0')
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
+function formatAlertContent(
+  alertTypeRaw: string,
+  message: string,
+  suggestion?: string
+): string {
+  const alertTypeLabel = alertTypeRaw && alertTypeRaw !== 'unknown' ? alertTypeRaw : t('common.unknown')
+  let content = `${t('alert.detectedTitle')}\n\n`
+  content += `${t('alert.typeLine', { type: alertTypeLabel })}\n`
+  content += `${t('alert.messageLine', { message })}\n`
+  if (suggestion) {
+    content += `\n${t('alert.suggestionLine', { suggestion })}`
+  }
+  return content
 }
 
 async function setupAlertListener() {
@@ -44,12 +73,7 @@ async function setupAlertListener() {
     }>('assistant-alert', (event) => {
       const alert = event.payload
       const alertType = alert.issue_type || alert.error_type || 'unknown'
-      let content = `⚠️ **检测到问题**\n\n`
-      content += `**类型**: ${alertType}\n`
-      content += `**信息**: ${alert.message}\n`
-      if (alert.suggestion) {
-        content += `\n**建议**: ${alert.suggestion}`
-      }
+      const content = formatAlertContent(alertType, alert.message, alert.suggestion)
 
       chatStore.addAlert({
         role: 'assistant',
@@ -79,12 +103,7 @@ async function pollAlerts() {
     if (alerts && alerts.length > 0) {
       for (const alert of alerts) {
         const alertType = alert.issue_type || 'unknown'
-        let content = `⚠️ **检测到问题**\n\n`
-        content += `**类型**: ${alertType}\n`
-        content += `**信息**: ${alert.message}\n`
-        if (alert.suggestion) {
-          content += `\n**建议**: ${alert.suggestion}`
-        }
+        const content = formatAlertContent(alertType, alert.message, alert.suggestion)
 
         chatStore.addAlert({
           role: 'assistant',

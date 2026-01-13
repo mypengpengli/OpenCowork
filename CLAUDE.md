@@ -27,7 +27,7 @@ cargo test            # Run Rust tests
 
 ## Architecture Overview
 
-Screen Assistant is a Tauri 2 desktop application that monitors screen activity using AI vision models and provides an intelligent assistant for querying recent activities.
+OpenCowork is a Tauri 2 desktop application that monitors screen activity using AI vision models and provides an intelligent assistant for querying recent activities.
 
 ### Tech Stack
 - **Frontend**: Vue 3 + TypeScript + Naive UI + Pinia
@@ -85,9 +85,9 @@ Vue Frontend (IPC) → Tauri Commands → Rust Backend
 
 ### Data Storage Location
 ```
-Windows: %LOCALAPPDATA%\screen-assistant\data\
-macOS:   ~/Library/Application Support/screen-assistant/data/
-Linux:   ~/.local/share/screen-assistant/data/
+Windows: %LOCALAPPDATA%\opencowork\data\
+macOS:   ~/Library/Application Support/opencowork/data/
+Linux:   ~/.local/share/opencowork/data/
 
 Structure:
 ├── config.json              # Current configuration
@@ -131,7 +131,7 @@ data/skills/
 name: skill-name
 description: Description used by AI to decide when to invoke this skill
 metadata:
-  author: screen-assistant
+  author: opencowork
   version: "1.0"
 ---
 

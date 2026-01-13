@@ -233,8 +233,8 @@ async fn capture_and_analyze_with_diff(
 
 示例输出：
 {{
-  "summary": "在 VS Code 中编辑 screen-assistant 项目的 Rust 后端代码，正在修改 capture 模块的截图分析提示词",
-  "detail": "VS Code 编辑器窗口最大化显示。左侧资源管理器展开 src-tauri/src/capture 目录，当前打开文件为 mod.rs。编辑区域显示第 215-260 行的 Rust 代码，包含 format! 宏和 JSON 字符串。光标位于第 238 行。右上角显示 Git 分支为 master。底部状态栏显示 UTF-8 编码、LF 换行符、Rust 语言模式。底部终端面板已折叠。窗口标题为 'mod.rs - screen-assistant - Visual Studio Code'。",
+  "summary": "在 VS Code 中编辑 OpenCowork 项目的 Rust 后端代码，正在修改 capture 模块的截图分析提示词",
+  "detail": "VS Code 编辑器窗口最大化显示。左侧资源管理器展开 src-tauri/src/capture 目录，当前打开文件为 mod.rs。编辑区域显示第 215-260 行的 Rust 代码，包含 format! 宏和 JSON 字符串。光标位于第 238 行。右上角显示 Git 分支为 master。底部状态栏显示 UTF-8 编码、LF 换行符、Rust 语言模式。底部终端面板已折叠。窗口标题为 'mod.rs - OpenCowork - Visual Studio Code'。",
   "app": "Visual Studio Code",
   "has_issue": false,
   "issue_type": "",
@@ -386,11 +386,15 @@ fn should_suppress_alert(parsed: &AnalysisResult) -> bool {
     let markers = ["历史", "对话", "聊天", "提醒", "警告", "设置"];
     let has_marker = markers.iter().any(|marker| combined.contains(marker));
 
-    if app.contains("screen assistant") {
+    let self_markers = ["opencowork", "open cowork"];
+    let is_self_app = self_markers.iter().any(|marker| app.contains(marker));
+    let is_self_combined = self_markers.iter().any(|marker| combined.contains(marker));
+
+    if is_self_app {
         return has_marker;
     }
 
-    if (app.is_empty() || app == "unknown") && combined.contains("screen assistant") {
+    if (app.is_empty() || app == "unknown") && is_self_combined {
         return has_marker;
     }
 

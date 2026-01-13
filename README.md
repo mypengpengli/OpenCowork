@@ -1,8 +1,8 @@
-# Screen Assistant - Your AI Work Companion
+# OpenCowork - Your AI Work Companion
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/mypengpengli/screen-assistant)
+[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/mypengpengli/OpenCowork)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/mypengpengli/screen-assistant?style=social)](https://github.com/mypengpengli/screen-assistant)
+[![Stars](https://img.shields.io/github/stars/mypengpengli/OpenCowork?style=social)](https://github.com/mypengpengli/OpenCowork)
 
 **[English](#english) | [中文](#中文)**
 
@@ -19,13 +19,13 @@ Have you ever experienced this?
 - You want to ask AI for help but can't remember what the error was
 - Constantly switching between coding and searching, breaking your flow
 
-**Screen Assistant was built to solve these pain points.**
+**OpenCowork was built to solve these pain points.**
 
 ## What Can It Do?
 
 ### 🎯 Automatically Capture Every Error
 
-From the moment you click "Start Monitoring", Screen Assistant works like a tireless assistant, continuously watching your screen. Whether it's compilation errors, runtime exceptions, or console warnings — **every detail is recorded**.
+From the moment you click "Start Monitoring", OpenCowork works like a tireless assistant, continuously watching your screen. Whether it's compilation errors, runtime exceptions, or console warnings — **every detail is recorded**.
 
 When an error is detected, AI proactively notifies you:
 - What error occurred
@@ -42,11 +42,11 @@ Forgot what that error was? Just ask:
 - *"What errors did I encounter in the last 10 minutes?"*
 - *"How many compilation failures did I have this afternoon?"*
 
-Screen Assistant understands natural language and supports multi-turn conversations, like chatting with a colleague who knows your entire work history.
+OpenCowork understands natural language and supports multi-turn conversations, like chatting with a colleague who knows your entire work history.
 
 ### 🔧 Skills System — Infinitely Extensible
 
-This is Screen Assistant's most powerful feature.
+This is OpenCowork's most powerful feature.
 
 **Skills are reusable AI capability modules**. You can:
 
@@ -83,11 +83,11 @@ This means:
 
 ### 🧠 Smart Frame Skipping, Save Money
 
-Worried about token consumption? Screen Assistant uses perceptual hashing to compare frames. **When the screen hasn't changed, analysis is automatically skipped**, significantly reducing API costs while ensuring no important information is missed.
+Worried about token consumption? OpenCowork uses perceptual hashing to compare frames. **When the screen hasn't changed, analysis is automatically skipped**, significantly reducing API costs while ensuring no important information is missed.
 
 ## Use Cases
 
-| Scenario | Pain Point | Screen Assistant's Solution |
+| Scenario | Pain Point | OpenCowork's Solution |
 |----------|------------|----------------------------|
 | **Deployment** | Logs scroll too fast, errors flash by | Automatically capture and save all errors |
 | **Debugging** | Error too long, can't copy in time | Complete recording, query anytime |
@@ -115,8 +115,8 @@ Worried about token consumption? Screen Assistant uses perceptual hashing to com
 ### Installation
 
 ```bash
-git clone https://github.com/mypengpengli/screen-assistant.git
-cd screen-assistant
+git clone https://github.com/mypengpengli/OpenCowork.git
+cd OpenCowork
 npm install
 npm run tauri dev
 ```
@@ -141,9 +141,9 @@ Then select `Ollama (Local)` in settings, URL: `http://localhost:11434`
 ## Data Storage
 
 ```
-Windows: %LOCALAPPDATA%\screen-assistant\data\
-macOS:   ~/Library/Application Support/screen-assistant/data/
-Linux:   ~/.local/share/screen-assistant/data/
+Windows: %LOCALAPPDATA%\opencowork\data\
+macOS:   ~/Library/Application Support/opencowork/data/
+Linux:   ~/.local/share/opencowork/data/
 ```
 
 **Privacy Guarantee**:
@@ -169,7 +169,7 @@ MIT
 
 <a name="中文"></a>
 
-# Screen Assistant - 你的 AI 工作伴侣
+# OpenCowork - 你的 AI 工作伴侣
 
 > **再也不用担心错过任何一个报错信息了。**
 
@@ -180,13 +180,13 @@ MIT
 - 想问 AI 帮忙解决问题，却记不清刚才的报错内容是什么
 - 一边写代码一边查百度/Google，来回切换窗口打断思路
 
-**Screen Assistant 就是为解决这些痛点而生的。**
+**OpenCowork 就是为解决这些痛点而生的。**
 
 ## 它能做什么？
 
 ### 🎯 自动捕获每一个错误
 
-从你点击「开始监控」的那一刻起，Screen Assistant 就像一个不知疲倦的助手，持续观察你的屏幕。无论是编译错误、运行时异常、还是控制台警告——**每一个细节都会被记录下来**。
+从你点击「开始监控」的那一刻起，OpenCowork 就像一个不知疲倦的助手，持续观察你的屏幕。无论是编译错误、运行时异常、还是控制台警告——**每一个细节都会被记录下来**。
 
 当检测到错误时，AI 会主动推送提醒，告诉你：
 - 发生了什么错误
@@ -203,11 +203,11 @@ MIT
 - *"最近 10 分钟我遇到了哪些错误？"*
 - *"今天下午编译失败了几次？"*
 
-Screen Assistant 理解自然语言，支持多轮对话，就像和一个了解你所有操作历史的同事聊天一样。
+OpenCowork 理解自然语言，支持多轮对话，就像和一个了解你所有操作历史的同事聊天一样。
 
 ### 🔧 Skills 系统 —— 无限扩展的能力
 
-这是 Screen Assistant 最强大的特性。
+这是 OpenCowork 最强大的特性。
 
 **Skills 是可复用的 AI 能力模块**，你可以：
 
@@ -244,11 +244,11 @@ Screen Assistant 理解自然语言，支持多轮对话，就像和一个了解
 
 ### 🧠 智能跳帧，省钱省心
 
-担心 Token 消耗太快？Screen Assistant 使用感知哈希算法对比画面，**当屏幕没有变化时自动跳过分析**，在保证不遗漏任何重要信息的同时，大幅降低 API 调用成本。
+担心 Token 消耗太快？OpenCowork 使用感知哈希算法对比画面，**当屏幕没有变化时自动跳过分析**，在保证不遗漏任何重要信息的同时，大幅降低 API 调用成本。
 
 ## 适用场景
 
-| 场景 | 痛点 | Screen Assistant 的解决方案 |
+| 场景 | 痛点 | OpenCowork 的解决方案 |
 |------|------|---------------------------|
 | **项目部署** | 日志刷屏，错误一闪而过 | 自动捕获并保存所有错误信息 |
 | **代码调试** | 报错太长，来不及复制 | 完整记录，随时回溯查询 |
@@ -276,8 +276,8 @@ Screen Assistant 理解自然语言，支持多轮对话，就像和一个了解
 ### 安装
 
 ```bash
-git clone https://github.com/mypengpengli/screen-assistant.git
-cd screen-assistant
+git clone https://github.com/mypengpengli/OpenCowork.git
+cd OpenCowork
 npm install
 npm run tauri dev
 ```
@@ -302,7 +302,7 @@ ollama pull llava
 ## 使用方法
 
 1. **开始监控**：点击「开始监控」按钮
-2. **正常工作**：Screen Assistant 在后台默默记录
+2. **正常工作**：OpenCowork 在后台默默记录
 3. **遇到问题**：收到 AI 主动推送的错误提醒
 4. **查询历史**：用自然语言询问任何时间段的操作
 5. **使用 Skills**：输入 `/skill-name` 调用特定能力
@@ -352,9 +352,9 @@ ollama pull llava
 ## 数据存储
 
 ```
-Windows: %LOCALAPPDATA%\screen-assistant\data\
-macOS:   ~/Library/Application Support/screen-assistant/data/
-Linux:   ~/.local/share/screen-assistant/data/
+Windows: %LOCALAPPDATA%\opencowork\data\
+macOS:   ~/Library/Application Support/opencowork/data/
+Linux:   ~/.local/share/opencowork/data/
 ```
 
 **隐私保障**：

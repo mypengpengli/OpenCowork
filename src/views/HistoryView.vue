@@ -6,6 +6,7 @@ import {
   NDrawer, NDrawerContent, NDescriptions, NDescriptionsItem, NEllipsis, NDivider,
   useMessage
 } from 'naive-ui'
+import { localeToDateLocale, useI18n } from '../i18n'
 
 interface SummaryRecord {
   timestamp: string
@@ -30,6 +31,7 @@ const isClearingAll = ref(false)
 const drawerVisible = ref(false)
 const selectedRecord = ref<SummaryRecord | null>(null)
 const message = useMessage()
+const { t, locale } = useI18n()
 
 async function loadHistory() {
   isLoading.value = true
@@ -49,7 +51,7 @@ async function loadHistory() {
 }
 
 async function clearHistory() {
-  const confirmed = window.confirm('确定清空当前日期的历史记录吗？')
+  const confirmed = window.confirm(t('history.clearConfirm'))
   if (!confirmed) return
 
   isClearing.value = true
@@ -58,27 +60,27 @@ async function clearHistory() {
     const date = new Date(selectedDate.value)
     const dateStr = date.toISOString().split('T')[0]
     const removed = await invoke<number>('clear_summaries', { date: dateStr })
-    message.success(`已清空 ${removed} 条记录`)
+    message.success(t('history.clearSuccess', { count: removed }))
     await loadHistory()
   } catch (error) {
-    message.error(`清空失败: ${error}`)
+    message.error(t('history.clearFailed', { error: String(error) }))
   } finally {
     isClearing.value = false
   }
 }
 
 async function clearAllHistory() {
-  const confirmed = window.confirm('确定清空所有历史记录吗？此操作不可恢复。')
+  const confirmed = window.confirm(t('history.clearAllConfirm'))
   if (!confirmed) return
 
   isClearingAll.value = true
   try {
     const { invoke } = await import('@tauri-apps/api/core')
     const removed = await invoke<number>('clear_all_summaries')
-    message.success(`已清空 ${removed} 条记录`)
+    message.success(t('history.clearSuccess', { count: removed }))
     await loadHistory()
   } catch (error) {
-    message.error(`清空失败: ${error}`)
+    message.error(t('history.clearFailed', { error: String(error) }))
   } finally {
     isClearingAll.value = false
   }
@@ -89,13 +91,17 @@ async function openScreenshotsDir() {
     const { invoke } = await import('@tauri-apps/api/core')
     await invoke('open_screenshots_dir')
   } catch (error) {
-    message.error(`Open screenshots folder failed: ${error}`)
+    message.error(t('history.openScreenshotsFailed', { error: String(error) }))
   }
 }
 
 function formatTime(timestamp: string): string {
   const date = new Date(timestamp)
-  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  return date.toLocaleTimeString(localeToDateLocale(locale.value), {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
 }
 
 function getActionType(action: string): 'success' | 'info' | 'warning' | 'error' {
@@ -126,6 +132,13 @@ function openDetail(record: SummaryRecord) {
   drawerVisible.value = true
 }
 
+function formatAppName(app: string): string {
+  if (!app || app.toLowerCase() === 'unknown') {
+    return t('common.unknown')
+  }
+  return app
+}
+
 onMounted(() => {
   loadHistory()
 })
@@ -135,35 +148,35 @@ onMounted(() => {
   <NLayout class="history-layout">
     <NLayoutContent class="history-content">
       <div class="history-header">
-        <h2>历史记录</h2>
+        <h2>{{ t('history.title') }}</h2>
         <NSpace>
           <NDatePicker
             v-model:value="selectedDate"
             type="date"
             @update:value="loadHistory"
           />
-          <NButton @click="loadHistory" :loading="isLoading">刷新</NButton>
-          <NButton secondary @click="openScreenshotsDir">打开截图文件夹</NButton>
+          <NButton @click="loadHistory" :loading="isLoading">{{ t('history.refresh') }}</NButton>
+          <NButton secondary @click="openScreenshotsDir">{{ t('history.openScreenshots') }}</NButton>
           <NButton
             type="error"
             secondary
             @click="clearHistory"
             :loading="isClearing"
           >
-            清空当天
+            {{ t('history.clearDay') }}
           </NButton>
           <NButton
             type="error"
             @click="clearAllHistory"
             :loading="isClearingAll"
           >
-            清空全部
+            {{ t('history.clearAll') }}
           </NButton>
         </NSpace>
       </div>
 
       <div class="timeline-container">
-        <NEmpty v-if="records.length === 0 && !isLoading" description="暂无记录" />
+        <NEmpty v-if="records.length === 0 && !isLoading" :description="t('history.empty')" />
 
         <NTimeline v-else>
           <NTimelineItem
@@ -176,13 +189,13 @@ onMounted(() => {
             <NCard size="small" :bordered="false">
               <NSpace vertical size="small">
                 <NSpace align="center">
-                  <NTag size="small" type="info">{{ record.app || 'Unknown' }}</NTag>
+                  <NTag size="small" type="info">{{ formatAppName(record.app) }}</NTag>
                   <NTag size="small" :type="hasIssue(record) ? 'error' : 'success'">
-                    {{ hasIssue(record) ? '有问题' : '正常' }}
+                    {{ hasIssue(record) ? t('history.status.issue') : t('history.status.ok') }}
                   </NTag>
                   <NTag v-if="record.issue_type" size="small" type="warning">{{ record.issue_type }}</NTag>
-                  <NTag size="small">置信度 {{ formatConfidence(record.confidence) }}</NTag>
-                  <NButton text size="tiny" @click="openDetail(record)">详情</NButton>
+                  <NTag size="small">{{ t('history.confidence', { value: formatConfidence(record.confidence) }) }}</NTag>
+                  <NButton text size="tiny" @click="openDetail(record)">{{ t('history.detail') }}</NButton>
                 </NSpace>
 
                 <NDescriptions
@@ -191,10 +204,10 @@ onMounted(() => {
                   :column="1"
                   label-placement="left"
                 >
-                  <NDescriptionsItem v-if="record.issue_summary" label="问题摘要">
+                  <NDescriptionsItem v-if="record.issue_summary" :label="t('history.issueSummary')">
                     <NEllipsis :line-clamp="2">{{ record.issue_summary }}</NEllipsis>
                   </NDescriptionsItem>
-                  <NDescriptionsItem v-if="record.suggestion" label="建议">
+                  <NDescriptionsItem v-if="record.suggestion" :label="t('history.suggestion')">
                     <NEllipsis :line-clamp="2">{{ record.suggestion }}</NEllipsis>
                   </NDescriptionsItem>
                 </NDescriptions>
@@ -215,32 +228,38 @@ onMounted(() => {
       </div>
 
       <NDrawer v-model:show="drawerVisible" placement="right" width="520">
-        <NDrawerContent title="详情">
+        <NDrawerContent :title="t('history.drawer.title')">
           <div v-if="selectedRecord" class="detail-content">
             <NDescriptions size="small" :column="1" label-placement="left">
-              <NDescriptionsItem label="时间">{{ formatTime(selectedRecord.timestamp) }}</NDescriptionsItem>
-              <NDescriptionsItem label="应用">{{ selectedRecord.app || 'Unknown' }}</NDescriptionsItem>
-              <NDescriptionsItem label="状态">{{ hasIssue(selectedRecord) ? '有问题' : '正常' }}</NDescriptionsItem>
-              <NDescriptionsItem v-if="selectedRecord.issue_type" label="问题类型">
+              <NDescriptionsItem :label="t('history.drawer.time')">
+                {{ formatTime(selectedRecord.timestamp) }}
+              </NDescriptionsItem>
+              <NDescriptionsItem :label="t('history.drawer.app')">
+                {{ formatAppName(selectedRecord.app) }}
+              </NDescriptionsItem>
+              <NDescriptionsItem :label="t('history.drawer.status')">
+                {{ hasIssue(selectedRecord) ? t('history.status.issue') : t('history.status.ok') }}
+              </NDescriptionsItem>
+              <NDescriptionsItem v-if="selectedRecord.issue_type" :label="t('history.drawer.issueType')">
                 {{ selectedRecord.issue_type }}
               </NDescriptionsItem>
-              <NDescriptionsItem label="置信度">
+              <NDescriptionsItem :label="t('history.drawer.confidence')">
                 {{ formatConfidence(selectedRecord.confidence) }}
               </NDescriptionsItem>
-              <NDescriptionsItem v-if="selectedRecord.issue_summary" label="问题摘要">
+              <NDescriptionsItem v-if="selectedRecord.issue_summary" :label="t('history.drawer.issueSummary')">
                 {{ selectedRecord.issue_summary }}
               </NDescriptionsItem>
-              <NDescriptionsItem v-if="selectedRecord.suggestion" label="建议">
+              <NDescriptionsItem v-if="selectedRecord.suggestion" :label="t('history.drawer.suggestion')">
                 {{ selectedRecord.suggestion }}
               </NDescriptionsItem>
-              <NDescriptionsItem v-if="selectedRecord.detail_ref" label="截图">
+              <NDescriptionsItem v-if="selectedRecord.detail_ref" :label="t('history.drawer.screenshot')">
                 {{ selectedRecord.detail_ref }}
               </NDescriptionsItem>
             </NDescriptions>
 
             <NDivider />
-            <div class="detail-label">detail</div>
-            <div class="detail-text">{{ selectedRecord.detail || '无 detail' }}</div>
+            <div class="detail-label">{{ t('history.detailLabel') }}</div>
+            <div class="detail-text">{{ selectedRecord.detail || t('history.detailEmpty') }}</div>
           </div>
         </NDrawerContent>
       </NDrawer>

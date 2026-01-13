@@ -24,7 +24,8 @@ import {
   NModal,
   useMessage,
 } from 'naive-ui'
-import { useSkillsStore, type SkillMetadata } from '../stores/skills'
+import { useSkillsStore } from '../stores/skills'
+import { useI18n } from '../i18n'
 
 interface ProfileEntry {
   name: string
@@ -38,6 +39,7 @@ type DrawerMode = 'new' | 'edit' | 'copy'
 
 const message = useMessage()
 const skillsStore = useSkillsStore()
+const { t, locale, toggleLocale } = useI18n()
 
 // Skills 相关状态
 const activeTab = ref('profiles')
@@ -83,22 +85,26 @@ const formValue = ref({
   autoClearOnStart: false,
 })
 
-const providerOptions = [
-  { label: 'API (云端)', value: 'api' },
-  { label: 'Ollama (本地)', value: 'ollama' },
-]
+const providerOptions = computed(() => [
+  { label: t('settings.form.provider.api'), value: 'api' },
+  { label: t('settings.form.provider.ollama'), value: 'ollama' },
+])
 
-const apiTypeOptions = [
+const apiTypeOptions = computed(() => [
   { label: 'OpenAI', value: 'openai' },
   { label: 'Claude', value: 'claude' },
-  { label: '自定义', value: 'custom' },
-]
+  { label: t('settings.form.api.custom'), value: 'custom' },
+])
 
 const drawerTitle = computed(() => {
-  if (drawerMode.value === 'edit') return '编辑方案'
-  if (drawerMode.value === 'copy') return '复制方案'
-  return '新建方案'
+  if (drawerMode.value === 'edit') return t('settings.profile.drawer.edit')
+  if (drawerMode.value === 'copy') return t('settings.profile.drawer.copy')
+  return t('settings.profile.drawer.new')
 })
+
+const languageToggleLabel = computed(() =>
+  locale.value === 'zh' ? t('language.english') : t('language.chinese')
+)
 
 function normalizeConfig(raw: any) {
   return {
@@ -222,7 +228,7 @@ async function loadCurrentConfig() {
     currentConfig.value = normalized
     currentConfigSerialized.value = serializeConfig(normalized)
   } catch (error) {
-    message.error(`加载当前配置失败: ${error}`)
+    message.error(t('settings.profile.loadConfigFailed', { error: String(error) }))
   }
 }
 
@@ -248,7 +254,7 @@ async function refreshProfiles() {
       } catch (error) {
         entries.push({
           name,
-          subtitle: '读取失败',
+          subtitle: t('settings.profile.readFailed'),
           detail: String(error),
           serialized: '',
           isActive: false,
@@ -263,7 +269,7 @@ async function refreshProfiles() {
     }))
   } catch (error) {
     profiles.value = []
-    message.error(`读取方案失败: ${error}`)
+    message.error(t('settings.profile.loadFailed', { error: String(error) }))
   } finally {
     isLoading.value = false
   }
@@ -285,7 +291,7 @@ async function editProfile(name: string) {
     profileName.value = name
     drawerVisible.value = true
   } catch (error) {
-    message.error(`读取方案失败: ${error}`)
+    message.error(t('settings.profile.loadFailed', { error: String(error) }))
   }
 }
 
@@ -298,14 +304,14 @@ async function copyProfile(name: string) {
     profileName.value = `${name}-copy`
     drawerVisible.value = true
   } catch (error) {
-    message.error(`读取方案失败: ${error}`)
+    message.error(t('settings.profile.loadFailed', { error: String(error) }))
   }
 }
 
 async function saveProfileFromDrawer() {
   const name = profileName.value.trim()
   if (!name) {
-    message.warning('请输入方案名称')
+    message.warning(t('settings.profile.nameRequired'))
     return
   }
   try {
@@ -313,10 +319,10 @@ async function saveProfileFromDrawer() {
     const config = buildConfigFromForm()
     await invoke('save_profile', { name, config })
     drawerVisible.value = false
-    message.success('方案已保存')
+    message.success(t('settings.profile.saveSuccess'))
     await refreshProfiles()
   } catch (error) {
-    message.error(`保存方案失败: ${error}`)
+    message.error(t('settings.profile.saveFailed', { error: String(error) }))
   }
 }
 
@@ -333,24 +339,24 @@ async function enableProfile(name: string) {
     const { invoke } = await import('@tauri-apps/api/core')
     const config = await invoke<any>('load_profile', { name })
     await applyConfig(config || {})
-    message.success('方案已启用')
+    message.success(t('settings.profile.enableSuccess'))
     await refreshProfiles()
   } catch (error) {
-    message.error(`启用方案失败: ${error}`)
+    message.error(t('settings.profile.enableFailed', { error: String(error) }))
   }
 }
 
 async function deleteProfile(name: string) {
-  const confirmed = window.confirm(`确定删除方案 "${name}" 吗？`)
+  const confirmed = window.confirm(t('settings.profile.deleteConfirm', { name }))
   if (!confirmed) return
 
   try {
     const { invoke } = await import('@tauri-apps/api/core')
     await invoke('delete_profile', { name })
-    message.success('方案已删除')
+    message.success(t('settings.profile.deleteSuccess'))
     await refreshProfiles()
   } catch (error) {
-    message.error(`删除方案失败: ${error}`)
+    message.error(t('settings.profile.deleteFailed', { error: String(error) }))
   }
 }
 
@@ -359,9 +365,9 @@ async function testConnection() {
     const { invoke } = await import('@tauri-apps/api/core')
     const config = buildConfigFromForm()
     await invoke('test_model_connection', { config })
-    message.success('连接成功')
+    message.success(t('settings.connection.success'))
   } catch (error) {
-    message.error(`连接失败: ${error}`)
+    message.error(t('settings.connection.failed', { error: String(error) }))
   }
 }
 
@@ -377,26 +383,17 @@ onMounted(async () => {
 function openCreateSkillModal() {
   newSkillName.value = ''
   newSkillDescription.value = ''
-  newSkillInstructions.value = `# 技能名称
-
-## 使用场景
-描述何时使用此技能。
-
-## 执行步骤
-1. 第一步
-2. 第二步
-3. 第三步
-`
+  newSkillInstructions.value = t('settings.skills.defaultInstructions')
   skillModalVisible.value = true
 }
 
 async function createNewSkill() {
   if (!newSkillName.value.trim()) {
-    message.warning('请输入技能名称')
+    message.warning(t('settings.skills.nameRequired'))
     return
   }
   if (!newSkillDescription.value.trim()) {
-    message.warning('请输入技能描述')
+    message.warning(t('settings.skills.descRequired'))
     return
   }
 
@@ -407,22 +404,22 @@ async function createNewSkill() {
   )
 
   if (success) {
-    message.success('技能创建成功')
+    message.success(t('settings.skills.createSuccess'))
     skillModalVisible.value = false
   } else {
-    message.error('技能创建失败')
+    message.error(t('settings.skills.createFailed'))
   }
 }
 
 async function handleDeleteSkill(name: string) {
-  const confirmed = window.confirm(`确定删除技能 "${name}" 吗？`)
+  const confirmed = window.confirm(t('settings.skills.deleteConfirm', { name }))
   if (!confirmed) return
 
   const success = await skillsStore.deleteSkill(name)
   if (success) {
-    message.success('技能已删除')
+    message.success(t('settings.skills.deleteSuccess'))
   } else {
-    message.error('删除技能失败')
+    message.error(t('settings.skills.deleteFailed'))
   }
 }
 
@@ -434,9 +431,9 @@ async function openSkillsFolder() {
     // 如果打开失败，回退到复制路径
     try {
       await navigator.clipboard.writeText(skillsDir.value)
-      message.success(`技能文件夹路径已复制到剪贴板: ${skillsDir.value}`)
+      message.success(t('settings.skills.openDirCopied', { dir: skillsDir.value }))
     } catch {
-      message.info(`技能文件夹: ${skillsDir.value}`)
+      message.info(t('settings.skills.openDirInfo', { dir: skillsDir.value }))
     }
   }
 }
@@ -447,21 +444,24 @@ async function openSkillsFolder() {
     <NLayoutContent class="settings-content">
       <NTabs v-model:value="activeTab" type="line">
         <!-- 配置方案 Tab -->
-        <NTabPane name="profiles" tab="配置方案">
+        <NTabPane name="profiles" :tab="t('settings.tabs.profiles')">
           <div class="settings-header">
-            <h2>配置方案</h2>
-            <NButton type="primary" @click="openNewProfile">新建方案</NButton>
+            <h2>{{ t('settings.header.profiles') }}</h2>
+            <NSpace>
+              <NButton @click="toggleLocale">{{ languageToggleLabel }}</NButton>
+              <NButton type="primary" @click="openNewProfile">{{ t('settings.buttons.newProfile') }}</NButton>
+            </NSpace>
           </div>
 
           <div v-if="isLoading" class="loading-state">
             <NSpin size="small" />
-            <span>正在加载方案...</span>
+            <span>{{ t('settings.loading.profiles') }}</span>
           </div>
 
           <div v-else>
             <div v-if="profiles.length === 0" class="empty-state">
-              <p>暂无配置方案</p>
-              <p class="muted">点击"新建方案"创建一个</p>
+              <p>{{ t('settings.empty.profiles') }}</p>
+              <p class="muted">{{ t('settings.empty.profilesHint') }}</p>
             </div>
 
             <div v-else class="profiles-list">
@@ -475,17 +475,25 @@ async function openSkillsFolder() {
                   <div class="profile-info">
                     <div class="profile-title">
                       <span>{{ profile.name }}</span>
-                      <NTag v-if="profile.isActive" type="success" size="small">当前使用</NTag>
+                      <NTag v-if="profile.isActive" type="success" size="small">
+                        {{ t('settings.profile.active') }}
+                      </NTag>
                     </div>
                     <div class="profile-sub">{{ profile.subtitle }}</div>
                     <div class="profile-desc">{{ profile.detail }}</div>
                   </div>
                   <div class="profile-actions">
-                    <NButton size="small" type="primary" @click="enableProfile(profile.name)">启用</NButton>
-                    <NButton size="small" @click="editProfile(profile.name)">编辑</NButton>
-                    <NButton size="small" @click="copyProfile(profile.name)">复制</NButton>
+                    <NButton size="small" type="primary" @click="enableProfile(profile.name)">
+                      {{ t('common.enable') }}
+                    </NButton>
+                    <NButton size="small" @click="editProfile(profile.name)">
+                      {{ t('common.edit') }}
+                    </NButton>
+                    <NButton size="small" @click="copyProfile(profile.name)">
+                      {{ t('common.copy') }}
+                    </NButton>
                     <NButton size="small" type="error" secondary @click="deleteProfile(profile.name)">
-                      删除
+                      {{ t('common.delete') }}
                     </NButton>
                   </div>
                 </div>
@@ -495,25 +503,27 @@ async function openSkillsFolder() {
         </NTabPane>
 
         <!-- Skills Tab -->
-        <NTabPane name="skills" tab="技能管理">
+        <NTabPane name="skills" :tab="t('settings.tabs.skills')">
           <div class="settings-header">
-            <h2>技能管理</h2>
+            <h2>{{ t('settings.header.skills') }}</h2>
             <NSpace>
-              <NButton @click="openSkillsFolder">打开技能文件夹</NButton>
-              <NButton type="primary" @click="openCreateSkillModal">新建技能</NButton>
+              <NButton @click="openSkillsFolder">{{ t('settings.buttons.openSkillsFolder') }}</NButton>
+              <NButton type="primary" @click="openCreateSkillModal">{{ t('settings.buttons.newSkill') }}</NButton>
             </NSpace>
           </div>
 
           <div v-if="skillsStore.isLoading" class="loading-state">
             <NSpin size="small" />
-            <span>正在加载技能...</span>
+            <span>{{ t('settings.loading.skills') }}</span>
           </div>
 
           <div v-else>
             <div v-if="skillsStore.availableSkills.length === 0" class="empty-state">
-              <p>暂无可用技能</p>
-              <p class="muted">点击"新建技能"创建一个，或在技能文件夹中添加 SKILL.md 文件</p>
-              <p class="muted" style="margin-top: 8px;">技能文件夹: {{ skillsDir }}</p>
+              <p>{{ t('settings.empty.skills') }}</p>
+              <p class="muted">{{ t('settings.empty.skillsHint') }}</p>
+              <p class="muted" style="margin-top: 8px;">
+                {{ t('settings.empty.skillsDir', { dir: skillsDir }) }}
+              </p>
             </div>
 
             <div v-else class="skills-list">
@@ -531,7 +541,7 @@ async function openSkillsFolder() {
                   </div>
                   <div class="skill-actions">
                     <NButton size="small" type="error" secondary @click="handleDeleteSkill(skill.name)">
-                      删除
+                      {{ t('common.delete') }}
                     </NButton>
                   </div>
                 </div>
@@ -541,11 +551,11 @@ async function openSkillsFolder() {
 
           <div class="skills-help">
             <NDivider />
-            <h3>使用说明</h3>
+            <h3>{{ t('settings.skills.help.title') }}</h3>
             <ul>
-              <li>在聊天框中输入 <code>/技能名</code> 即可调用技能</li>
-              <li>例如：<code>/export 今天</code> 导出今天的屏幕活动记录</li>
-              <li>技能会自动出现在 AI 的提示中，AI 会在合适的时候建议使用</li>
+              <li v-html="t('settings.skills.help.item1')"></li>
+              <li v-html="t('settings.skills.help.item2')"></li>
+              <li>{{ t('settings.skills.help.item3') }}</li>
             </ul>
           </div>
         </NTabPane>
@@ -554,28 +564,28 @@ async function openSkillsFolder() {
       <NDrawer v-model:show="drawerVisible" placement="right" width="520">
         <NDrawerContent :title="drawerTitle" closable>
           <NForm :model="formValue" label-placement="left" label-width="120">
-            <NCard title="方案信息" size="small">
-              <NFormItem label="方案名称">
-                <NInput v-model:value="profileName" placeholder="例如：工作/本地模型/写代码" />
+            <NCard :title="t('settings.form.profileInfo')" size="small">
+              <NFormItem :label="t('settings.form.profileName')">
+                <NInput v-model:value="profileName" :placeholder="t('settings.form.profileNamePlaceholder')" />
               </NFormItem>
             </NCard>
 
             <NDivider />
 
             <!-- 模型配置 -->
-            <NCard title="模型配置" size="small">
-              <NFormItem label="模型来源">
+            <NCard :title="t('settings.form.modelConfig')" size="small">
+              <NFormItem :label="t('settings.form.modelProvider')">
                 <NSelect v-model:value="formValue.provider" :options="providerOptions" />
               </NFormItem>
 
               <template v-if="formValue.provider === 'api'">
-                <NFormItem label="API 类型">
+                <NFormItem :label="t('settings.form.apiType')">
                   <NSelect v-model:value="formValue.apiType" :options="apiTypeOptions" />
                 </NFormItem>
-                <NFormItem label="API 地址">
+                <NFormItem :label="t('settings.form.apiEndpoint')">
                   <NInput v-model:value="formValue.apiEndpoint" placeholder="https://api.openai.com/v1" />
                 </NFormItem>
-                <NFormItem label="API Key">
+                <NFormItem :label="t('settings.form.apiKey')">
                   <NInput
                     v-model:value="formValue.apiKey"
                     type="password"
@@ -583,16 +593,16 @@ async function openSkillsFolder() {
                     placeholder="sk-xxx"
                   />
                 </NFormItem>
-                <NFormItem label="模型名称">
+                <NFormItem :label="t('settings.form.modelName')">
                   <NInput v-model:value="formValue.apiModel" placeholder="gpt-4-vision-preview" />
                 </NFormItem>
               </template>
 
               <template v-else>
-                <NFormItem label="Ollama 地址">
+                <NFormItem :label="t('settings.form.ollamaEndpoint')">
                   <NInput v-model:value="formValue.ollamaEndpoint" placeholder="http://localhost:11434" />
                 </NFormItem>
-                <NFormItem label="模型名称">
+                <NFormItem :label="t('settings.form.modelName')">
                   <NInput v-model:value="formValue.ollamaModel" placeholder="llava" />
                 </NFormItem>
               </template>
@@ -601,29 +611,29 @@ async function openSkillsFolder() {
             <NDivider />
 
             <!-- 截屏配置 -->
-            <NCard title="截屏配置" size="small">
-              <NFormItem label="启用监控">
+            <NCard :title="t('settings.form.captureConfig')" size="small">
+              <NFormItem :label="t('settings.form.captureEnable')">
                 <NSwitch v-model:value="formValue.captureEnabled" />
               </NFormItem>
-              <NFormItem label="截屏间隔">
+              <NFormItem :label="t('settings.form.captureInterval')">
                 <NInputNumber v-model:value="formValue.captureInterval" :min="500" :max="10000" :step="100">
-                  <template #suffix>毫秒</template>
+                  <template #suffix>{{ t('settings.form.captureIntervalUnit') }}</template>
                 </NInputNumber>
               </NFormItem>
-              <NFormItem label="压缩质量">
+              <NFormItem :label="t('settings.form.compressQuality')">
                 <NInputNumber v-model:value="formValue.compressQuality" :min="10" :max="100" :step="10">
                   <template #suffix>%</template>
                 </NInputNumber>
               </NFormItem>
-              <NFormItem label="跳过无变化">
+              <NFormItem :label="t('settings.form.skipUnchanged')">
                 <NTooltip trigger="hover">
                   <template #trigger>
                     <NSwitch v-model:value="formValue.skipUnchanged" />
                   </template>
-                  启用后，当画面无明显变化时跳过识别，节省Token消耗
+                  {{ t('settings.form.skipUnchangedTip') }}
                 </NTooltip>
               </NFormItem>
-              <NFormItem v-if="formValue.skipUnchanged" label="变化敏感度">
+              <NFormItem v-if="formValue.skipUnchanged" :label="t('settings.form.changeThreshold')">
                 <NTooltip trigger="hover">
                   <template #trigger>
                     <NInputNumber
@@ -633,13 +643,13 @@ async function openSkillsFolder() {
                       :step="0.01"
                       :precision="2"
                     >
-                      <template #suffix>相似度</template>
+                      <template #suffix>{{ t('settings.form.changeThresholdUnit') }}</template>
                     </NInputNumber>
                   </template>
-                  相似度阈值，越高越容易跳过（0.95表示95%相似就跳过）
+                  {{ t('settings.form.changeThresholdTip') }}
                 </NTooltip>
               </NFormItem>
-              <NFormItem label="近期摘要条数">
+              <NFormItem :label="t('settings.form.recentSummaryLimit')">
                 <NTooltip trigger="hover">
                   <template #trigger>
                     <NInputNumber
@@ -648,13 +658,13 @@ async function openSkillsFolder() {
                       :max="100"
                       :step="1"
                     >
-                      <template #suffix>条</template>
+                      <template #suffix>{{ t('settings.form.countUnit') }}</template>
                     </NInputNumber>
                   </template>
-                  截图分析时带入最近的摘要条数（1-100）
+                  {{ t('settings.form.recentSummaryTip') }}
                 </NTooltip>
               </NFormItem>
-              <NFormItem label="近期 detail 条数">
+              <NFormItem :label="t('settings.form.recentDetailLimit')">
                 <NTooltip trigger="hover">
                   <template #trigger>
                     <NInputNumber
@@ -663,13 +673,13 @@ async function openSkillsFolder() {
                       :max="20"
                       :step="1"
                     >
-                      <template #suffix>条</template>
+                      <template #suffix>{{ t('settings.form.countUnit') }}</template>
                     </NInputNumber>
                   </template>
-                  截图分析时带入最近的 detail 条数（0 表示不带）
+                  {{ t('settings.form.recentDetailTip') }}
                 </NTooltip>
               </NFormItem>
-              <NFormItem label="提醒置信度阈值">
+              <NFormItem :label="t('settings.form.alertConfidence')">
                 <NTooltip trigger="hover">
                   <template #trigger>
                     <NInputNumber
@@ -679,13 +689,13 @@ async function openSkillsFolder() {
                       :step="0.05"
                       :precision="2"
                     >
-                      <template #suffix>置信度</template>
+                      <template #suffix>{{ t('settings.form.confidenceUnit') }}</template>
                     </NInputNumber>
                   </template>
-                  有问题且置信度高于阈值时，自动在对话框提示建议
+                  {{ t('settings.form.alertConfidenceTip') }}
                 </NTooltip>
               </NFormItem>
-              <NFormItem label="提醒冷却时间">
+              <NFormItem :label="t('settings.form.alertCooldown')">
                 <NTooltip trigger="hover">
                   <template #trigger>
                     <NInputNumber
@@ -694,10 +704,10 @@ async function openSkillsFolder() {
                       :max="3600"
                       :step="10"
                     >
-                      <template #suffix>秒</template>
+                      <template #suffix>{{ t('settings.form.secondsUnit') }}</template>
                     </NInputNumber>
                   </template>
-                  相同问题在冷却时间内不重复提示，避免刷屏
+                  {{ t('settings.form.alertCooldownTip') }}
                 </NTooltip>
               </NFormItem>
             </NCard>
@@ -705,13 +715,13 @@ async function openSkillsFolder() {
             <NDivider />
 
             <!-- 存储配置 -->
-            <NCard title="存储配置" size="small">
-              <NFormItem label="保留天数">
+            <NCard :title="t('settings.form.storageConfig')" size="small">
+              <NFormItem :label="t('settings.form.retentionDays')">
                 <NInputNumber v-model:value="formValue.retentionDays" :min="1" :max="30">
-                  <template #suffix>天</template>
+                  <template #suffix>{{ t('settings.form.daysUnit') }}</template>
                 </NInputNumber>
               </NFormItem>
-              <NFormItem label="上下文大小">
+              <NFormItem :label="t('settings.form.contextSize')">
                 <NTooltip trigger="hover">
                   <template #trigger>
                     <NInputNumber
@@ -720,18 +730,18 @@ async function openSkillsFolder() {
                       :max="100000"
                       :step="1000"
                     >
-                      <template #suffix>字符</template>
+                      <template #suffix>{{ t('settings.form.charsUnit') }}</template>
                     </NInputNumber>
                   </template>
-                  对话时加载的历史记录最大字符数，越大越详细但消耗更多Token
+                  {{ t('settings.form.contextSizeTip') }}
                 </NTooltip>
               </NFormItem>
-              <NFormItem label="启动时清空历史">
+              <NFormItem :label="t('settings.form.autoClear')">
                 <NTooltip trigger="hover">
                   <template #trigger>
                     <NSwitch v-model:value="formValue.autoClearOnStart" />
                   </template>
-                  开启后每次启动自动清空历史记录
+                  {{ t('settings.form.autoClearTip') }}
                 </NTooltip>
               </NFormItem>
             </NCard>
@@ -739,43 +749,43 @@ async function openSkillsFolder() {
             <NDivider />
 
             <NSpace justify="end">
-              <NButton @click="testConnection">测试连接</NButton>
-              <NButton type="primary" @click="saveProfileFromDrawer">保存方案</NButton>
+              <NButton @click="testConnection">{{ t('settings.form.testConnection') }}</NButton>
+              <NButton type="primary" @click="saveProfileFromDrawer">{{ t('settings.form.saveProfile') }}</NButton>
             </NSpace>
           </NForm>
         </NDrawerContent>
       </NDrawer>
 
       <!-- 创建技能模态框 -->
-      <NModal v-model:show="skillModalVisible" preset="card" title="新建技能" style="width: 600px;">
+      <NModal v-model:show="skillModalVisible" preset="card" :title="t('settings.skills.modal.title')" style="width: 600px;">
         <NForm label-placement="left" label-width="100">
-          <NFormItem label="技能名称">
+          <NFormItem :label="t('settings.skills.modal.name')">
             <NInput
               v-model:value="newSkillName"
-              placeholder="小写字母、数字和连字符，如 my-skill"
+              :placeholder="t('settings.skills.modal.namePlaceholder')"
             />
           </NFormItem>
-          <NFormItem label="技能描述">
+          <NFormItem :label="t('settings.skills.modal.description')">
             <NInput
               v-model:value="newSkillDescription"
               type="textarea"
               :autosize="{ minRows: 2, maxRows: 4 }"
-              placeholder="描述技能的功能和使用场景"
+              :placeholder="t('settings.skills.modal.descriptionPlaceholder')"
             />
           </NFormItem>
-          <NFormItem label="技能指令">
+          <NFormItem :label="t('settings.skills.modal.instructions')">
             <NInput
               v-model:value="newSkillInstructions"
               type="textarea"
               :autosize="{ minRows: 8, maxRows: 16 }"
-              placeholder="Markdown 格式的技能指令"
+              :placeholder="t('settings.skills.modal.instructionsPlaceholder')"
             />
           </NFormItem>
         </NForm>
         <template #footer>
           <NSpace justify="end">
-            <NButton @click="skillModalVisible = false">取消</NButton>
-            <NButton type="primary" @click="createNewSkill">创建</NButton>
+            <NButton @click="skillModalVisible = false">{{ t('settings.skills.modal.cancel') }}</NButton>
+            <NButton type="primary" @click="createNewSkill">{{ t('settings.skills.modal.create') }}</NButton>
           </NSpace>
         </template>
       </NModal>

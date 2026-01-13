@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, onMounted, onUnmounted } from 'vue'
+import { translate } from '../i18n'
+import { useLocaleStore } from './locale'
 
 export const useCaptureStore = defineStore('capture', () => {
   const isCapturing = ref(false)
@@ -8,6 +10,9 @@ export const useCaptureStore = defineStore('capture', () => {
   const desiredCapturing = ref(false)
   const autoRestarting = ref(false)
   const lastEvent = ref<{ id: number; type: 'warning' | 'success' | 'error'; message: string } | null>(null)
+  const localeStore = useLocaleStore()
+  const t = (key: string, params?: Record<string, string | number>) =>
+    translate(localeStore.locale.value, key, params)
 
   let statusInterval: number | null = null
   let eventSeq = 0
@@ -71,13 +76,13 @@ export const useCaptureStore = defineStore('capture', () => {
 
     autoRestarting.value = true
     lastAutoRestartAt = now
-    pushEvent('warning', '监控意外暂停，正在尝试自动恢复...')
+    pushEvent('warning', t('capture.autoRestarting'))
 
     try {
       await startCapture()
-      pushEvent('success', '监控已自动恢复')
+      pushEvent('success', t('capture.autoRestored'))
     } catch (error) {
-      pushEvent('error', `自动恢复失败: ${error}`)
+      pushEvent('error', t('capture.autoRestoreFailed', { error: String(error) }))
     } finally {
       autoRestarting.value = false
     }

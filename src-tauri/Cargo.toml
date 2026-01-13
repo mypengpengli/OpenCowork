@@ -1,12 +1,12 @@
 [package]
-name = "screen-assistant"
+name = "opencowork"
 version = "2.0.0"
-description = "Screen monitoring assistant powered by AI"
+description = "OpenCowork - AI-powered screen monitoring assistant"
 authors = ["you"]
 edition = "2021"
 
 [lib]
-name = "screen_assistant_lib"
+name = "opencowork_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

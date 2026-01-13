@@ -188,10 +188,14 @@ pub struct StorageManager {
 
 impl StorageManager {
     pub fn new() -> Self {
-        let data_dir = dirs::data_local_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("screen-assistant")
-            .join("data");
+        let base_dir = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
+        let mut data_dir = base_dir.join("opencowork").join("data");
+        if !data_dir.exists() {
+            let legacy_dir = base_dir.join("screen-assistant").join("data");
+            if legacy_dir.exists() {
+                data_dir = legacy_dir;
+            }
+        }
 
         Self { data_dir }
     }

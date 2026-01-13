@@ -6,11 +6,13 @@ import { useChatStore } from '../stores/chat'
 import { useCaptureStore } from '../stores/capture'
 import { useSkillsStore } from '../stores/skills'
 import MessageItem from '../components/Chat/MessageItem.vue'
+import { useI18n } from '../i18n'
 
 const chatStore = useChatStore()
 const captureStore = useCaptureStore()
 const skillsStore = useSkillsStore()
 const message = useMessage()
+const { t } = useI18n()
 
 const inputMessage = ref('')
 const messagesContainer = ref<HTMLElement | null>(null)
@@ -104,8 +106,8 @@ async function sendMessage() {
       // 显示正在调用 skill 的提示
       chatStore.addMessage({
         role: 'assistant',
-        content: `🔧 正在调用技能 \`/${skillName}\`...`,
-        timestamp: new Date().toISOString()
+        content: t('main.chat.invokingSkill', { skill: skillName }),
+        timestamp: new Date().toISOString(),
       })
 
       // 调用 skill
@@ -133,8 +135,8 @@ async function sendMessage() {
   } catch (error) {
     chatStore.addMessage({
       role: 'assistant',
-      content: `错误: ${error}`,
-      timestamp: new Date().toISOString()
+      content: t('main.chat.error', { error: String(error) }),
+      timestamp: new Date().toISOString(),
     })
   } finally {
     isLoading.value = false
@@ -157,18 +159,13 @@ async function loadAlertHistory() {
     }>>('get_recent_alerts', { since })
 
     if (!alerts || alerts.length === 0) {
-      message.info('今天没有历史提醒')
+      message.info(t('main.alert.noneToday'))
       return
     }
 
     for (const alert of alerts) {
       const alertType = alert.issue_type || 'unknown'
-      let content = `⚠️ **检测到问题**\n\n`
-      content += `**类型**: ${alertType}\n`
-      content += `**信息**: ${alert.message}\n`
-      if (alert.suggestion) {
-        content += `\n**建议**: ${alert.suggestion}`
-      }
+      const content = formatAlertContent(alertType, alert.message, alert.suggestion)
 
       chatStore.addAlert({
         role: 'assistant',
@@ -178,9 +175,9 @@ async function loadAlertHistory() {
       })
     }
 
-    message.success(`已加载今天 ${alerts.length} 条提醒`)
+    message.success(t('main.alert.loaded', { count: alerts.length }))
   } catch (error) {
-    message.error(`加载今天提醒失败: ${error}`)
+    message.error(t('main.alert.loadFailed', { error: String(error) }))
   } finally {
     isHistoryLoading.value = false
   }
@@ -200,25 +197,25 @@ function formatLocalTimestamp(date: Date): string {
 
 function newConversation() {
   if (chatStore.messages.length > 0) {
-    const confirmed = window.confirm('确定新建对话吗？当前对话将被清空。')
+    const confirmed = window.confirm(t('main.chat.newConfirm'))
     if (!confirmed) return
   }
   chatStore.newConversation()
-  message.success('已新建对话')
+  message.success(t('main.chat.newSuccess'))
 }
 
 function saveConversation() {
   const result = chatStore.saveCurrentConversation()
   if (result) {
-    message.success(`对话已保存: ${result.title}`)
+    message.success(t('main.chat.saved', { title: result.title }))
   } else {
-    message.warning('没有可保存的对话内容')
+    message.warning(t('main.chat.saveEmpty'))
   }
 }
 
 function loadSavedConversation(id: string) {
   if (chatStore.loadConversation(id)) {
-    message.success('对话已加载')
+    message.success(t('main.chat.loaded'))
   }
 }
 
@@ -230,7 +227,7 @@ const savedConversationOptions = computed(() => {
 })
 
 function clearChat() {
-  const confirmed = window.confirm('确定清空当前对话吗？')
+  const confirmed = window.confirm(t('main.chat.clearConfirm'))
   if (!confirmed) return
   chatStore.clearMessages()
 }
@@ -272,6 +269,17 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
+function formatAlertContent(alertTypeRaw: string, messageText: string, suggestion?: string) {
+  const alertTypeLabel = alertTypeRaw && alertTypeRaw !== 'unknown' ? alertTypeRaw : t('common.unknown')
+  let content = `${t('alert.detectedTitle')}\n\n`
+  content += `${t('alert.typeLine', { type: alertTypeLabel })}\n`
+  content += `${t('alert.messageLine', { message: messageText })}\n`
+  if (suggestion) {
+    content += `\n${t('alert.suggestionLine', { suggestion })}`
+  }
+  return content
+}
+
 function selectSkill(skillName: string) {
   inputMessage.value = `/${skillName} `
   showSkillHints.value = false
@@ -309,10 +317,10 @@ onUnmounted(() => {
         <NSpace justify="space-between" align="center" style="width: 100%">
           <NSpace>
             <NTag :type="captureStore.isCapturing ? 'success' : 'default'" size="small">
-              {{ captureStore.isCapturing ? '监控中' : '已暂停' }}
+              {{ captureStore.isCapturing ? t('main.status.capturing') : t('main.status.paused') }}
             </NTag>
             <NTag type="info" size="small">
-              记录: {{ captureStore.recordCount }}
+              {{ t('main.status.records') }}: {{ captureStore.recordCount }}
             </NTag>
           </NSpace>
           <NSpace align="center">
@@ -320,13 +328,13 @@ onUnmounted(() => {
               <template #icon>
                 <NIcon><AddOutline /></NIcon>
               </template>
-              新建
+              {{ t('common.new') }}
             </NButton>
             <NButton size="small" secondary @click="saveConversation">
               <template #icon>
                 <NIcon><SaveOutline /></NIcon>
               </template>
-              保存
+              {{ t('common.save') }}
             </NButton>
             <NDropdown
               v-if="savedConversationOptions.length > 0"
@@ -334,13 +342,13 @@ onUnmounted(() => {
               @select="loadSavedConversation"
             >
               <NButton size="small" secondary>
-                历史对话 ({{ savedConversationOptions.length }})
+                {{ t('main.buttons.history') }} ({{ savedConversationOptions.length }})
               </NButton>
             </NDropdown>
             <NButton size="small" secondary :loading="isHistoryLoading" @click="loadAlertHistory">
-              加载今天提醒
+              {{ t('main.buttons.loadAlerts') }}
             </NButton>
-            <NButton size="small" secondary @click="clearChat">清空</NButton>
+            <NButton size="small" secondary @click="clearChat">{{ t('common.clear') }}</NButton>
             <NButton
               size="small"
               :type="captureStore.isCapturing ? 'error' : 'success'"
@@ -352,7 +360,7 @@ onUnmounted(() => {
                   <PlayCircleOutline v-else />
                 </NIcon>
               </template>
-              {{ captureStore.isCapturing ? '停止' : '开始' }}
+              {{ captureStore.isCapturing ? t('common.stop') : t('common.start') }}
             </NButton>
           </NSpace>
         </NSpace>
@@ -361,15 +369,15 @@ onUnmounted(() => {
       <!-- 消息列表 -->
       <div class="messages-container" ref="messagesContainer">
         <div v-if="chatStore.messages.length === 0" class="empty-state">
-          <h2>Screen Assistant</h2>
-          <p>我会记录你的屏幕操作，随时可以问我：</p>
+          <h2>{{ t('app.name') }}</h2>
+          <p>{{ t('main.empty.desc') }}</p>
           <ul>
-            <li>刚才我做了什么？</li>
-            <li>帮我回顾一下过去10分钟的操作</li>
-            <li>我刚才在哪个文件里修改了代码？</li>
+            <li>{{ t('main.empty.item1') }}</li>
+            <li>{{ t('main.empty.item2') }}</li>
+            <li>{{ t('main.empty.item3') }}</li>
           </ul>
           <p style="margin-top: 20px; color: #63e2b7;">
-            点击右上角「开始」按钮启动监控
+            {{ t('main.empty.tip') }}
           </p>
         </div>
 
@@ -381,7 +389,7 @@ onUnmounted(() => {
 
         <div v-if="isLoading" class="loading-indicator">
           <NSpin size="small" />
-          <span>思考中...</span>
+          <span>{{ t('main.loading') }}</span>
         </div>
       </div>
 
@@ -402,14 +410,14 @@ onUnmounted(() => {
           </div>
         </div>
         <div v-else-if="showSkillHints && filteredSkills.length === 0" class="skill-hints">
-          <div class="skill-hint-empty">没有匹配的技能</div>
+          <div class="skill-hint-empty">{{ t('main.skill.empty') }}</div>
         </div>
 
         <div class="input-area">
           <NInput
             v-model:value="inputMessage"
             type="textarea"
-            placeholder="输入你的问题... (输入 / 查看可用技能)"
+            :placeholder="t('main.input.placeholder')"
             :autosize="{ minRows: 1, maxRows: 4 }"
             @keydown="handleKeydown"
           />

@@ -1,31 +1,48 @@
 <script setup lang="ts">
-import { NConfigProvider, NMessageProvider, NLayout, NLayoutSider, NMenu, NIcon, darkTheme } from 'naive-ui'
+import {
+  NConfigProvider,
+  NMessageProvider,
+  NLayout,
+  NLayoutSider,
+  NMenu,
+  NIcon,
+  darkTheme,
+  zhCN,
+  enUS,
+  dateZhCN,
+  dateEnUS,
+} from 'naive-ui'
 import { h, ref, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ChatboxOutline, SettingsOutline, TimeOutline } from '@vicons/ionicons5'
+import { useI18n } from './i18n'
 
 const router = useRouter()
 const route = useRoute()
 
 const collapsed = ref(false)
+const { locale, t } = useI18n()
 
-const menuOptions = [
+const menuOptions = computed(() => [
   {
-    label: '对话',
+    label: t('menu.chat'),
     key: '/',
     icon: () => h(NIcon, null, { default: () => h(ChatboxOutline) }),
   },
   {
-    label: '历史',
+    label: t('menu.history'),
     key: '/history',
     icon: () => h(NIcon, null, { default: () => h(TimeOutline) }),
   },
   {
-    label: '设置',
+    label: t('menu.settings'),
     key: '/settings',
     icon: () => h(NIcon, null, { default: () => h(SettingsOutline) }),
   },
-]
+])
+
+const naiveLocale = computed(() => (locale.value === 'zh' ? zhCN : enUS))
+const naiveDateLocale = computed(() => (locale.value === 'zh' ? dateZhCN : dateEnUS))
 
 const activeKey = computed(() => route.path)
 
@@ -35,7 +52,7 @@ function handleMenuUpdate(key: string) {
 </script>
 
 <template>
-  <NConfigProvider :theme="darkTheme">
+  <NConfigProvider :theme="darkTheme" :locale="naiveLocale" :date-locale="naiveDateLocale">
     <NMessageProvider>
       <NLayout has-sider style="height: 100vh">
         <NLayoutSider
@@ -49,10 +66,10 @@ function handleMenuUpdate(key: string) {
           @expand="collapsed = false"
         >
           <div class="logo" v-if="!collapsed">
-            Screen Assistant
+            {{ t('app.name') }}
           </div>
           <div class="logo-mini" v-else>
-            SA
+            {{ t('app.shortName') }}
           </div>
           <NMenu
             :collapsed="collapsed"

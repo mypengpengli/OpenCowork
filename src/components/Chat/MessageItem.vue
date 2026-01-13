@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { NAvatar, NIcon } from 'naive-ui'
 import { PersonOutline, HardwareChipOutline, WarningOutline } from '@vicons/ionicons5'
+import { localeToDateLocale, useI18n } from '../../i18n'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -16,10 +17,11 @@ const props = defineProps<{
 
 const isUser = computed(() => props.message.role === 'user')
 const isAlert = computed(() => props.message.isAlert)
+const { t, locale } = useI18n()
 
 function formatTime(timestamp: string): string {
   const date = new Date(timestamp)
-  return date.toLocaleString('zh-CN', {
+  return date.toLocaleString(localeToDateLocale(locale.value), {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -42,7 +44,9 @@ function formatTime(timestamp: string): string {
     </NAvatar>
     <div class="message-content">
       <div class="message-header">
-        <span class="role">{{ isAlert ? '警告' : (isUser ? '你' : 'Assistant') }}</span>
+        <span class="role">
+          {{ isAlert ? t('message.role.alert') : (isUser ? t('message.role.user') : t('message.role.assistant')) }}
+        </span>
         <span class="time">{{ formatTime(message.timestamp) }}</span>
       </div>
       <div class="message-text" :class="{ 'alert-text': isAlert }">{{ message.content }}</div>

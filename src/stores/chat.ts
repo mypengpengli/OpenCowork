@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { translate } from '../i18n'
+import { useLocaleStore } from './locale'
 
 export interface ChatMessage {
   role: 'user' | 'assistant'
@@ -17,13 +19,17 @@ export interface SavedConversation {
   updatedAt: string
 }
 
-const STORAGE_KEY = 'screen-assistant-conversations'
+const STORAGE_KEY = 'opencowork-conversations'
+const LEGACY_STORAGE_KEY = 'screen-assistant-conversations'
 const MAX_HISTORY_FOR_CONTEXT = 10  // 发送给模型的最大对话轮数
 
 export const useChatStore = defineStore('chat', () => {
   const messages = ref<ChatMessage[]>([])
   const savedConversations = ref<SavedConversation[]>([])
   const seenAlerts = new Set<string>()
+  const localeStore = useLocaleStore()
+  const t = (key: string, params?: Record<string, string | number>) =>
+    translate(localeStore.locale.value, key, params)
 
   // 获取用于发送给模型的对话历史（只取最近N轮，不包含alert）
   const chatHistoryForModel = computed(() => {
@@ -109,9 +115,12 @@ export const useChatStore = defineStore('chat', () => {
   // 从 localStorage 加载保存的对话列表
   function loadSavedConversations() {
     try {
-      const data = localStorage.getItem(STORAGE_KEY)
+      const data = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY)
       if (data) {
         savedConversations.value = JSON.parse(data)
+        if (!localStorage.getItem(STORAGE_KEY)) {
+          localStorage.setItem(STORAGE_KEY, data)
+        }
       }
     } catch (e) {
       console.error('Failed to load saved conversations:', e)
@@ -134,7 +143,7 @@ export const useChatStore = defineStore('chat', () => {
       const content = firstUserMsg.content.trim()
       return content.length > 20 ? content.slice(0, 20) + '...' : content
     }
-    return '新对话'
+    return t('chat.defaultTitle')
   }
 
   // 初始化时加载保存的对话
