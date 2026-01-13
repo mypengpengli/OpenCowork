@@ -437,6 +437,15 @@ async function openSkillsFolder() {
     }
   }
 }
+
+async function openReleasePage() {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('open_release_page')
+  } catch (error) {
+    message.error(t('settings.update.openFailed', { error: String(error) }))
+  }
+}
 </script>
 
 <template>
@@ -448,6 +457,7 @@ async function openSkillsFolder() {
           <div class="settings-header">
             <h2>{{ t('settings.header.profiles') }}</h2>
             <NSpace>
+              <NButton @click="openReleasePage">{{ t('settings.buttons.checkUpdate') }}</NButton>
               <NButton @click="toggleLocale">{{ languageToggleLabel }}</NButton>
               <NButton type="primary" @click="openNewProfile">{{ t('settings.buttons.newProfile') }}</NButton>
             </NSpace>

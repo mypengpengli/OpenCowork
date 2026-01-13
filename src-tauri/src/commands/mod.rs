@@ -15,6 +15,7 @@ pub struct AppState {
 }
 
 const MIN_RECENT_DETAIL_RECORDS: usize = 20;
+const RELEASE_PAGE_URL: &str = "https://github.com/mypengpengli/OpenCowork/releases/latest";
 
 impl AppState {
     pub fn new() -> Self {
@@ -513,6 +514,14 @@ pub async fn open_screenshots_dir(app_handle: AppHandle) -> Result<(), String> {
     app_handle
         .shell()
         .open(dir_str, None)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn open_release_page(app_handle: AppHandle) -> Result<(), String> {
+    app_handle
+        .shell()
+        .open(RELEASE_PAGE_URL.to_string(), None)
         .map_err(|e| e.to_string())
 }
 

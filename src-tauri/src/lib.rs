@@ -16,6 +16,7 @@ use commands::{
     get_recent_alerts,
     clear_summaries, clear_all_summaries,
     open_screenshots_dir,
+    open_release_page,
     // Skills 相关命令
     list_skills, get_skill, invoke_skill, create_skill, delete_skill, get_skills_dir, open_skills_dir,
 };
@@ -51,6 +52,7 @@ pub fn run() {
             clear_summaries,
             clear_all_summaries,
             open_screenshots_dir,
+            open_release_page,
             // Skills 相关命令
             list_skills,
             get_skill,
