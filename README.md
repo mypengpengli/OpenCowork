@@ -1,6 +1,6 @@
 # OpenCowork - Your AI Work Companion
 
-OpenCowork is designed to stay simple and lightweight. It focuses on two core capabilities: screen monitoring and the Skills system. Because Skills are infinitely extensible, OpenCowork includes built-in creation, management, update, and deletion of Skills. You can ask the model to generate a Skill for any workflow (for example, a file-organization Skill), or import an existing Skill. If a Skill has flaws, just update its `SKILL.md`.
+OpenCowork is designed to stay simple and lightweight. It focuses on two core capabilities: screen monitoring and the Skills system. Because Skills are infinitely extensible, OpenCowork includes built-in creation, management, update, and deletion of Skills. You can ask the model to generate a Skill for any workflow (for example, a file-organization Skill), or import an existing Skill. If a Skill has flaws, you can have the model revise it or edit `SKILL.md` yourself.
 
 [![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/mypengpengli/OpenCowork)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -173,7 +173,7 @@ MIT
 
 # OpenCowork - 你的 AI 工作伴侣
 
-OpenCowork 以简单轻便为主，只提供屏幕监控和 Skills 两大核心能力。由于 Skills 可以无限扩展，工具内置了创建、管理、修改、删除 Skills 的功能。你可以让大模型按任何工作需求生成 Skill（例如“整理文件”的 Skill），也可以直接导入已有 Skill；如果已有 Skill 有瑕疵，直接修改 `SKILL.md` 即可。
+OpenCowork 以简单轻便为主，只提供屏幕监控和 Skills 两大核心能力。由于 Skills 可以无限扩展，工具内置了创建、管理、修改、删除 Skills 的功能。你可以让大模型按任何工作需求生成 Skill（例如“整理文件”的 Skill），也可以直接导入已有 Skill；如果已有 Skill 有瑕疵，可以让大模型修改，或者你自己编辑 `SKILL.md`。
 
 > **再也不用担心错过任何一个报错信息了。**
 
