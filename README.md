@@ -97,6 +97,24 @@ Here are some practical examples of creating Skills with just one sentence:
 
 **For individual developers**: Encapsulate common operations into Skills, completing complex tasks with a single sentence.
 
+### 📝 Global Prompts — Your Personal Info, Always Ready
+
+Tired of repeatedly telling AI your company name, department, or manager's name when filling out forms?
+
+**Global Prompts** let you save frequently used personal information that automatically gets injected into every AI conversation:
+
+- Save your company info: *"I work at Acme Corp, Engineering Department"*
+- Save your team info: *"My manager is John Smith, my director is Jane Doe"*
+- Save common formats: *"Reports should use the company template with header..."*
+
+**How it works:**
+1. Go to Settings → Global Prompts tab
+2. Create prompts with names like "Personal Info" or "Company Info"
+3. Toggle them on/off as needed
+4. AI automatically uses this info when relevant (e.g., filling forms, writing emails)
+
+**No more copy-pasting the same info over and over!**
+
 ### 🧠 Smart Frame Skipping, Save Money
 
 Worried about token consumption? OpenCowork uses perceptual hashing to compare frames. **When the screen hasn't changed, analysis is automatically skipped**, significantly reducing API costs while ensuring no important information is missed.
@@ -119,6 +137,7 @@ Worried about token consumption? OpenCowork uses perceptual hashing to compare f
 - **Two-Layer Storage**: Raw records + smart aggregation, balancing detail and efficiency
 - **Privacy First**: All data stored locally, screenshots never saved to disk
 - **Tool Use Support**: AI can autonomously create, modify, and delete skills
+- **Global Prompts**: Save personal info once, auto-inject into every conversation
 
 ## Quick Start
 
@@ -274,6 +293,24 @@ OpenCowork 理解自然语言，支持多轮对话，就像和一个了解你所
 
 **对于个人开发者**：可以把常用的操作封装成 Skill，一句话完成复杂任务。
 
+### 📝 全局提示词 — 个人信息，随时就绪
+
+是否厌倦了每次填表单时都要告诉 AI 你的公司名称、部门或领导姓名？
+
+**全局提示词**让你保存常用的个人信息，自动注入到每次 AI 对话中：
+
+- 保存公司信息：*"我是XX公司的员工，隶属于技术部"*
+- 保存团队信息：*"我的部门经理是张三，分管领导是李四"*
+- 保存常用格式：*"报告需要使用公司模板，包含页眉..."*
+
+**使用方法：**
+1. 进入设置 → 全局提示词标签页
+2. 创建提示词，如"个人信息"或"公司信息"
+3. 根据需要开启或关闭
+4. AI 会在相关场景自动使用这些信息（如填写表单、撰写邮件）
+
+**再也不用反复复制粘贴同样的信息了！**
+
 ### 🧠 智能跳帧，省钱省心
 
 担心 Token 消耗太快？OpenCowork 使用感知哈希算法对比画面，**当屏幕没有变化时自动跳过分析**，在保证不遗漏任何重要信息的同时，大幅降低 API 调用成本。
@@ -296,6 +333,7 @@ OpenCowork 理解自然语言，支持多轮对话，就像和一个了解你所
 - **两层存储架构**：原始记录 + 智能聚合，平衡详细度与存储效率
 - **隐私优先**：所有数据本地存储，截图不落盘
 - **Tool Use 支持**：AI 可自主调用工具，实现技能的创建、修改、删除
+- **全局提示词**：保存一次个人信息，自动注入每次对话
 
 ## 快速开始
 
