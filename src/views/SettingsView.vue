@@ -49,6 +49,20 @@ const newSkillDescription = ref('')
 const newSkillInstructions = ref('')
 const skillsDir = ref('')
 
+// 全局提示词相关状态
+interface GlobalPromptItem {
+  id: string
+  name: string
+  content: string
+  enabled: boolean
+}
+const globalPrompts = ref<GlobalPromptItem[]>([])
+const promptModalVisible = ref(false)
+const promptModalMode = ref<'new' | 'edit'>('new')
+const editingPromptId = ref('')
+const newPromptName = ref('')
+const newPromptContent = ref('')
+
 const profiles = ref<ProfileEntry[]>([])
 const isLoading = ref(false)
 const drawerVisible = ref(false)
@@ -377,7 +391,100 @@ onMounted(async () => {
   // 加载 Skills
   await skillsStore.loadSkills()
   skillsDir.value = await skillsStore.getSkillsDir()
+  // 加载全局提示词
+  await loadGlobalPrompts()
 })
+
+// 全局提示词相关函数
+async function loadGlobalPrompts() {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const config = await invoke<any>('get_config')
+    globalPrompts.value = config?.global_prompt?.items || []
+  } catch (error) {
+    console.error('加载全局提示词失败:', error)
+    globalPrompts.value = []
+  }
+}
+
+async function saveGlobalPrompts() {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const config = await invoke<any>('get_config')
+    const updatedConfig = {
+      ...config,
+      global_prompt: {
+        items: globalPrompts.value
+      }
+    }
+    await invoke('save_config', { config: updatedConfig })
+    message.success(t('settings.prompt.saveSuccess'))
+  } catch (error) {
+    message.error(t('settings.prompt.saveFailed', { error: String(error) }))
+  }
+}
+
+function openCreatePromptModal() {
+  promptModalMode.value = 'new'
+  editingPromptId.value = ''
+  newPromptName.value = ''
+  newPromptContent.value = ''
+  promptModalVisible.value = true
+}
+
+function openEditPromptModal(prompt: GlobalPromptItem) {
+  promptModalMode.value = 'edit'
+  editingPromptId.value = prompt.id
+  newPromptName.value = prompt.name
+  newPromptContent.value = prompt.content
+  promptModalVisible.value = true
+}
+
+async function savePrompt() {
+  if (!newPromptName.value.trim()) {
+    message.warning(t('settings.prompt.modal.name'))
+    return
+  }
+  if (!newPromptContent.value.trim()) {
+    message.warning(t('settings.prompt.modal.content'))
+    return
+  }
+
+  if (promptModalMode.value === 'new') {
+    // 创建新提示词
+    const newPrompt: GlobalPromptItem = {
+      id: crypto.randomUUID(),
+      name: newPromptName.value.trim(),
+      content: newPromptContent.value.trim(),
+      enabled: true
+    }
+    globalPrompts.value.push(newPrompt)
+  } else {
+    // 编辑现有提示词
+    const index = globalPrompts.value.findIndex(p => p.id === editingPromptId.value)
+    if (index !== -1) {
+      globalPrompts.value[index].name = newPromptName.value.trim()
+      globalPrompts.value[index].content = newPromptContent.value.trim()
+    }
+  }
+
+  await saveGlobalPrompts()
+  promptModalVisible.value = false
+}
+
+async function deletePrompt(prompt: GlobalPromptItem) {
+  const confirmed = window.confirm(t('settings.prompt.deleteConfirm', { name: prompt.name }))
+  if (!confirmed) return
+
+  globalPrompts.value = globalPrompts.value.filter(p => p.id !== prompt.id)
+  await saveGlobalPrompts()
+  message.success(t('settings.prompt.deleteSuccess'))
+}
+
+async function togglePromptEnabled(prompt: GlobalPromptItem) {
+  prompt.enabled = !prompt.enabled
+  await saveGlobalPrompts()
+}
 
 // Skills 相关函数
 function openCreateSkillModal() {
@@ -566,6 +673,59 @@ async function openReleasePage() {
               <li v-html="t('settings.skills.help.item1')"></li>
               <li v-html="t('settings.skills.help.item2')"></li>
               <li>{{ t('settings.skills.help.item3') }}</li>
+            </ul>
+          </div>
+        </NTabPane>
+
+        <!-- 全局提示词 Tab -->
+        <NTabPane name="prompts" :tab="t('settings.tabs.prompts')">
+          <div class="settings-header">
+            <h2>{{ t('settings.header.prompts') }}</h2>
+            <NSpace>
+              <NButton type="primary" @click="openCreatePromptModal">{{ t('settings.buttons.newPrompt') }}</NButton>
+            </NSpace>
+          </div>
+
+          <div v-if="globalPrompts.length === 0" class="empty-state">
+            <p>{{ t('settings.empty.prompts') }}</p>
+            <p class="muted">{{ t('settings.empty.promptsHint') }}</p>
+          </div>
+
+          <div v-else class="prompts-list">
+            <NCard
+              v-for="prompt in globalPrompts"
+              :key="prompt.id"
+              class="prompt-card"
+              :class="{ active: prompt.enabled }"
+            >
+              <div class="prompt-row">
+                <div class="prompt-info">
+                  <div class="prompt-title">
+                    <span>{{ prompt.name }}</span>
+                    <NTag v-if="prompt.enabled" type="success" size="small">启用</NTag>
+                  </div>
+                  <div class="prompt-content">{{ prompt.content.length > 100 ? prompt.content.slice(0, 100) + '...' : prompt.content }}</div>
+                </div>
+                <div class="prompt-actions">
+                  <NSwitch :value="prompt.enabled" @update:value="togglePromptEnabled(prompt)" />
+                  <NButton size="small" @click="openEditPromptModal(prompt)">
+                    {{ t('common.edit') }}
+                  </NButton>
+                  <NButton size="small" type="error" secondary @click="deletePrompt(prompt)">
+                    {{ t('common.delete') }}
+                  </NButton>
+                </div>
+              </div>
+            </NCard>
+          </div>
+
+          <div class="prompts-help">
+            <NDivider />
+            <h3>{{ t('settings.prompt.help.title') }}</h3>
+            <ul>
+              <li>{{ t('settings.prompt.help.item1') }}</li>
+              <li>{{ t('settings.prompt.help.item2') }}</li>
+              <li>{{ t('settings.prompt.help.item3') }}</li>
             </ul>
           </div>
         </NTabPane>
@@ -799,6 +959,32 @@ async function openReleasePage() {
           </NSpace>
         </template>
       </NModal>
+
+      <!-- 创建/编辑提示词模态框 -->
+      <NModal v-model:show="promptModalVisible" preset="card" :title="promptModalMode === 'new' ? t('settings.prompt.modal.titleNew') : t('settings.prompt.modal.titleEdit')" style="width: 600px;">
+        <NForm label-placement="left" label-width="100">
+          <NFormItem :label="t('settings.prompt.modal.name')">
+            <NInput
+              v-model:value="newPromptName"
+              :placeholder="t('settings.prompt.modal.namePlaceholder')"
+            />
+          </NFormItem>
+          <NFormItem :label="t('settings.prompt.modal.content')">
+            <NInput
+              v-model:value="newPromptContent"
+              type="textarea"
+              :autosize="{ minRows: 4, maxRows: 12 }"
+              :placeholder="t('settings.prompt.modal.contentPlaceholder')"
+            />
+          </NFormItem>
+        </NForm>
+        <template #footer>
+          <NSpace justify="end">
+            <NButton @click="promptModalVisible = false">{{ t('common.cancel') }}</NButton>
+            <NButton type="primary" @click="savePrompt">{{ t('common.save') }}</NButton>
+          </NSpace>
+        </template>
+      </NModal>
     </NLayoutContent>
   </NLayout>
 </template>
@@ -964,5 +1150,74 @@ async function openReleasePage() {
   color: #63e2b7;
   padding: 2px 6px;
   border-radius: 4px;
+}
+
+/* 全局提示词样式 */
+.prompts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.prompt-card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.prompt-card.active {
+  border-color: rgba(99, 226, 183, 0.6);
+  background: rgba(99, 226, 183, 0.08);
+}
+
+.prompt-row {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.prompt-info {
+  flex: 1;
+  min-width: 240px;
+}
+
+.prompt-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.prompt-content {
+  margin-top: 6px;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.prompt-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.prompts-help {
+  margin-top: 24px;
+}
+
+.prompts-help h3 {
+  color: rgba(255, 255, 255, 0.8);
+  margin-bottom: 12px;
+}
+
+.prompts-help ul {
+  color: rgba(255, 255, 255, 0.6);
+  padding-left: 20px;
+}
+
+.prompts-help li {
+  margin: 8px 0;
 }
 </style>

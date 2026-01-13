@@ -11,6 +11,24 @@ pub struct Config {
     pub model: ModelConfig,
     pub capture: CaptureConfig,
     pub storage: StorageConfig,
+    #[serde(default)]
+    pub global_prompt: GlobalPromptConfig,
+}
+
+// ============ 全局提示词配置 ============
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GlobalPromptItem {
+    pub id: String,           // 唯一标识 (UUID)
+    pub name: String,         // 提示词名称（如"个人信息"、"公司信息"）
+    pub content: String,      // 提示词内容
+    pub enabled: bool,        // 是否启用
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GlobalPromptConfig {
+    #[serde(default)]
+    pub items: Vec<GlobalPromptItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,6 +143,7 @@ impl Default for Config {
                 max_context_chars: 10000,  // 默认10000字符
                 auto_clear_on_start: false,
             },
+            global_prompt: GlobalPromptConfig::default(),
         }
     }
 }

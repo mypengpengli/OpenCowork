@@ -159,6 +159,9 @@ pub async fn chat_with_assistant(
     // 构建上下文（使用配置中的最大字符数）
     let context = search_result.build_context(config.storage.max_context_chars, query.include_detail);
 
+    // 注入启用的全局提示词
+    let context = build_context_with_global_prompts(&config, context);
+
     // 使用 API 模式时启用 Tool Use
     if config.model.provider == "api" {
         // 使用 Tool Use 进行对话
@@ -334,10 +337,13 @@ async fn execute_skill_internal(
     let search_result = storage.smart_search(&query).unwrap_or_default();
     let screen_context = search_result.build_context(config.storage.max_context_chars, true);
 
+    // 获取启用的全局提示词
+    let global_prompts_section = build_global_prompts_section(config);
+
     // 构建 system prompt，注入 skill 指令
     let system_prompt = format!(
         r#"你是一个屏幕监控助手。现在用户调用了技能 "{}"。
-
+{}
 ## 技能说明
 {}
 
@@ -349,6 +355,7 @@ async fn execute_skill_internal(
 
 请根据技能指令和屏幕活动记录，完成用户的请求。"#,
         skill.metadata.name,
+        global_prompts_section,
         skill.metadata.description,
         skill.instructions,
         screen_context
@@ -457,6 +464,34 @@ fn wants_detail(message: &str) -> bool {
     ];
 
     triggers.iter().any(|kw| msg.contains(kw))
+}
+
+/// 构建包含全局提示词的上下文
+fn build_context_with_global_prompts(config: &Config, context: String) -> String {
+    let global_section = build_global_prompts_section(config);
+    if global_section.is_empty() {
+        context
+    } else {
+        format!("{}{}", global_section, context)
+    }
+}
+
+/// 构建全局提示词部分
+fn build_global_prompts_section(config: &Config) -> String {
+    let enabled_prompts: Vec<&str> = config.global_prompt.items
+        .iter()
+        .filter(|item| item.enabled && !item.content.trim().is_empty())
+        .map(|item| item.content.as_str())
+        .collect();
+
+    if enabled_prompts.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "## 用户预设信息\n{}\n\n",
+            enabled_prompts.join("\n\n")
+        )
+    }
 }
 
 fn merge_recent_records(
