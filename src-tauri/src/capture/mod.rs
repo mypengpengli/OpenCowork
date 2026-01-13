@@ -188,7 +188,6 @@ async fn capture_and_analyze_with_diff(
     // 1. 截屏
     let image = ScreenCapture::capture_primary()?;
     let now = Local::now();
-    let screenshot_ref = save_screenshot(storage_manager, &image, &now, config.capture.compress_quality);
 
     // 2. 如果启用了跳过无变化，进行对比
     if config.capture.skip_unchanged {
@@ -207,10 +206,13 @@ async fn capture_and_analyze_with_diff(
         *prev_hash = Some(current_hash);
     }
 
-    // 3. 转换为 base64
+    // 3. 保存截图
+    let screenshot_ref = save_screenshot(storage_manager, &image, &now, config.capture.compress_quality);
+
+    // 4. 转换为 base64
     let image_base64 = ScreenCapture::image_to_base64(&image, config.capture.compress_quality)?;
 
-    // 4. 发送给大模型识别
+    // 5. 发送给大模型识别
     let recent_context = build_recent_summary_context(
         storage_manager,
         config.capture.recent_summary_limit,
@@ -273,7 +275,7 @@ async fn capture_and_analyze_with_diff(
         }
     };
 
-    // 5. 解析分析结果
+    // 6. 解析分析结果
     let mut parsed = parse_analysis(&analysis);
     let alert_threshold = config.capture.alert_confidence_threshold.clamp(0.0, 1.0);
     let issue_message = if parsed.issue_message.is_empty() {
@@ -311,7 +313,7 @@ async fn capture_and_analyze_with_diff(
 
     *last_issue_key.lock() = current_issue_key;
 
-    // 6. 保存摘要
+    // 7. 保存摘要
     let timestamp = now.format("%Y-%m-%dT%H:%M:%S").to_string();
     let issue_summary = issue_message.clone();
 
@@ -332,7 +334,7 @@ async fn capture_and_analyze_with_diff(
 
     storage_manager.save_summary(&summary)?;
 
-    // 7. 如果检测到困难，主动推送提示
+    // 8. 如果检测到困难，主动推送提示
     if parsed.has_issue && should_emit {
         let alert_message = AssistantAlert {
             timestamp: timestamp.clone(),
