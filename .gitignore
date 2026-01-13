@@ -23,3 +23,8 @@ Thumbs.db
 # Tauri build
 src-tauri/WixTools/
 tmpclaude-*
+
+# Local release artifacts
+release/
+tools/
+testfile.txt
