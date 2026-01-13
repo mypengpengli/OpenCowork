@@ -79,6 +79,20 @@ This means:
 - **Rapid iteration**: Skill not working well? One sentence to improve it
 - **Unlimited possibilities**: Any workflow you can imagine can become a Skill
 
+### 💡 Real-World Examples
+
+Here are some practical examples of creating Skills with just one sentence:
+
+| Your Request | What AI Creates |
+|--------------|-----------------|
+| *"Create a skill to convert video formats"* | A video-convert skill that guides you through using FFmpeg to convert between MP4, AVI, MKV, etc. |
+| *"I need a skill to compress images in batch"* | An image-compress skill with instructions for batch processing using ImageMagick or similar tools |
+| *"Help me create a skill for generating git commit messages"* | A commit-msg skill that analyzes your changes and suggests conventional commit messages |
+| *"Create a skill to explain code errors"* | An error-explain skill that provides detailed explanations and solutions for common programming errors |
+| *"I want a skill to summarize meeting notes"* | A meeting-summary skill that extracts action items, decisions, and key points from your notes |
+
+**Just say what you need, and AI handles the rest!**
+
 **For enterprise users**: Create team-specific Skills to standardize workflows and boost collaboration.
 
 **For individual developers**: Encapsulate common operations into Skills, completing complex tasks with a single sentence.
@@ -241,6 +255,20 @@ OpenCowork 理解自然语言，支持多轮对话，就像和一个了解你所
 - **零门槛创建**：不需要了解 SKILL.md 格式，不需要写代码
 - **快速迭代**：发现技能不好用？一句话让 AI 改进
 - **无限可能**：任何你能想到的工作流，都可以变成一个 Skill
+
+### 💡 实际应用示例
+
+以下是一些一句话创建 Skill 的实际例子：
+
+| 你的请求 | AI 创建的技能 |
+|---------|--------------|
+| *"创建一个转换视频格式的技能"* | 一个 video-convert 技能，指导你使用 FFmpeg 在 MP4、AVI、MKV 等格式之间转换 |
+| *"我需要一个批量压缩图片的技能"* | 一个 image-compress 技能，包含使用 ImageMagick 等工具批量处理的指令 |
+| *"帮我创建一个生成 git 提交信息的技能"* | 一个 commit-msg 技能，分析你的代码变更并建议规范的提交信息 |
+| *"创建一个解释代码错误的技能"* | 一个 error-explain 技能，为常见编程错误提供详细解释和解决方案 |
+| *"我想要一个总结会议记录的技能"* | 一个 meeting-summary 技能，从你的笔记中提取行动项、决策和要点 |
+
+**只需说出你的需求，AI 帮你搞定一切！**
 
 **对于企业用户**：可以为团队定制专属 Skills，统一工作流程，提升协作效率。
 
