@@ -2,7 +2,7 @@
 
 OpenCowork is designed to stay simple and lightweight. It focuses on two core capabilities: screen monitoring and the Skills system. Because Skills are infinitely extensible, OpenCowork includes built-in creation, management, update, and deletion of Skills. You can ask the model to generate a Skill for any workflow (for example, a file-organization Skill), or import an existing Skill. If a Skill has flaws, you can have the model revise it or edit `SKILL.md` yourself.
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/mypengpengli/OpenCowork)
+[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](https://github.com/mypengpengli/OpenCowork)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/mypengpengli/OpenCowork?style=social)](https://github.com/mypengpengli/OpenCowork)
 

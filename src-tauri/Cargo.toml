@@ -1,6 +1,6 @@
 [package]
 name = "opencowork"
-version = "2.0.0"
+version = "0.2.0"
 description = "OpenCowork - AI-powered screen monitoring assistant"
 authors = ["you"]
 edition = "2021"
