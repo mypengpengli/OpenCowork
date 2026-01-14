@@ -52,7 +52,7 @@ function handleMenuUpdate(key: string) {
 </script>
 
 <template>
-  <NConfigProvider :theme="darkTheme" :locale="naiveLocale" :date-locale="naiveDateLocale">
+  <NConfigProvider :theme="darkTheme" :locale="naiveLocale" :date-locale="naiveDateLocale" :key="locale">
     <NMessageProvider>
       <NLayout has-sider style="height: 100vh">
         <NLayoutSider

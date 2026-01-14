@@ -3,12 +3,24 @@ import { ref, computed } from 'vue'
 import { translate } from '../i18n'
 import { useLocaleStore } from './locale'
 
+export type AttachmentKind = 'image' | 'document'
+
+export interface ChatAttachment {
+  id: string
+  name: string
+  path: string
+  size?: number
+  kind: AttachmentKind
+  mime?: string
+}
+
 export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   timestamp: string
   isAlert?: boolean  // 是否是主动提示的警告消息
   alertKey?: string
+  attachments?: ChatAttachment[]
 }
 
 export interface SavedConversation {

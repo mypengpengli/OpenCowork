@@ -2,8 +2,11 @@ use crate::capture::CaptureManager;
 use crate::model::{ModelManager, ChatWithToolsResult};
 use crate::storage::{Config, StorageManager, SummaryRecord, SearchQuery, TimeRange};
 use crate::skills::{SkillManager, SkillMetadata, Skill};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use chrono::{Duration, Local, NaiveDateTime, TimeZone};
 use std::collections::HashSet;
+use std::fs;
+use std::path::Path;
 use std::sync::Arc;
 use tauri::{AppHandle, State};
 use tauri_plugin_shell::ShellExt;
@@ -111,10 +114,27 @@ pub struct ChatHistoryMessage {
     pub content: String,
 }
 
+#[derive(serde::Deserialize, Clone)]
+pub struct AttachmentInput {
+    pub path: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub kind: Option<String>,
+}
+
+#[derive(Default)]
+struct AttachmentPayload {
+    text: String,
+    image_urls: Vec<String>,
+    image_base64: Vec<String>,
+}
+
 #[tauri::command]
 pub async fn chat_with_assistant(
     message: String,
     history: Option<Vec<ChatHistoryMessage>>,
+    attachments: Option<Vec<AttachmentInput>>,
 ) -> Result<String, String> {
     let storage = StorageManager::new();
     let config = storage.load_config().map_err(|e| e.to_string())?;
@@ -162,12 +182,34 @@ pub async fn chat_with_assistant(
     // 注入启用的全局提示词
     let context = build_context_with_global_prompts(&config, context);
 
+    // 处理附件内容
+    let attachment_payload = attachments
+        .as_deref()
+        .map(build_attachment_payload)
+        .unwrap_or_default();
+    let has_attachments = attachments.as_ref().map_or(false, |items| !items.is_empty());
+    let user_message = merge_user_message(&message, &attachment_payload.text, has_attachments);
+
     // 使用 API 模式时启用 Tool Use
     if config.model.provider == "api" {
         // 使用 Tool Use 进行对话
-        let result = model_manager
-            .chat_with_tools(&config.model, &context, &message, history.clone(), &available_skills)
-            .await?;
+        let result = if attachment_payload.image_urls.is_empty() && attachment_payload.image_base64.is_empty() {
+            model_manager
+                .chat_with_tools(&config.model, &context, &user_message, history.clone(), &available_skills)
+                .await?
+        } else {
+            model_manager
+                .chat_with_tools_with_images(
+                    &config.model,
+                    &context,
+                    &user_message,
+                    history.clone(),
+                    &available_skills,
+                    attachment_payload.image_urls.clone(),
+                    attachment_payload.image_base64.clone(),
+                )
+                .await?
+        };
 
         match result {
             ChatWithToolsResult::Text(text) => {
@@ -307,9 +349,22 @@ pub async fn chat_with_assistant(
     };
 
     let context_with_skills = format!("{}{}", context, skills_hint);
-    model_manager
-        .chat_with_history(&config.model, &context_with_skills, &message, history)
-        .await
+    if attachment_payload.image_urls.is_empty() && attachment_payload.image_base64.is_empty() {
+        model_manager
+            .chat_with_history(&config.model, &context_with_skills, &user_message, history)
+            .await
+    } else {
+        model_manager
+            .chat_with_history_with_images(
+                &config.model,
+                &context_with_skills,
+                &user_message,
+                history,
+                attachment_payload.image_urls,
+                attachment_payload.image_base64,
+            )
+            .await
+    }
 }
 
 /// 内部执行 skill 的函数
@@ -666,6 +721,7 @@ pub async fn invoke_skill(
     name: String,
     args: Option<String>,
     history: Option<Vec<ChatHistoryMessage>>,
+    attachments: Option<Vec<AttachmentInput>>,
 ) -> Result<String, String> {
     let storage = StorageManager::new();
     let config = storage.load_config().map_err(|e| e.to_string())?;
@@ -676,11 +732,18 @@ pub async fn invoke_skill(
     let skill = skill_manager.load_skill(&name)?;
 
     // 构建用户消息（包含参数）
-    let user_message = if let Some(ref args_str) = args {
+    let base_message = if let Some(ref args_str) = args {
         format!("执行技能 /{}: {}", name, args_str)
     } else {
         format!("执行技能 /{}", name)
     };
+
+    let attachment_payload = attachments
+        .as_deref()
+        .map(build_attachment_payload)
+        .unwrap_or_default();
+    let has_attachments = attachments.as_ref().map_or(false, |items| !items.is_empty());
+    let user_message = merge_user_message(&base_message, &attachment_payload.text, has_attachments);
 
     // 获取屏幕记录上下文
     let query = parse_user_query(&args.unwrap_or_default());
@@ -708,9 +771,22 @@ pub async fn invoke_skill(
     );
 
     // 调用模型
-    model_manager
-        .chat_with_system_prompt(&config.model, &system_prompt, &user_message, history)
-        .await
+    if attachment_payload.image_urls.is_empty() && attachment_payload.image_base64.is_empty() {
+        model_manager
+            .chat_with_system_prompt(&config.model, &system_prompt, &user_message, history)
+            .await
+    } else {
+        model_manager
+            .chat_with_system_prompt_with_images(
+                &config.model,
+                &system_prompt,
+                &user_message,
+                history,
+                attachment_payload.image_urls,
+                attachment_payload.image_base64,
+            )
+            .await
+    }
 }
 
 /// 创建新的 skill
@@ -755,4 +831,173 @@ pub async fn open_skills_dir(app_handle: AppHandle) -> Result<(), String> {
         .shell()
         .open(dir_str, None)
         .map_err(|e| e.to_string())
+}
+
+const MAX_ATTACHMENT_BYTES: u64 = 5 * 1024 * 1024;
+const MAX_ATTACHMENT_TEXT_CHARS: usize = 8000;
+const MAX_ATTACHMENT_IMAGES: usize = 4;
+
+fn merge_user_message(message: &str, attachment_text: &str, has_attachments: bool) -> String {
+    let mut merged = message.trim().to_string();
+    if merged.is_empty() && has_attachments {
+        merged = "用户发送了附件，请阅读附件内容并回答。".to_string();
+    }
+    if !attachment_text.trim().is_empty() {
+        if !merged.is_empty() {
+            merged.push_str("\n\n");
+        }
+        merged.push_str(attachment_text.trim());
+    }
+    merged
+}
+
+fn build_attachment_payload(attachments: &[AttachmentInput]) -> AttachmentPayload {
+    if attachments.is_empty() {
+        return AttachmentPayload::default();
+    }
+
+    let mut image_urls = Vec::new();
+    let mut image_base64 = Vec::new();
+    let mut image_names = Vec::new();
+    let mut doc_sections = Vec::new();
+    let mut notes = Vec::new();
+
+    for attachment in attachments {
+        if attachment.path.trim().is_empty() {
+            continue;
+        }
+
+        let name = attachment_name(&attachment.path, &attachment.name);
+        let ext = attachment_extension(&attachment.path);
+
+        if let Ok(meta) = fs::metadata(&attachment.path) {
+            if meta.len() > MAX_ATTACHMENT_BYTES {
+                notes.push(format!("- {} (文件过大，已跳过内容)", name));
+                continue;
+            }
+        }
+
+        let is_image = matches!(attachment.kind.as_deref(), Some("image")) || is_image_ext(&ext);
+        let is_text_doc = matches!(attachment.kind.as_deref(), Some("document")) || is_text_doc_ext(&ext);
+
+        if is_image {
+            if image_urls.len() >= MAX_ATTACHMENT_IMAGES {
+                notes.push(format!("- {} (图片数量超过限制)", name));
+                continue;
+            }
+            match fs::read(&attachment.path) {
+                Ok(bytes) => {
+                    let encoded = BASE64.encode(bytes);
+                    let mime = image_mime(&ext);
+                    image_urls.push(format!("data:{};base64,{}", mime, encoded));
+                    image_base64.push(encoded);
+                    image_names.push(name);
+                }
+                Err(err) => {
+                    notes.push(format!("- {} (读取失败: {})", name, err));
+                }
+            }
+            continue;
+        }
+
+        if is_text_doc {
+            match fs::read(&attachment.path) {
+                Ok(bytes) => {
+                    let mut content = String::from_utf8_lossy(&bytes).to_string();
+                    if content.len() > MAX_ATTACHMENT_TEXT_CHARS {
+                        content.truncate(MAX_ATTACHMENT_TEXT_CHARS);
+                        content.push_str("\n...(已截断)");
+                    }
+                    let trimmed = content.trim();
+                    if trimmed.is_empty() {
+                        notes.push(format!("- {} (文件内容为空)", name));
+                    } else {
+                        doc_sections.push(format!("### {}\n{}", name, trimmed));
+                    }
+                }
+                Err(err) => {
+                    notes.push(format!("- {} (读取失败: {})", name, err));
+                }
+            }
+            continue;
+        }
+
+        notes.push(format!("- {} (二进制附件，未解析内容)", name));
+    }
+
+    let mut text = String::new();
+    if !image_names.is_empty() {
+        text.push_str("图片附件:\n");
+        for name in &image_names {
+            text.push_str(&format!("- {}\n", name));
+        }
+    }
+
+    if !doc_sections.is_empty() {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str("文档内容:\n");
+        text.push_str(&doc_sections.join("\n\n"));
+    }
+
+    if !notes.is_empty() {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str("附件备注:\n");
+        for note in notes {
+            text.push_str(&format!("{}\n", note));
+        }
+    }
+
+    let text = if text.trim().is_empty() {
+        String::new()
+    } else {
+        format!("## 附件\n{}", text.trim())
+    };
+
+    AttachmentPayload {
+        text,
+        image_urls,
+        image_base64,
+    }
+}
+
+fn attachment_name(path: &str, name: &str) -> String {
+    let trimmed = name.trim();
+    if !trimmed.is_empty() {
+        return trimmed.to_string();
+    }
+    Path::new(path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(path)
+        .to_string()
+}
+
+fn attachment_extension(path: &str) -> String {
+    Path::new(path)
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase()
+}
+
+fn is_image_ext(ext: &str) -> bool {
+    matches!(ext, "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp")
+}
+
+fn is_text_doc_ext(ext: &str) -> bool {
+    matches!(ext, "txt" | "md" | "json" | "csv" | "log" | "yaml" | "yml")
+}
+
+fn image_mime(ext: &str) -> &'static str {
+    match ext {
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        _ => "image/png",
+    }
 }

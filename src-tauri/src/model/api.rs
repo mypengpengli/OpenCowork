@@ -275,6 +275,105 @@ impl ApiClient {
             .and_then(|c| c.message.content.clone())
             .ok_or_else(|| "没有返回内容".to_string())
     }
+
+    pub async fn chat_with_history_with_images(
+        &self,
+        system_prompt: &str,
+        user_message: &str,
+        history: Option<Vec<ChatHistoryMessage>>,
+        image_urls: &[String],
+    ) -> Result<String, String> {
+        let url = format!("{}/chat/completions", self.config.endpoint);
+
+        let mut messages = vec![Message {
+            role: "system".to_string(),
+            content: Some(MessageContent::Text(system_prompt.to_string())),
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+
+        if let Some(hist) = history {
+            for msg in hist {
+                messages.push(Message {
+                    role: msg.role,
+                    content: Some(MessageContent::Text(msg.content)),
+                    tool_calls: None,
+                    tool_call_id: None,
+                });
+            }
+        }
+
+        let user_content = Self::build_user_message_content(user_message, image_urls);
+        messages.push(Message {
+            role: "user".to_string(),
+            content: Some(user_content),
+            tool_calls: None,
+            tool_call_id: None,
+        });
+
+        let request = ChatRequest {
+            model: self.config.model.clone(),
+            messages,
+            max_tokens: 2048,
+            tools: None,
+        };
+
+        let request_json = serde_json::to_string_pretty(&request)
+            .unwrap_or_else(|e| format!("无法序列化请求: {}", e));
+
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.config.api_key))
+            .header("Content-Type", "application/json")
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| {
+                write_exchange_log("api-chat-history", &url, &request_json, None, None, Some(&e.to_string()));
+                format!("请求失败: {}", e)
+            })?;
+
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        write_exchange_log("api-chat-history", &url, &request_json, Some(status), Some(&text), None);
+
+        if !status.is_success() {
+            return Err(format!("API 错误 {}: {}", status, text));
+        }
+
+        let chat_response: ChatResponse = serde_json::from_str(&text)
+            .map_err(|e| format!("解析响应失败: {}", e))?;
+
+        chat_response
+            .choices
+            .first()
+            .and_then(|c| c.message.content.clone())
+            .ok_or_else(|| "没有返回内容".to_string())
+    }
+
+    fn build_user_message_content(user_message: &str, image_urls: &[String]) -> MessageContent {
+        if image_urls.is_empty() {
+            return MessageContent::Text(user_message.to_string());
+        }
+
+        let mut parts = Vec::new();
+        parts.push(ContentPart {
+            content_type: "text".to_string(),
+            text: Some(user_message.to_string()),
+            image_url: None,
+        });
+
+        for url in image_urls {
+            parts.push(ContentPart {
+                content_type: "image_url".to_string(),
+                text: None,
+                image_url: Some(ImageUrl { url: url.clone() }),
+            });
+        }
+
+        MessageContent::Parts(parts)
+    }
     pub async fn analyze_image(&self, image_base64: &str, prompt: &str) -> Result<String, String> {
         let url = format!("{}/chat/completions", self.config.endpoint);
 
@@ -553,6 +652,97 @@ impl ApiClient {
         }
 
         // 否则返回文本内容
+        let content = choice
+            .message
+            .content
+            .clone()
+            .ok_or_else(|| "没有返回内容".to_string())?;
+
+        Ok(ChatWithToolsResult::Text(content))
+    }
+
+    /// 带 Tool Use 的对话（包含图片附件）
+    pub async fn chat_with_tools_with_images(
+        &self,
+        system_prompt: &str,
+        user_message: &str,
+        history: Option<Vec<ChatHistoryMessage>>,
+        tools: Vec<Tool>,
+        image_urls: &[String],
+    ) -> Result<ChatWithToolsResult, String> {
+        let url = format!("{}/chat/completions", self.config.endpoint);
+
+        let mut messages = vec![Message {
+            role: "system".to_string(),
+            content: Some(MessageContent::Text(system_prompt.to_string())),
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+
+        if let Some(hist) = history {
+            for msg in hist {
+                messages.push(Message {
+                    role: msg.role,
+                    content: Some(MessageContent::Text(msg.content)),
+                    tool_calls: None,
+                    tool_call_id: None,
+                });
+            }
+        }
+
+        let user_content = Self::build_user_message_content(user_message, image_urls);
+        messages.push(Message {
+            role: "user".to_string(),
+            content: Some(user_content),
+            tool_calls: None,
+            tool_call_id: None,
+        });
+
+        let request = ChatRequest {
+            model: self.config.model.clone(),
+            messages,
+            max_tokens: 2048,
+            tools: if tools.is_empty() { None } else { Some(tools) },
+        };
+
+        let request_json = serde_json::to_string_pretty(&request)
+            .unwrap_or_else(|e| format!("无法序列化请求: {}", e));
+
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.config.api_key))
+            .header("Content-Type", "application/json")
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| {
+                write_exchange_log("api-chat-tools", &url, &request_json, None, None, Some(&e.to_string()));
+                format!("请求失败: {}", e)
+            })?;
+
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        write_exchange_log("api-chat-tools", &url, &request_json, Some(status), Some(&text), None);
+
+        if !status.is_success() {
+            return Err(format!("API 错误 {}: {}", status, text));
+        }
+
+        let chat_response: ChatResponse = serde_json::from_str(&text)
+            .map_err(|e| format!("解析响应失败: {}", e))?;
+
+        let choice = chat_response
+            .choices
+            .first()
+            .ok_or_else(|| "没有返回内容".to_string())?;
+
+        if let Some(ref tool_calls) = choice.message.tool_calls {
+            if !tool_calls.is_empty() {
+                return Ok(ChatWithToolsResult::ToolCalls(tool_calls.clone()));
+            }
+        }
+
         let content = choice
             .message
             .content

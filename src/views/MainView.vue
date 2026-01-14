@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { NLayout, NLayoutContent, NInput, NButton, NSpace, NSpin, NTag, NIcon, NDropdown, useMessage } from 'naive-ui'
-import { Send, PlayCircleOutline, StopCircleOutline, AddOutline, SaveOutline } from '@vicons/ionicons5'
-import { useChatStore } from '../stores/chat'
+import { Send, PlayCircleOutline, StopCircleOutline, AddOutline, SaveOutline, AttachOutline, CloseOutline, DocumentOutline } from '@vicons/ionicons5'
+import { convertFileSrc } from '@tauri-apps/api/core'
+import { open } from '@tauri-apps/api/dialog'
+import { useChatStore, type ChatAttachment, type AttachmentKind } from '../stores/chat'
 import { useCaptureStore } from '../stores/capture'
 import { useSkillsStore } from '../stores/skills'
 import MessageItem from '../components/Chat/MessageItem.vue'
@@ -18,6 +20,11 @@ const inputMessage = ref('')
 const messagesContainer = ref<HTMLElement | null>(null)
 const isLoading = ref(false)
 const isHistoryLoading = ref(false)
+const attachments = ref<ChatAttachment[]>([])
+let attachmentSeq = 0
+
+const MAX_ATTACHMENTS = 6
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'])
 
 // Skill 提示相关
 const showSkillHints = ref(false)
@@ -53,6 +60,65 @@ watch(inputMessage, (newVal) => {
   }
 })
 
+function pathBasename(filePath: string): string {
+  const normalized = filePath.replace(/\\/g, '/')
+  const parts = normalized.split('/')
+  return parts[parts.length - 1] || filePath
+}
+
+function attachmentKindFromPath(filePath: string): AttachmentKind {
+  const ext = filePath.split('.').pop()?.toLowerCase() || ''
+  return IMAGE_EXTENSIONS.has(ext) ? 'image' : 'document'
+}
+
+function attachmentPreview(attachment: ChatAttachment): string {
+  return attachment.kind === 'image' ? convertFileSrc(attachment.path) : ''
+}
+
+async function addAttachments() {
+  try {
+    const selection = await open({
+      multiple: true,
+      filters: [
+        { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'] },
+        { name: 'Documents', extensions: ['txt', 'md', 'json', 'csv', 'log', 'yaml', 'yml', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'] },
+      ],
+    })
+    if (!selection) return
+
+    const paths = Array.isArray(selection) ? selection : [selection]
+    const existing = new Set(attachments.value.map(item => item.path))
+    const next: ChatAttachment[] = []
+
+    for (const filePath of paths) {
+      if (existing.has(filePath)) continue
+      if (attachments.value.length + next.length >= MAX_ATTACHMENTS) {
+        message.warning(t('main.attachments.limit'))
+        break
+      }
+
+      const name = pathBasename(filePath)
+      const kind = attachmentKindFromPath(filePath)
+      next.push({
+        id: `att_${Date.now()}_${attachmentSeq++}`,
+        name,
+        path: filePath,
+        kind,
+      })
+    }
+
+    if (next.length > 0) {
+      attachments.value = attachments.value.concat(next)
+    }
+  } catch (error) {
+    message.error(String(error))
+  }
+}
+
+function removeAttachment(id: string) {
+  attachments.value = attachments.value.filter(item => item.id !== id)
+}
+
 watch(
   () => captureStore.lastEvent,
   (event) => {
@@ -76,15 +142,21 @@ watch(
 )
 
 async function sendMessage() {
-  if (!inputMessage.value.trim() || isLoading.value) return
+  if (isLoading.value) return
 
   const userMessage = inputMessage.value.trim()
+  const hasAttachments = attachments.value.length > 0
+  if (!userMessage && !hasAttachments) return
+
+  const messageAttachments = attachments.value.map(item => ({ ...item }))
   inputMessage.value = ''
+  attachments.value = []
 
   chatStore.addMessage({
     role: 'user',
     content: userMessage,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    attachments: messageAttachments.length > 0 ? messageAttachments : undefined,
   })
 
   isLoading.value = true
@@ -97,6 +169,11 @@ async function sendMessage() {
       .map(m => ({ role: m.role, content: m.content }))
 
     let response: string
+    const attachmentsPayload = messageAttachments.map(item => ({
+      path: item.path,
+      name: item.name,
+      kind: item.kind,
+    }))
 
     // 检测 /skill-name 语法
     const skillMatch = userMessage.match(/^\/([a-z0-9-]+)(?:\s+(.*))?$/i)
@@ -114,7 +191,8 @@ async function sendMessage() {
       response = await invoke<string>('invoke_skill', {
         name: skillName.toLowerCase(),
         args: args || null,
-        history: historyForModel.length > 0 ? historyForModel : null
+        history: historyForModel.length > 0 ? historyForModel : null,
+        attachments: attachmentsPayload.length > 0 ? attachmentsPayload : null,
       })
 
       // 移除"正在调用"的临时消息，替换为实际结果
@@ -123,7 +201,8 @@ async function sendMessage() {
       // 普通对话
       response = await invoke<string>('chat_with_assistant', {
         message: userMessage,
-        history: historyForModel.length > 0 ? historyForModel : null
+        history: historyForModel.length > 0 ? historyForModel : null,
+        attachments: attachmentsPayload.length > 0 ? attachmentsPayload : null,
       })
     }
 
@@ -413,7 +492,35 @@ onUnmounted(() => {
           <div class="skill-hint-empty">{{ t('main.skill.empty') }}</div>
         </div>
 
+        <div v-if="attachments.length > 0" class="attachments-bar">
+          <div v-for="attachment in attachments" :key="attachment.id" class="attachment-chip">
+            <img
+              v-if="attachment.kind === 'image'"
+              :src="attachmentPreview(attachment)"
+              :alt="attachment.name"
+              class="attachment-thumb"
+            />
+            <NIcon v-else size="16" class="attachment-icon">
+              <DocumentOutline />
+            </NIcon>
+            <span class="attachment-name">{{ attachment.name }}</span>
+            <button
+              type="button"
+              class="attachment-remove"
+              :title="t('main.attachments.remove')"
+              @click="removeAttachment(attachment.id)"
+            >
+              <NIcon size="12"><CloseOutline /></NIcon>
+            </button>
+          </div>
+        </div>
+
         <div class="input-area">
+          <NButton secondary @click="addAttachments" :title="t('main.attachments.add')">
+            <template #icon>
+              <NIcon><AttachOutline /></NIcon>
+            </template>
+          </NButton>
           <NInput
             v-model:value="inputMessage"
             type="textarea"
@@ -423,7 +530,7 @@ onUnmounted(() => {
           />
           <NButton
             type="primary"
-            :disabled="!inputMessage.trim() || isLoading"
+            :disabled="(!inputMessage.trim() && attachments.length === 0) || isLoading"
             @click="sendMessage"
           >
             <template #icon>
@@ -495,6 +602,55 @@ onUnmounted(() => {
 
 .input-area-wrapper {
   position: relative;
+}
+
+.attachments-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.attachment-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  max-width: 260px;
+}
+
+.attachment-thumb {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 6px;
+}
+
+.attachment-icon {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.attachment-name {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.8);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-remove {
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  padding: 0;
+}
+
+.attachment-remove:hover {
+  color: rgba(255, 255, 255, 0.8);
 }
 
 .skill-hints {
