@@ -15,6 +15,8 @@ pub struct Config {
     pub tools: ToolConfig,
     #[serde(default)]
     pub global_prompt: GlobalPromptConfig,
+    #[serde(default)]
+    pub ui: UiConfig,
 }
 
 // ============ 全局提示词配置 ============
@@ -113,6 +115,24 @@ fn default_max_context_chars() -> usize {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiConfig {
+    #[serde(default = "default_show_progress")]
+    pub show_progress: bool,
+}
+
+fn default_show_progress() -> bool {
+    true
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            show_progress: default_show_progress(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolConfig {
     #[serde(default = "default_tool_mode")]
     pub mode: String, // unset | whitelist | allow_all
@@ -175,6 +195,7 @@ impl Default for Config {
                 allowed_dirs: Vec::new(),
             },
             global_prompt: GlobalPromptConfig::default(),
+            ui: UiConfig::default(),
         }
     }
 }
@@ -827,7 +848,8 @@ impl SearchResult {
             context.push_str("## 操作概要\n\n");
             for agg in &self.aggregated {
                 let line = format!(
-                    "- [{} ~ {}] {}\n",
+                    "- [{} {} ~ {}] {}\n",
+                    &agg.start_time[..10],
                     &agg.start_time[11..16],
                     &agg.end_time[11..16],
                     agg.summary
@@ -858,7 +880,8 @@ impl SearchResult {
 
             for record in self.records.iter().rev() {
                 let line = format!(
-                    "- [{}] {}\n",
+                    "- [{} {}] {}\n",
+                    &record.timestamp[..10],
                     &record.timestamp[11..19],
                     record.summary
                 );

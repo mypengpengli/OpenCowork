@@ -40,6 +40,15 @@ const toolModeModalVisible = ref(false)
 const toolModeSelection = ref<'whitelist' | 'allow_all'>('whitelist')
 const pendingRequest = ref<PendingRequest | null>(null)
 
+const showProcessPanel = ref(true)
+const processVisible = ref(false)
+const processExpanded = ref(true)
+const processStatus = ref<'idle' | 'running' | 'done' | 'error'>('idle')
+const processItems = ref<ProgressItem[]>([])
+const activeRequestId = ref<string | null>(null)
+let processHideTimer: number | null = null
+let progressUnlisten: (() => void) | null = null
+
 const MAX_ATTACHMENTS = 6
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'])
 const TOOL_MODE_UNSET_ERROR = 'TOOLS_MODE_UNSET'
@@ -51,6 +60,23 @@ interface PendingRequest {
   isSkill: boolean
   skillName?: string
   skillArgs?: string | null
+  requestId: string
+}
+
+interface ProgressEventPayload {
+  request_id: string
+  stage: 'start' | 'step' | 'done' | 'error'
+  message: string
+  detail?: string | null
+  timestamp: string
+}
+
+interface ProgressItem {
+  id: string
+  stage: 'start' | 'step' | 'done' | 'error'
+  message: string
+  detail?: string
+  timestamp: string
 }
 
 // Skill 提示相关
@@ -86,6 +112,72 @@ watch(inputMessage, (newVal) => {
     showSkillHints.value = false
   }
 })
+
+function clearProcessHideTimer() {
+  if (processHideTimer !== null) {
+    clearTimeout(processHideTimer)
+    processHideTimer = null
+  }
+}
+
+function scheduleProcessHide() {
+  clearProcessHideTimer()
+  processHideTimer = window.setTimeout(() => {
+    processVisible.value = false
+    processExpanded.value = false
+    processItems.value = []
+    processStatus.value = 'idle'
+    activeRequestId.value = null
+  }, 3000)
+}
+
+function startProcessPanel(requestId: string) {
+  clearProcessHideTimer()
+  activeRequestId.value = requestId
+  processItems.value = []
+  processStatus.value = 'running'
+  processExpanded.value = true
+  processVisible.value = true
+}
+
+function appendProcessItem(payload: ProgressEventPayload) {
+  if (!showProcessPanel.value) return
+  if (activeRequestId.value && payload.request_id !== activeRequestId.value) return
+  const item: ProgressItem = {
+    id: `${payload.timestamp}-${processItems.value.length}`,
+    stage: payload.stage,
+    message: payload.message,
+    detail: payload.detail || undefined,
+    timestamp: payload.timestamp,
+  }
+  processItems.value.push(item)
+  if (processItems.value.length > 30) {
+    processItems.value.shift()
+  }
+  processVisible.value = true
+}
+
+function finishProcessPanel(status: 'done' | 'error') {
+  if (!showProcessPanel.value) return
+  if (!processVisible.value) return
+  processStatus.value = status
+  processExpanded.value = false
+  scheduleProcessHide()
+}
+
+function toggleProcessExpanded() {
+  processExpanded.value = !processExpanded.value
+}
+
+async function loadProcessSetting() {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const config = await invoke<any>('get_config')
+    showProcessPanel.value = config?.ui?.show_progress ?? true
+  } catch {
+    showProcessPanel.value = true
+  }
+}
 
 function pathBasename(filePath: string): string {
   const normalized = filePath.replace(/\\/g, '/')
@@ -171,6 +263,11 @@ watch(
 async function executeRequest(payload: PendingRequest, includeUserMessage: boolean) {
   if (isLoading.value) return
 
+  await loadProcessSetting()
+  if (showProcessPanel.value) {
+    startProcessPanel(payload.requestId)
+  }
+
   if (includeUserMessage) {
     chatStore.addMessage({
       role: 'user',
@@ -206,6 +303,7 @@ async function executeRequest(payload: PendingRequest, includeUserMessage: boole
         args: payload.skillArgs || null,
         history: payload.history.length > 0 ? payload.history : null,
         attachments: attachmentsPayload.length > 0 ? attachmentsPayload : null,
+        request_id: payload.requestId,
       })
 
       chatStore.messages.pop()
@@ -215,6 +313,7 @@ async function executeRequest(payload: PendingRequest, includeUserMessage: boole
         message: payload.message,
         history: payload.history.length > 0 ? payload.history : null,
         attachments: attachmentsPayload.length > 0 ? attachmentsPayload : null,
+        request_id: payload.requestId,
       })
     }
 
@@ -229,6 +328,7 @@ async function executeRequest(payload: PendingRequest, includeUserMessage: boole
       if (placeholderAdded) {
         chatStore.messages.pop()
       }
+      finishProcessPanel('error')
       pendingRequest.value = payload
       toolModeModalVisible.value = true
       return
@@ -241,6 +341,9 @@ async function executeRequest(payload: PendingRequest, includeUserMessage: boole
     })
   } finally {
     isLoading.value = false
+    if (showProcessPanel.value && activeRequestId.value === payload.requestId) {
+      finishProcessPanel('done')
+    }
     await nextTick()
     scrollToBottom()
   }
@@ -289,6 +392,7 @@ async function sendMessage() {
   attachments.value = []
 
   const skillMatch = userMessage.match(/^\/([a-z0-9-]+)(?:\s+(.*))?$/i)
+  const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
   const payload: PendingRequest = {
     message: userMessage,
     history: historyForModel,
@@ -296,6 +400,7 @@ async function sendMessage() {
     isSkill: Boolean(skillMatch),
     skillName: skillMatch?.[1],
     skillArgs: skillMatch?.[2] || null,
+    requestId,
   }
 
   await executeRequest(payload, true)
@@ -458,10 +563,30 @@ onMounted(async () => {
   captureStore.startStatusPolling()
   // 加载 Skills 列表
   await skillsStore.loadSkills()
+  await loadProcessSetting()
+  try {
+    const { listen } = await import('@tauri-apps/api/event')
+    progressUnlisten = await listen<ProgressEventPayload>('assistant-progress', (event) => {
+      const payload = event.payload
+      if (!payload || !payload.request_id) return
+      appendProcessItem(payload)
+      if (payload.stage === 'done') {
+        finishProcessPanel('done')
+      } else if (payload.stage === 'error') {
+        finishProcessPanel('error')
+      }
+    })
+  } catch (error) {
+    console.error('Failed to listen progress events:', error)
+  }
 })
 
 onUnmounted(() => {
   captureStore.stopStatusPolling()
+  if (progressUnlisten) {
+    progressUnlisten()
+    progressUnlisten = null
+  }
 })
 </script>
 
@@ -551,6 +676,37 @@ onUnmounted(() => {
 
       <!-- 输入区域 -->
       <div class="input-area-wrapper">
+        <div v-if="showProcessPanel && processVisible" class="process-panel">
+          <div class="process-header" @click="toggleProcessExpanded">
+            <div class="process-title">
+              <span>{{ t('main.progress.title') }}</span>
+              <span class="process-status" :class="processStatus">
+                {{
+                  processStatus === 'running'
+                    ? t('main.progress.running')
+                    : processStatus === 'error'
+                      ? t('main.progress.error')
+                      : t('main.progress.done')
+                }}
+              </span>
+            </div>
+            <button type="button" class="process-toggle">
+              {{ processExpanded ? t('main.progress.collapse') : t('main.progress.expand') }}
+            </button>
+          </div>
+          <div v-if="processExpanded" class="process-body">
+            <div v-if="processItems.length === 0" class="process-empty">
+              {{ t('main.progress.empty') }}
+            </div>
+            <div v-else class="process-list">
+              <div v-for="item in processItems" :key="item.id" class="process-item">
+                <span class="process-message">{{ item.message }}</span>
+                <span v-if="item.detail" class="process-detail">{{ item.detail }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Skill 提示列表 -->
         <div v-if="showSkillHints && filteredSkills.length > 0" class="skill-hints">
           <div
@@ -696,6 +852,89 @@ onUnmounted(() => {
 
 .input-area-wrapper {
   position: relative;
+}
+
+.process-panel {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+.process-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  gap: 12px;
+}
+
+.process-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.process-status {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(99, 226, 183, 0.12);
+  color: #63e2b7;
+}
+
+.process-status.done {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.process-status.error {
+  background: rgba(255, 107, 107, 0.16);
+  color: rgba(255, 107, 107, 0.9);
+}
+
+.process-toggle {
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.process-toggle:hover {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.process-body {
+  margin-top: 8px;
+}
+
+.process-empty {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.process-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.process-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.process-detail {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 11px;
+  word-break: break-word;
 }
 
 .attachments-bar {

@@ -108,6 +108,7 @@ const formValue = ref({
   toolMode: 'unset',
   toolAllowedCommands: '',
   toolAllowedDirs: '',
+  showProcessStatus: true,
 })
 
 const providerOptions = computed(() => [
@@ -189,6 +190,9 @@ function normalizeConfig(raw: any) {
       allowed_commands: raw?.tools?.allowed_commands || [],
       allowed_dirs: raw?.tools?.allowed_dirs || [],
     },
+    ui: {
+      show_progress: raw?.ui?.show_progress ?? true,
+    },
   }
 }
 
@@ -222,6 +226,7 @@ function applyConfigToForm(config: any) {
     toolMode: normalized.tools?.mode || 'unset',
     toolAllowedCommands: listToText(normalized.tools?.allowed_commands),
     toolAllowedDirs: listToText(normalized.tools?.allowed_dirs),
+    showProcessStatus: normalized.ui?.show_progress ?? true,
   }
 }
 
@@ -261,6 +266,9 @@ function buildConfigFromForm() {
       mode: formValue.value.toolMode,
       allowed_commands: textToList(formValue.value.toolAllowedCommands),
       allowed_dirs: textToList(formValue.value.toolAllowedDirs),
+    },
+    ui: {
+      show_progress: formValue.value.showProcessStatus,
     },
   })
 }
@@ -1035,6 +1043,20 @@ async function openReleasePage() {
                   :autosize="{ minRows: 2, maxRows: 6 }"
                   :placeholder="t('settings.form.toolsAllowedDirsPlaceholder')"
                 />
+              </NFormItem>
+            </NCard>
+
+            <NDivider />
+
+            <!-- 界面配置 -->
+            <NCard :title="t('settings.form.uiConfig')" size="small">
+              <NFormItem :label="t('settings.form.showProcess')">
+                <NTooltip trigger="hover">
+                  <template #trigger>
+                    <NSwitch v-model:value="formValue.showProcessStatus" />
+                  </template>
+                  {{ t('settings.form.showProcessTip') }}
+                </NTooltip>
               </NFormItem>
             </NCard>
 

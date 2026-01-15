@@ -10,7 +10,7 @@ use std::io::{self, BufRead};
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, State, Manager};
 use tauri_plugin_shell::ShellExt;
 use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex as TokioMutex;
@@ -201,6 +201,68 @@ struct AttachmentPayload {
     image_base64: Vec<String>,
 }
 
+#[derive(serde::Serialize, Clone)]
+struct ProgressEvent {
+    request_id: String,
+    stage: String,
+    message: String,
+    detail: Option<String>,
+    timestamp: String,
+}
+
+#[derive(Clone)]
+struct ProgressEmitter {
+    app_handle: AppHandle,
+    request_id: String,
+    enabled: bool,
+}
+
+impl ProgressEmitter {
+    fn new(app_handle: &AppHandle, enabled: bool, request_id: Option<String>) -> Option<Self> {
+        if !enabled {
+            return None;
+        }
+        let request_id = request_id.unwrap_or_else(|| {
+            format!("req-{}", Local::now().timestamp_millis())
+        });
+        Some(Self {
+            app_handle: app_handle.clone(),
+            request_id,
+            enabled: true,
+        })
+    }
+
+    fn emit(&self, stage: &str, message: String, detail: Option<String>) {
+        if !self.enabled {
+            return;
+        }
+        let event = ProgressEvent {
+            request_id: self.request_id.clone(),
+            stage: stage.to_string(),
+            message,
+            detail,
+            timestamp: Local::now().format("%Y-%m-%dT%H:%M:%S%.3f").to_string(),
+        };
+        let _ = self.app_handle.emit("assistant-progress", event);
+    }
+
+    fn emit_start(&self, message: &str) {
+        self.emit("start", message.to_string(), None);
+    }
+
+    fn emit_step(&self, message: String, detail: Option<String>) {
+        self.emit("step", message, detail);
+    }
+
+    fn emit_done(&self, message: &str) {
+        self.emit("done", message.to_string(), None);
+    }
+
+    fn emit_error(&self, message: &str) {
+        self.emit("error", message.to_string(), None);
+    }
+}
+
 #[derive(serde::Deserialize)]
 struct ReadArgs {
     path: String,
@@ -269,11 +331,14 @@ pub async fn chat_with_assistant(
     message: String,
     history: Option<Vec<ChatHistoryMessage>>,
     attachments: Option<Vec<AttachmentInput>>,
+    request_id: Option<String>,
+    app_handle: AppHandle,
 ) -> Result<String, String> {
     let storage = StorageManager::new();
     let config = storage.load_config().map_err(|e| e.to_string())?;
     let model_manager = ModelManager::new();
     let skill_manager = SkillManager::new();
+    let progress = ProgressEmitter::new(&app_handle, config.ui.show_progress, request_id);
 
     // 获取可用 skills 列表（用于自动发现和 Tool Use）
     let available_skills = skill_manager.discover_skills().unwrap_or_default();
@@ -327,6 +392,9 @@ pub async fn chat_with_assistant(
     // 使用 API 模式时启用 Tool Use
     if config.model.provider == "api" {
         let system_prompt = build_tool_system_prompt(&context);
+        if let Some(ref progress) = progress {
+            progress.emit_start("开始处理请求");
+        }
         let result = if attachment_payload.image_urls.is_empty()
             && attachment_payload.image_base64.is_empty()
         {
@@ -353,7 +421,7 @@ pub async fn chat_with_assistant(
                 .await?
         };
 
-        return run_tool_loop(
+        let response = run_tool_loop(
             &storage,
             &config,
             &model_manager,
@@ -362,8 +430,17 @@ pub async fn chat_with_assistant(
             result,
             &available_skills,
             &None,
+            progress.as_ref(),
         )
         .await;
+        if let Some(ref progress) = progress {
+            if response.is_ok() {
+                progress.emit_done("处理完成");
+            } else {
+                progress.emit_error("处理失败");
+            }
+        }
+        return response;
     }
 
     // 回退到普通对话（无 Tool Use 或 Ollama 模式）
@@ -387,7 +464,7 @@ pub async fn chat_with_assistant(
     };
 
     let context_with_skills = format!("{}{}", context, skills_hint);
-    if attachment_payload.image_urls.is_empty() && attachment_payload.image_base64.is_empty() {
+    let response = if attachment_payload.image_urls.is_empty() && attachment_payload.image_base64.is_empty() {
         model_manager
             .chat_with_history(&config.model, &context_with_skills, &user_message, history)
             .await
@@ -402,7 +479,15 @@ pub async fn chat_with_assistant(
                 attachment_payload.image_base64,
             )
             .await
+    };
+    if let Some(ref progress) = progress {
+        if response.is_ok() {
+            progress.emit_done("处理完成");
+        } else {
+            progress.emit_error("处理失败");
+        }
     }
+    response
 }
 
 /// 内部执行 skill 的函数
@@ -415,6 +500,7 @@ async fn execute_skill_internal(
     args: Option<String>,
     history: Option<Vec<ChatHistoryMessage>>,
     attachments: Option<Vec<AttachmentInput>>,
+    progress: Option<&ProgressEmitter>,
 ) -> Result<String, String> {
     // 加载 skill
     let skill = skill_manager.load_skill(skill_name)?;
@@ -514,6 +600,7 @@ async fn execute_skill_internal(
             result,
             &available_skills,
             &skill.metadata.allowed_tools,
+            progress,
         ))
         .await;
     }
@@ -836,12 +923,18 @@ pub async fn invoke_skill(
     args: Option<String>,
     history: Option<Vec<ChatHistoryMessage>>,
     attachments: Option<Vec<AttachmentInput>>,
+    request_id: Option<String>,
+    app_handle: AppHandle,
 ) -> Result<String, String> {
     let storage = StorageManager::new();
     let config = storage.load_config().map_err(|e| e.to_string())?;
     let model_manager = ModelManager::new();
     let skill_manager = SkillManager::new();
-    execute_skill_internal(
+    let progress = ProgressEmitter::new(&app_handle, config.ui.show_progress, request_id);
+    if let Some(ref progress) = progress {
+        progress.emit_start(&format!("开始执行技能 /{}", name));
+    }
+    let result = execute_skill_internal(
         &storage,
         &config,
         &model_manager,
@@ -850,8 +943,17 @@ pub async fn invoke_skill(
         args,
         history,
         attachments,
+        progress.as_ref(),
     )
-    .await
+    .await;
+    if let Some(ref progress) = progress {
+        if result.is_ok() {
+            progress.emit_done("处理完成");
+        } else {
+            progress.emit_error("处理失败");
+        }
+    }
+    result
 }
 
 /// 创建新的 skill
@@ -1550,6 +1652,7 @@ async fn run_tool_loop(
     mut result: ChatWithToolsResult,
     available_skills: &[SkillMetadata],
     allowed_tools: &Option<Vec<String>>,
+    progress: Option<&ProgressEmitter>,
 ) -> Result<String, String> {
     let access = build_tool_access(config, storage);
     let mut loops = 0usize;
@@ -1585,6 +1688,7 @@ async fn run_tool_loop(
                         skill_manager,
                         available_skills,
                         allowed_tools,
+                        progress,
                     )
                     .await?;
                     tool_results.push((call.id.clone(), output));
@@ -1614,6 +1718,7 @@ async fn execute_tool_call(
     skill_manager: &SkillManager,
     _available_skills: &[SkillMetadata],
     allowed_tools: &Option<Vec<String>>,
+    progress: Option<&ProgressEmitter>,
 ) -> Result<String, String> {
     let tool_name = tool_call.function.name.as_str();
     let args_value: serde_json::Value = serde_json::from_str(&tool_call.function.arguments)
@@ -1631,31 +1736,58 @@ async fn execute_tool_call(
         "Read" => {
             let args: ReadArgs = serde_json::from_value(args_value)
                 .map_err(|e| format!("Read 参数错误: {}", e))?;
+            if let Some(progress) = progress {
+                progress.emit_step("读取文件".to_string(), Some(args.path.clone()));
+            }
             read_file_tool(access, args)
         }
         "Write" => {
             let args: WriteArgs = serde_json::from_value(args_value)
                 .map_err(|e| format!("Write 参数错误: {}", e))?;
+            if let Some(progress) = progress {
+                progress.emit_step("写入文件".to_string(), Some(args.path.clone()));
+            }
             write_file_tool(access, args)
         }
         "Edit" | "Update" => {
             let args: EditArgs = serde_json::from_value(args_value)
                 .map_err(|e| format!("Edit 参数错误: {}", e))?;
+            if let Some(progress) = progress {
+                progress.emit_step("修改文件".to_string(), Some(args.path.clone()));
+            }
             edit_file_tool(access, args)
         }
         "Glob" => {
             let args: GlobArgs = serde_json::from_value(args_value)
                 .map_err(|e| format!("Glob 参数错误: {}", e))?;
+            if let Some(progress) = progress {
+                let (detail, _) = truncate_string(&args.pattern, 200);
+                progress.emit_step("匹配文件".to_string(), Some(detail));
+            }
             glob_files_tool(access, args)
         }
         "Grep" => {
             let args: GrepArgs = serde_json::from_value(args_value)
                 .map_err(|e| format!("Grep 参数错误: {}", e))?;
+            if let Some(progress) = progress {
+                let mut detail = args.pattern.clone();
+                if let Some(path) = &args.path {
+                    detail = format!("{} ({})", detail, path);
+                } else if let Some(glob) = &args.glob {
+                    detail = format!("{} ({})", detail, glob);
+                }
+                let (detail, _) = truncate_string(&detail, 200);
+                progress.emit_step("搜索内容".to_string(), Some(detail));
+            }
             grep_files_tool(access, args)
         }
         "Bash" | "run_command" => {
             let args: BashArgs = serde_json::from_value(args_value)
                 .map_err(|e| format!("Bash 参数错误: {}", e))?;
+            if let Some(progress) = progress {
+                let (detail, _) = truncate_string(&args.command, 200);
+                progress.emit_step("执行命令".to_string(), Some(detail));
+            }
             run_command_tool(access, args).await
         }
         "invoke_skill" => {
@@ -1668,6 +1800,12 @@ async fn execute_tool_call(
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
 
+            if let Some(progress) = progress {
+                progress.emit_step(
+                    "调用技能".to_string(),
+                    Some(format!("/{}", skill_name)),
+                );
+            }
             execute_skill_internal(
                 storage,
                 config,
@@ -1677,6 +1815,7 @@ async fn execute_tool_call(
                 skill_args,
                 None,
                 None,
+                progress,
             )
             .await
         }
@@ -1690,6 +1829,10 @@ async fn execute_tool_call(
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| "缺少 name 参数".to_string())?;
 
+            if let Some(progress) = progress {
+                let detail = format!("{} {}", action, name);
+                progress.emit_step("管理技能".to_string(), Some(detail));
+            }
             match action {
                 "create" => {
                     let description = args_value

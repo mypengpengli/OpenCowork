@@ -37,6 +37,9 @@ export interface AppConfig {
     allowed_commands: string[]
     allowed_dirs: string[]
   }
+  ui: {
+    show_progress: boolean
+  }
 }
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -75,6 +78,9 @@ export const useSettingsStore = defineStore('settings', () => {
       mode: 'unset',
       allowed_commands: [],
       allowed_dirs: [],
+    },
+    ui: {
+      show_progress: true,
     },
   })
 
