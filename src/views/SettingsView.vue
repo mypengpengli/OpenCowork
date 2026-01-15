@@ -47,6 +47,8 @@ const skillModalVisible = ref(false)
 const newSkillName = ref('')
 const newSkillDescription = ref('')
 const newSkillInstructions = ref('')
+const skillTemplate = ref('basic')
+const lastSkillTemplate = ref('basic')
 const skillsDir = ref('')
 
 // 全局提示词相关状态
@@ -113,6 +115,13 @@ const apiTypeOptions = computed(() => [
   { label: 'OpenAI', value: 'openai' },
   { label: 'Claude', value: 'claude' },
   { label: t('settings.form.api.custom'), value: 'custom' },
+])
+
+const skillTemplateOptions = computed(() => [
+  { label: t('settings.skills.template.basic'), value: 'basic' },
+  { label: t('settings.skills.template.file'), value: 'file' },
+  { label: t('settings.skills.template.web'), value: 'web' },
+  { label: t('settings.skills.template.doc'), value: 'doc' },
 ])
 
 const toolModeOptions = computed(() => [
@@ -526,8 +535,27 @@ async function togglePromptEnabled(prompt: GlobalPromptItem) {
 function openCreateSkillModal() {
   newSkillName.value = ''
   newSkillDescription.value = ''
-  newSkillInstructions.value = t('settings.skills.defaultInstructions')
+  skillTemplate.value = 'basic'
+  lastSkillTemplate.value = 'basic'
+  applySkillTemplate('basic', true)
   skillModalVisible.value = true
+}
+
+function applySkillTemplate(value: string, force = false) {
+  const nextContent = t(`settings.skills.templateContent.${value}`)
+  const currentContent = newSkillInstructions.value.trim()
+  const lastContent = t(`settings.skills.templateContent.${lastSkillTemplate.value}`).trim()
+
+  if (!force && currentContent && currentContent !== lastContent) {
+    const confirmed = window.confirm(t('settings.skills.templateChangeConfirm'))
+    if (!confirmed) {
+      skillTemplate.value = lastSkillTemplate.value
+      return
+    }
+  }
+
+  newSkillInstructions.value = nextContent
+  lastSkillTemplate.value = value
 }
 
 async function createNewSkill() {
@@ -1002,6 +1030,13 @@ async function openReleasePage() {
               type="textarea"
               :autosize="{ minRows: 2, maxRows: 4 }"
               :placeholder="t('settings.skills.modal.descriptionPlaceholder')"
+            />
+          </NFormItem>
+          <NFormItem :label="t('settings.skills.templateLabel')">
+            <NSelect
+              v-model:value="skillTemplate"
+              :options="skillTemplateOptions"
+              @update:value="applySkillTemplate"
             />
           </NFormItem>
           <NFormItem :label="t('settings.skills.modal.instructions')">

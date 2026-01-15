@@ -1,10 +1,31 @@
 mod parser;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use crate::storage::StorageManager;
 
 pub use parser::SkillParser;
+
+const DEFAULT_SCRIPT_PS1: &str = r#"# PowerShell placeholder for this skill.
+# Usage:
+#   powershell -ExecutionPolicy Bypass -File scripts/run.ps1 -InputPath "input" -OutputPath "output"
+param(
+  [string]$InputPath = "",
+  [string]$OutputPath = ""
+)
+
+Write-Output "TODO: implement skill automation."
+if ($InputPath) { Write-Output "Input: $InputPath" }
+if ($OutputPath) { Write-Output "Output: $OutputPath" }
+"#;
+
+const DEFAULT_REFERENCE_MD: &str = r#"# Reference
+Add domain-specific notes, APIs, examples, and constraints here.
+"#;
+
+const DEFAULT_ASSET_TEMPLATE_MD: &str = r#"# Template
+Replace this file with the real template or data needed by the skill.
+"#;
 
 /// Skill 元数据（启动时加载）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -131,6 +152,7 @@ impl SkillManager {
             .map_err(|e| format!("创建 skill 目录失败: {}", e))?;
 
         let skill_md = skill_dir.join("SKILL.md");
+        let instructions = ensure_resource_section(instructions);
         let content = format!(
             "---\nname: {}\ndescription: {}\n---\n\n{}",
             name, description, instructions
@@ -143,6 +165,7 @@ impl SkillManager {
             std::fs::create_dir_all(skill_dir.join(dir))
                 .map_err(|e| format!("创建 {} 目录失败: {}", dir, e))?;
         }
+        ensure_scaffold_files(&skill_dir)?;
 
         Ok(())
     }
@@ -162,6 +185,7 @@ impl SkillManager {
         }
 
         let skill_md = skill_dir.join("SKILL.md");
+        let instructions = ensure_resource_section(instructions);
         let content = format!(
             "---\nname: {}\ndescription: {}\n---\n\n{}",
             name, description, instructions
@@ -174,6 +198,7 @@ impl SkillManager {
             std::fs::create_dir_all(skill_dir.join(dir))
                 .map_err(|e| format!("创建 {} 目录失败: {}", dir, e))?;
         }
+        ensure_scaffold_files(&skill_dir)?;
 
         Ok(())
     }
@@ -215,6 +240,52 @@ impl SkillManager {
 
         Ok(())
     }
+}
+
+fn ensure_resource_section(instructions: &str) -> String {
+    let lower = instructions.to_lowercase();
+    let has_scripts = lower.contains("scripts/");
+    let has_references = lower.contains("references/");
+    let has_assets = lower.contains("assets/");
+    if has_scripts && has_references && has_assets {
+        return instructions.to_string();
+    }
+
+    let mut result = instructions.trim().to_string();
+    if !result.is_empty() {
+        result.push_str("\n\n");
+    }
+    result.push_str(
+        "## Resources\n\
+- scripts/: executable scripts (default: scripts/run.ps1)\n\
+- references/: reference docs (default: references/REFERENCE.md)\n\
+- assets/: templates or data (default: assets/template.md)\n\n\
+## Script usage\n\
+Run scripts/run.ps1 via Bash/run_command and set cwd to the skill directory.",
+    );
+    result
+}
+
+fn ensure_scaffold_files(skill_dir: &Path) -> Result<(), String> {
+    let scripts_dir = skill_dir.join("scripts");
+    let references_dir = skill_dir.join("references");
+    let assets_dir = skill_dir.join("assets");
+
+    let scaffolds = [
+        (scripts_dir.join("run.ps1"), DEFAULT_SCRIPT_PS1),
+        (references_dir.join("REFERENCE.md"), DEFAULT_REFERENCE_MD),
+        (assets_dir.join("template.md"), DEFAULT_ASSET_TEMPLATE_MD),
+    ];
+
+    for (path, content) in scaffolds {
+        if path.exists() {
+            continue;
+        }
+        std::fs::write(&path, content)
+            .map_err(|e| format!("写入默认文件失败 {}: {}", path.display(), e))?;
+    }
+
+    Ok(())
 }
 
 impl Default for SkillManager {

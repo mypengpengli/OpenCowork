@@ -171,16 +171,108 @@ const messages: Record<Locale, Messages> = {
     'settings.skills.modal.instructionsPlaceholder': 'Markdown 格式的技能指令',
     'settings.skills.modal.cancel': '取消',
     'settings.skills.modal.create': '创建',
-    'settings.skills.defaultInstructions': `# 技能名称
+    'settings.skills.templateLabel': '技能模板',
+    'settings.skills.template.basic': '通用模板',
+    'settings.skills.template.file': '文件自动化',
+    'settings.skills.template.web': '网页自动化',
+    'settings.skills.template.doc': '文档导出',
+    'settings.skills.templateChangeConfirm': '切换模板会覆盖当前内容，是否继续？',
+    'settings.skills.templateContent.basic': `# 技能名称
 
 ## 使用场景
 描述何时使用此技能。
+
+## 输入与输出
+- 输入: ...
+- 输出: ...
 
 ## 执行步骤
 1. 第一步
 2. 第二步
 3. 第三步
-`,
+
+## 资源目录
+- scripts/: 可执行脚本（默认: scripts/run.ps1）
+- references/: 参考资料（默认: references/REFERENCE.md）
+- assets/: 模板或数据（默认: assets/template.md）
+
+## 自动化说明
+需要自动化时，用 Bash 或 run_command 运行 scripts/run.ps1，并把 cwd 设置为技能目录。`,
+    'settings.skills.templateContent.file': `# 文件处理技能
+
+## 使用场景
+批量读取、筛选、修改或汇总文件内容。
+
+## 输入与输出
+- 输入: 文件/目录路径与筛选条件
+- 输出: 处理后的文件或汇总报告
+
+## 执行步骤
+1. 用 Glob/Grep 找到目标文件或内容。
+2. 用 Read/Write/Edit 处理内容。
+3. 如需批量处理，在 scripts/run.ps1 中实现逻辑并通过 Bash/run_command 执行。
+
+## 资源目录
+- scripts/: 可执行脚本（默认: scripts/run.ps1）
+- references/: 参考资料（默认: references/REFERENCE.md）
+- assets/: 模板或数据（默认: assets/template.md）`,
+    'settings.skills.templateContent.web': `# 网页自动化技能
+
+## 使用场景
+自动填写表单、抓取网页信息、截图或验证页面状态。
+
+## 输入与输出
+- 输入: 目标网址与操作步骤
+- 输出: 抓取结果或截图
+
+## 执行步骤
+1. 通过脚本或浏览器工具完成页面操作。
+2. 将关键步骤或元素说明写入 references/REFERENCE.md。
+3. 需要模板或截图时放入 assets/。
+
+## 资源目录
+- scripts/: 可执行脚本（默认: scripts/run.ps1）
+- references/: 参考资料（默认: references/REFERENCE.md）
+- assets/: 模板或数据（默认: assets/template.md）`,
+    'settings.skills.templateContent.doc': `# 文档导出技能
+
+## 使用场景
+将对话或数据导出为 Word/PDF/Markdown 等文档。
+
+## 输入与输出
+- 输入: 原始文本或数据
+- 输出: 目标文档文件
+
+## 执行步骤
+1. 使用 assets/template.md 作为输出模板或结构。
+2. 在 scripts/run.ps1 中实现生成逻辑。
+3. 输出文档保存到指定目录。
+
+## 资源目录
+- scripts/: 可执行脚本（默认: scripts/run.ps1）
+- references/: 参考资料（默认: references/REFERENCE.md）
+- assets/: 模板或数据（默认: assets/template.md）`,
+    'settings.skills.defaultInstructions': `# 技能名称
+
+## 使用场景
+描述何时使用此技能。
+
+## 输入与输出
+- 输入: ...
+- 输出: ...
+
+## 执行步骤
+1. 第一步
+2. 第二步
+3. 第三步
+
+## 资源目录
+- scripts/: 可执行脚本（默认: scripts/run.ps1）
+- references/: 参考资料（默认: references/REFERENCE.md）
+- assets/: 模板或数据（默认: assets/template.md）
+
+## 自动化说明
+需要自动化时，用 Bash 或 run_command 运行 scripts/run.ps1，并把 cwd 设置为技能目录。`,
     // 全局提示词
     'settings.tabs.prompts': '全局提示词',
     'settings.header.prompts': '全局提示词',
@@ -404,16 +496,108 @@ const messages: Record<Locale, Messages> = {
     'settings.skills.modal.instructionsPlaceholder': 'Markdown formatted instructions',
     'settings.skills.modal.cancel': 'Cancel',
     'settings.skills.modal.create': 'Create',
-    'settings.skills.defaultInstructions': `# Skill Name
+    'settings.skills.templateLabel': 'Skill template',
+    'settings.skills.template.basic': 'General',
+    'settings.skills.template.file': 'File automation',
+    'settings.skills.template.web': 'Web automation',
+    'settings.skills.template.doc': 'Document export',
+    'settings.skills.templateChangeConfirm': 'Switching templates will replace the current content. Continue?',
+    'settings.skills.templateContent.basic': `# Skill Name
 
-## Use Cases
-Describe when to use this skill.
+## When to use
+Describe when this skill should be used.
+
+## Inputs and outputs
+- Input: ...
+- Output: ...
 
 ## Steps
 1. Step one
 2. Step two
 3. Step three
-`,
+
+## Resources
+- scripts/: executable scripts (default: scripts/run.ps1)
+- references/: reference docs (default: references/REFERENCE.md)
+- assets/: templates or data (default: assets/template.md)
+
+## Automation
+Run scripts/run.ps1 via Bash or run_command and set cwd to the skill directory when automation is needed.`,
+    'settings.skills.templateContent.file': `# File Automation Skill
+
+## When to use
+Batch read, filter, edit, or summarize files.
+
+## Inputs and outputs
+- Input: file/directory paths and filters
+- Output: processed files or summary reports
+
+## Steps
+1. Use Glob/Grep to locate target files or content.
+2. Use Read/Write/Edit to process content.
+3. For batch work, implement logic in scripts/run.ps1 and run it with Bash/run_command.
+
+## Resources
+- scripts/: executable scripts (default: scripts/run.ps1)
+- references/: reference docs (default: references/REFERENCE.md)
+- assets/: templates or data (default: assets/template.md)`,
+    'settings.skills.templateContent.web': `# Web Automation Skill
+
+## When to use
+Auto-fill forms, extract web data, take screenshots, or verify page states.
+
+## Inputs and outputs
+- Input: target URLs and steps
+- Output: extracted data or screenshots
+
+## Steps
+1. Use a script or browser tools to drive the page.
+2. Record key steps and element notes in references/REFERENCE.md.
+3. Store templates or snapshots in assets/.
+
+## Resources
+- scripts/: executable scripts (default: scripts/run.ps1)
+- references/: reference docs (default: references/REFERENCE.md)
+- assets/: templates or data (default: assets/template.md)`,
+    'settings.skills.templateContent.doc': `# Document Export Skill
+
+## When to use
+Export conversations or data to Word/PDF/Markdown files.
+
+## Inputs and outputs
+- Input: source text or data
+- Output: target document files
+
+## Steps
+1. Use assets/template.md as the output template or structure.
+2. Implement generation logic in scripts/run.ps1.
+3. Save outputs to the target directory.
+
+## Resources
+- scripts/: executable scripts (default: scripts/run.ps1)
+- references/: reference docs (default: references/REFERENCE.md)
+- assets/: templates or data (default: assets/template.md)`,
+    'settings.skills.defaultInstructions': `# Skill Name
+
+## When to use
+Describe when this skill should be used.
+
+## Inputs and outputs
+- Input: ...
+- Output: ...
+
+## Steps
+1. Step one
+2. Step two
+3. Step three
+
+## Resources
+- scripts/: executable scripts (default: scripts/run.ps1)
+- references/: reference docs (default: references/REFERENCE.md)
+- assets/: templates or data (default: assets/template.md)
+
+## Automation
+Run scripts/run.ps1 via Bash or run_command and set cwd to the skill directory when automation is needed.`,
     // Global Prompts
     'settings.tabs.prompts': 'Global Prompts',
     'settings.header.prompts': 'Global Prompts',
