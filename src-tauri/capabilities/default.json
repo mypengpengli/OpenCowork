@@ -1,0 +1,14 @@
+{
+  "identifier": "default",
+  "description": "Default capabilities for OpenCowork",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "shell:default",
+    "dialog:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "dialog:allow-message",
+    "dialog:allow-ask"
+  ]
+}
