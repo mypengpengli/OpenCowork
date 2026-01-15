@@ -43,6 +43,7 @@ const menuOptions = computed(() => [
 
 const naiveLocale = computed(() => (locale.value === 'zh' ? zhCN : enUS))
 const naiveDateLocale = computed(() => (locale.value === 'zh' ? dateZhCN : dateEnUS))
+const localeKey = computed(() => `locale-${locale.value}`)
 
 const activeKey = computed(() => route.path)
 
@@ -52,7 +53,7 @@ function handleMenuUpdate(key: string) {
 </script>
 
 <template>
-  <NConfigProvider :theme="darkTheme" :locale="naiveLocale" :date-locale="naiveDateLocale" :key="locale">
+  <NConfigProvider :theme="darkTheme" :locale="naiveLocale" :date-locale="naiveDateLocale" :key="localeKey">
     <NMessageProvider>
       <NLayout has-sider style="height: 100vh">
         <NLayoutSider
@@ -81,7 +82,7 @@ function handleMenuUpdate(key: string) {
           />
         </NLayoutSider>
         <NLayout>
-          <router-view />
+          <router-view :key="localeKey" />
         </NLayout>
       </NLayout>
     </NMessageProvider>
