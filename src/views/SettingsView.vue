@@ -25,6 +25,7 @@ import {
   useMessage,
 } from 'naive-ui'
 import { useSkillsStore } from '../stores/skills'
+import { useLocaleStore } from '../stores/locale'
 import { useI18n } from '../i18n'
 
 interface ProfileEntry {
@@ -50,6 +51,9 @@ const newSkillInstructions = ref('')
 const skillTemplate = ref('basic')
 const lastSkillTemplate = ref('basic')
 const skillsDir = ref('')
+const systemLocale = ref('')
+const systemLocaleError = ref('')
+const localeStore = useLocaleStore()
 
 // 全局提示词相关状态
 interface GlobalPromptItem {
@@ -275,6 +279,19 @@ function buildProfileSummary(config: any) {
   }
 }
 
+async function loadSystemLocale() {
+  systemLocaleError.value = ''
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const locale = await invoke<string>('get_system_locale')
+    systemLocale.value = locale ? String(locale) : ''
+    // 不再自动覆盖语言设置，仅用于显示系统语言信息
+    // 语言设置由 locale store 管理，用户可以手动切换
+  } catch (error) {
+    systemLocaleError.value = String(error)
+  }
+}
+
 async function loadCurrentConfig() {
   try {
     const { invoke } = await import('@tauri-apps/api/core')
@@ -427,6 +444,7 @@ async function testConnection() {
 }
 
 onMounted(async () => {
+  await loadSystemLocale()
   await loadCurrentConfig()
   await refreshProfiles()
   // 加载 Skills
@@ -622,7 +640,15 @@ async function openReleasePage() {
         <!-- 配置方案 Tab -->
         <NTabPane name="profiles" :tab="t('settings.tabs.profiles')">
           <div class="settings-header">
-            <h2>{{ t('settings.header.profiles') }}</h2>
+            <div class="settings-title">
+              <h2>{{ t('settings.header.profiles') }}</h2>
+              <p class="settings-locale">
+                {{ t('settings.locale.systemValue', { value: systemLocale || t('common.unknown') }) }}
+              </p>
+              <p v-if="systemLocaleError" class="settings-locale error">
+                {{ t('settings.locale.systemError', { error: systemLocaleError }) }}
+              </p>
+            </div>
             <NSpace>
               <NButton @click="openReleasePage">{{ t('settings.buttons.checkUpdate') }}</NButton>
               <NButton type="primary" @click="openNewProfile">{{ t('settings.buttons.newProfile') }}</NButton>
@@ -1097,9 +1123,25 @@ async function openReleasePage() {
   margin-bottom: 16px;
 }
 
+.settings-title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .settings-header h2 {
   margin: 0;
   color: #63e2b7;
+}
+
+.settings-locale {
+  margin: 0;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.settings-locale.error {
+  color: rgba(255, 107, 107, 0.9);
 }
 
 .loading-state {

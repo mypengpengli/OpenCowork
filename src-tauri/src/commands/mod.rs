@@ -27,7 +27,7 @@ pub struct AppState {
 const MIN_RECENT_DETAIL_RECORDS: usize = 20;
 const RELEASE_PAGE_URL: &str = "https://github.com/mypengpengli/OpenCowork/releases/latest";
 const TOOL_MODE_UNSET_ERROR: &str = "TOOLS_MODE_UNSET";
-const MAX_TOOL_LOOPS: usize = 6;
+const MAX_TOOL_LOOPS: usize = 999;
 const DEFAULT_MAX_READ_BYTES: usize = 200_000;
 const DEFAULT_MAX_GLOB_RESULTS: usize = 500;
 const DEFAULT_MAX_GREP_RESULTS: usize = 200;
@@ -48,6 +48,37 @@ impl AppState {
 pub async fn get_config() -> Result<Config, String> {
     let storage = StorageManager::new();
     storage.load_config().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_system_locale() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        match windows_ui_is_zh() {
+            Some(is_zh) => {
+                let resolved = if is_zh { "zh".to_string() } else { "en".to_string() };
+                println!("[locale] get_system_locale windows_ui_is_zh={} -> {}", is_zh, resolved);
+                return Ok(resolved);
+            }
+            None => {
+                println!("[locale] get_system_locale windows_ui_is_zh=None");
+            }
+        }
+    }
+
+    let fallback = sys_locale::get_locale().unwrap_or_default();
+    println!("[locale] get_system_locale fallback -> {}", fallback);
+    Ok(fallback)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_ui_is_zh() -> Option<bool> {
+    let lang_id = unsafe { windows_sys::Win32::Globalization::GetUserDefaultUILanguage() };
+    if lang_id == 0 {
+        return None;
+    }
+    let primary_lang = lang_id & 0x3ff;
+    Some(primary_lang == 0x04)
 }
 
 #[tauri::command]
@@ -1503,7 +1534,19 @@ async fn run_tool_loop(
             ChatWithToolsResult::Text(text) => return Ok(text),
             ChatWithToolsResult::ToolCalls { calls, messages } => {
                 if loops >= MAX_TOOL_LOOPS {
-                    return Err("工具调用次数过多，已停止".to_string());
+                    let pending: Vec<String> = calls
+                        .iter()
+                        .map(|call| call.function.name.clone())
+                        .collect();
+                    let pending_hint = if pending.is_empty() {
+                        String::new()
+                    } else {
+                        format!("未执行的工具: {}", pending.join(", "))
+                    };
+                    return Ok(format!(
+                        "提示: 工具调用已达到上限({}次)，本次不再继续调用工具。{}",
+                        MAX_TOOL_LOOPS, pending_hint
+                    ));
                 }
 
                 let mut tool_results = Vec::new();

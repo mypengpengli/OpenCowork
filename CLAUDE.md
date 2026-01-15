@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Environment Requirements
+
+- Node.js 18+
+- Rust 1.70+
+- Optional: Ollama (for local models)
+
 ## Build & Development Commands
 
 ```bash
@@ -14,6 +20,9 @@ npm run tauri build
 # Frontend only development (Vite dev server on port 1420)
 npm run dev
 
+# Build frontend only (used by Tauri build process)
+npm run build:tauri
+
 # Type checking
 vue-tsc --noEmit
 
@@ -23,6 +32,8 @@ cargo check
 cargo build
 cargo clippy          # Lint Rust code
 cargo test            # Run Rust tests
+cargo test test_name  # Run a single test by name
+cargo test -- --nocapture  # Run tests with stdout output
 ```
 
 ## Architecture Overview
