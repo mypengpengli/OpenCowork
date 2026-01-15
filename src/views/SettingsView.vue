@@ -40,7 +40,7 @@ type DrawerMode = 'new' | 'edit' | 'copy'
 
 const message = useMessage()
 const skillsStore = useSkillsStore()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 // Skills 相关状态
 const activeTab = ref('profiles')
@@ -645,6 +645,7 @@ async function openReleasePage() {
               <p class="settings-locale">
                 {{ t('settings.locale.systemValue', { value: systemLocale || t('common.unknown') }) }}
               </p>
+              <p class="settings-locale">UI locale: {{ locale.value }}</p>
               <p v-if="systemLocaleError" class="settings-locale error">
                 {{ t('settings.locale.systemError', { error: systemLocaleError }) }}
               </p>
