@@ -10,7 +10,7 @@ use crate::storage::StorageManager;
 use commands::{
     AppState,
     get_config, save_config, list_profiles, save_profile, load_profile, delete_profile,
-    get_system_locale,
+    get_system_locale, log_ui_locale,
     test_model_connection,
     start_capture, stop_capture, get_capture_status,
     chat_with_assistant, get_summaries,
@@ -40,6 +40,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_config,
             get_system_locale,
+            log_ui_locale,
             save_config,
             list_profiles,
             save_profile,

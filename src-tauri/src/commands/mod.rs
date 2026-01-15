@@ -71,6 +71,21 @@ pub async fn get_system_locale() -> Result<String, String> {
     Ok(fallback)
 }
 
+#[tauri::command]
+pub async fn log_ui_locale(
+    ui_locale: String,
+    stored_locale: Option<String>,
+    stored_version: Option<String>,
+) -> Result<(), String> {
+    println!(
+        "[locale] ui_locale={} stored_locale={} stored_version={}",
+        ui_locale,
+        stored_locale.unwrap_or_default(),
+        stored_version.unwrap_or_default()
+    );
+    Ok(())
+}
+
 #[cfg(target_os = "windows")]
 fn windows_ui_is_zh() -> Option<bool> {
     let lang_id = unsafe { windows_sys::Win32::Globalization::GetUserDefaultUILanguage() };

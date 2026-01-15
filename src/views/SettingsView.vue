@@ -40,7 +40,7 @@ type DrawerMode = 'new' | 'edit' | 'copy'
 
 const message = useMessage()
 const skillsStore = useSkillsStore()
-const { t, locale } = useI18n()
+const { t } = useI18n()
 
 // Skills 相关状态
 const activeTab = ref('profiles')
@@ -292,6 +292,27 @@ async function loadSystemLocale() {
   }
 }
 
+async function logUiLocale() {
+  try {
+    let storedLocale = ''
+    let storedVersion = ''
+    try {
+      storedLocale = localStorage.getItem('opencowork-locale') || ''
+      storedVersion = localStorage.getItem('opencowork-locale-version') || ''
+    } catch {
+      // localStorage unavailable
+    }
+    const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('log_ui_locale', {
+      ui_locale: localeStore.locale.value,
+      stored_locale: storedLocale || undefined,
+      stored_version: storedVersion || undefined,
+    })
+  } catch {
+    // ignore
+  }
+}
+
 async function loadCurrentConfig() {
   try {
     const { invoke } = await import('@tauri-apps/api/core')
@@ -445,6 +466,7 @@ async function testConnection() {
 
 onMounted(async () => {
   await loadSystemLocale()
+  await logUiLocale()
   await loadCurrentConfig()
   await refreshProfiles()
   // 加载 Skills
@@ -645,7 +667,6 @@ async function openReleasePage() {
               <p class="settings-locale">
                 {{ t('settings.locale.systemValue', { value: systemLocale || t('common.unknown') }) }}
               </p>
-              <p class="settings-locale">UI locale: {{ locale.value }}</p>
               <p v-if="systemLocaleError" class="settings-locale error">
                 {{ t('settings.locale.systemError', { error: systemLocaleError }) }}
               </p>
