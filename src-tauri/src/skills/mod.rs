@@ -27,6 +27,40 @@ const DEFAULT_ASSET_TEMPLATE_MD: &str = r#"# Template
 Replace this file with the real template or data needed by the skill.
 "#;
 
+struct BuiltinFile {
+    rel_path: &'static str,
+    contents: &'static str,
+}
+
+struct BuiltinSkill {
+    name: &'static str,
+    files: &'static [BuiltinFile],
+}
+
+const BUILTIN_SKILLS: &[BuiltinSkill] = &[
+    BuiltinSkill {
+        name: "skill-authoring",
+        files: &[
+            BuiltinFile {
+                rel_path: "SKILL.md",
+                contents: include_str!("../../resources/skills/skill-authoring/SKILL.md"),
+            },
+            BuiltinFile {
+                rel_path: "references/REFERENCE.md",
+                contents: include_str!("../../resources/skills/skill-authoring/references/REFERENCE.md"),
+            },
+            BuiltinFile {
+                rel_path: "assets/template.md",
+                contents: include_str!("../../resources/skills/skill-authoring/assets/template.md"),
+            },
+            BuiltinFile {
+                rel_path: "scripts/run.ps1",
+                contents: include_str!("../../resources/skills/skill-authoring/scripts/run.ps1"),
+            },
+        ],
+    },
+];
+
 /// Skill 元数据（启动时加载）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillMetadata {
@@ -67,6 +101,7 @@ impl SkillManager {
         if !skills_dir.exists() {
             std::fs::create_dir_all(&skills_dir).ok();
         }
+        ensure_builtin_skills(&skills_dir);
 
         Self { skills_dir }
     }
@@ -292,6 +327,43 @@ impl Default for SkillManager {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn ensure_builtin_skills(skills_dir: &Path) {
+    for skill in BUILTIN_SKILLS {
+        if let Err(err) = ensure_builtin_skill(skills_dir, skill) {
+            eprintln!("Failed to init builtin skill {}: {}", skill.name, err);
+        }
+    }
+}
+
+fn ensure_builtin_skill(skills_dir: &Path, skill: &BuiltinSkill) -> Result<(), String> {
+    let skill_dir = skills_dir.join(skill.name);
+    if skill_dir.exists() && !skill_dir.is_dir() {
+        return Err(format!(
+            "Skill path is not a directory: {}",
+            skill_dir.display()
+        ));
+    }
+    if !skill_dir.exists() {
+        std::fs::create_dir_all(&skill_dir)
+            .map_err(|e| format!("Create skill dir failed: {}", e))?;
+    }
+
+    for file in skill.files {
+        let path = skill_dir.join(file.rel_path);
+        if path.exists() {
+            continue;
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Create skill subdir failed: {}", e))?;
+        }
+        std::fs::write(&path, file.contents)
+            .map_err(|e| format!("Write builtin skill file failed: {}", e))?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

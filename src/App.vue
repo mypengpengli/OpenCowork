@@ -6,6 +6,7 @@ import {
   NLayoutSider,
   NMenu,
   NIcon,
+  NButton,
   darkTheme,
   zhCN,
   enUS,
@@ -14,14 +15,14 @@ import {
 } from 'naive-ui'
 import { h, ref, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { ChatboxOutline, SettingsOutline, TimeOutline } from '@vicons/ionicons5'
+import { ChatboxOutline, SettingsOutline, TimeOutline, LanguageOutline } from '@vicons/ionicons5'
 import { useI18n } from './i18n'
 
 const router = useRouter()
 const route = useRoute()
 
 const collapsed = ref(false)
-const { locale, t } = useI18n()
+const { locale, t, toggleLocale } = useI18n()
 
 const menuOptions = computed(() => [
   {
@@ -80,6 +81,19 @@ function handleMenuUpdate(key: string) {
             :value="activeKey"
             @update:value="handleMenuUpdate"
           />
+          <div class="sidebar-footer">
+            <NButton
+              quaternary
+              :circle="collapsed"
+              size="small"
+              @click="toggleLocale"
+            >
+              <template #icon>
+                <NIcon><LanguageOutline /></NIcon>
+              </template>
+              <span v-if="!collapsed">{{ locale.value === 'zh' ? 'EN' : '中文' }}</span>
+            </NButton>
+          </div>
         </NLayoutSider>
         <NLayout>
           <router-view :key="localeKey" />
@@ -120,5 +134,15 @@ body {
   font-weight: bold;
   color: #63e2b7;
   border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.sidebar-footer {
+  position: absolute;
+  bottom: 16px;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  padding: 0 12px;
 }
 </style>
