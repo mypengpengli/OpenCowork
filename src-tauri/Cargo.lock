@@ -2513,6 +2513,7 @@ dependencies = [
  "base64 0.21.7",
  "chrono",
  "dirs 5.0.1",
+ "glob",
  "image",
  "parking_lot",
  "regex",
@@ -2526,6 +2527,7 @@ dependencies = [
  "tauri-plugin-shell",
  "thiserror 1.0.69",
  "tokio",
+ "walkdir",
 ]
 
 [[package]]

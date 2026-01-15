@@ -32,6 +32,11 @@ export interface AppConfig {
     max_context_chars: number
     auto_clear_on_start: boolean
   }
+  tools: {
+    mode: 'unset' | 'whitelist' | 'allow_all'
+    allowed_commands: string[]
+    allowed_dirs: string[]
+  }
 }
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -65,6 +70,11 @@ export const useSettingsStore = defineStore('settings', () => {
       max_screenshots: 10000,
       max_context_chars: 10000,
       auto_clear_on_start: false,
+    },
+    tools: {
+      mode: 'unset',
+      allowed_commands: [],
+      allowed_dirs: [],
     },
   })
 

@@ -12,6 +12,8 @@ pub struct Config {
     pub capture: CaptureConfig,
     pub storage: StorageConfig,
     #[serde(default)]
+    pub tools: ToolConfig,
+    #[serde(default)]
     pub global_prompt: GlobalPromptConfig,
 }
 
@@ -110,6 +112,30 @@ fn default_max_context_chars() -> usize {
     10000  // 默认10000字符
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolConfig {
+    #[serde(default = "default_tool_mode")]
+    pub mode: String, // unset | whitelist | allow_all
+    #[serde(default)]
+    pub allowed_commands: Vec<String>,
+    #[serde(default)]
+    pub allowed_dirs: Vec<String>,
+}
+
+fn default_tool_mode() -> String {
+    "unset".to_string()
+}
+
+impl Default for ToolConfig {
+    fn default() -> Self {
+        Self {
+            mode: default_tool_mode(),
+            allowed_commands: Vec::new(),
+            allowed_dirs: Vec::new(),
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -142,6 +168,11 @@ impl Default for Config {
                 max_screenshots: 10000,
                 max_context_chars: 10000,  // 默认10000字符
                 auto_clear_on_start: false,
+            },
+            tools: ToolConfig {
+                mode: default_tool_mode(),
+                allowed_commands: Vec::new(),
+                allowed_dirs: Vec::new(),
             },
             global_prompt: GlobalPromptConfig::default(),
         }

@@ -191,24 +191,20 @@ impl ModelManager {
 
 你有以下能力：
 1. 如果用户的请求需要使用某个技能来完成，请调用 invoke_skill 工具。
-2. 如果用户想要创建、修改或删除技能，请调用 manage_skill 工具。"#,
+2. 如果用户想要创建、修改或删除技能，请调用 manage_skill 工具。
+3. 你可以使用 Read/Write/Edit/Update/Glob/Grep 工具读写和搜索文件。
+4. 你可以使用 Bash 工具运行命令（受权限限制）。"#,
             context
         );
 
-        match config.provider.as_str() {
-            "api" => {
-                let api_client = ApiClient::new(&config.api);
-                let tools = ApiClient::create_skill_tools(available_skills);
-                api_client.chat_with_tools(&system_prompt, message, history, tools).await
-            }
-            "ollama" => {
-                // Ollama 不支持 tool use，回退到普通对话
-                let ollama_client = OllamaClient::new(&config.ollama);
-                let result = ollama_client.chat_with_history(&system_prompt, message, history).await?;
-                Ok(ChatWithToolsResult::Text(result))
-            }
-            _ => Err("未知的模型提供者".to_string()),
-        }
+        self.chat_with_tools_with_system_prompt(
+            config,
+            &system_prompt,
+            message,
+            history,
+            available_skills,
+        )
+        .await
     }
 
     pub async fn chat_with_tools_with_images(
@@ -230,25 +226,97 @@ impl ModelManager {
 
 你有以下能力：
 1. 如果用户的请求需要使用某个技能来完成，请调用 invoke_skill 工具。
-2. 如果用户想要创建、修改或删除技能，请调用 manage_skill 工具。"#,
+2. 如果用户想要创建、修改或删除技能，请调用 manage_skill 工具。
+3. 你可以使用 Read/Write/Edit/Update/Glob/Grep 工具读写和搜索文件。
+4. 你可以使用 Bash 工具运行命令（受权限限制）。"#,
             context
         );
 
+        self.chat_with_tools_with_system_prompt_with_images(
+            config,
+            &system_prompt,
+            message,
+            history,
+            available_skills,
+            image_urls,
+            image_base64,
+        )
+        .await
+    }
+
+    pub async fn chat_with_tools_with_system_prompt(
+        &self,
+        config: &ModelConfig,
+        system_prompt: &str,
+        message: &str,
+        history: Option<Vec<ChatHistoryMessage>>,
+        available_skills: &[SkillMetadata],
+    ) -> Result<ChatWithToolsResult, String> {
         match config.provider.as_str() {
             "api" => {
                 let api_client = ApiClient::new(&config.api);
                 let tools = ApiClient::create_skill_tools(available_skills);
                 api_client
-                    .chat_with_tools_with_images(&system_prompt, message, history, tools, &image_urls)
+                    .chat_with_tools(system_prompt, message, history, tools)
                     .await
             }
             "ollama" => {
                 let ollama_client = OllamaClient::new(&config.ollama);
                 let result = ollama_client
-                    .chat_with_history_with_images(&system_prompt, message, history, &image_base64)
+                    .chat_with_history(system_prompt, message, history)
                     .await?;
                 Ok(ChatWithToolsResult::Text(result))
             }
+            _ => Err("未知的模型提供者".to_string()),
+        }
+    }
+
+    pub async fn chat_with_tools_with_system_prompt_with_images(
+        &self,
+        config: &ModelConfig,
+        system_prompt: &str,
+        message: &str,
+        history: Option<Vec<ChatHistoryMessage>>,
+        available_skills: &[SkillMetadata],
+        image_urls: Vec<String>,
+        image_base64: Vec<String>,
+    ) -> Result<ChatWithToolsResult, String> {
+        match config.provider.as_str() {
+            "api" => {
+                let api_client = ApiClient::new(&config.api);
+                let tools = ApiClient::create_skill_tools(available_skills);
+                api_client
+                    .chat_with_tools_with_images(system_prompt, message, history, tools, &image_urls)
+                    .await
+            }
+            "ollama" => {
+                let ollama_client = OllamaClient::new(&config.ollama);
+                let result = ollama_client
+                    .chat_with_history_with_images(system_prompt, message, history, &image_base64)
+                    .await?;
+                Ok(ChatWithToolsResult::Text(result))
+            }
+            _ => Err("未知的模型提供者".to_string()),
+        }
+    }
+
+    pub async fn continue_with_tool_results(
+        &self,
+        config: &ModelConfig,
+        system_prompt: &str,
+        messages_so_far: Vec<api::Message>,
+        tool_results: Vec<(String, String)>,
+        available_skills: &[SkillMetadata],
+    ) -> Result<ChatWithToolsResult, String> {
+        match config.provider.as_str() {
+            "api" => {
+                let api_client = ApiClient::new(&config.api);
+                let tools = ApiClient::create_skill_tools(available_skills);
+                api_client
+                    .continue_with_tool_results(system_prompt, messages_so_far, tool_results, tools)
+                    .await
+            }
+            "ollama" => Err("Ollama 不支持 tool use".to_string()),
             _ => Err("未知的模型提供者".to_string()),
         }
     }

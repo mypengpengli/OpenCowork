@@ -139,6 +139,11 @@ impl SkillManager {
         std::fs::write(&skill_md, content)
             .map_err(|e| format!("写入 SKILL.md 失败: {}", e))?;
 
+        for dir in ["scripts", "references", "assets"] {
+            std::fs::create_dir_all(skill_dir.join(dir))
+                .map_err(|e| format!("创建 {} 目录失败: {}", dir, e))?;
+        }
+
         Ok(())
     }
 
@@ -164,6 +169,11 @@ impl SkillManager {
 
         std::fs::write(&skill_md, content)
             .map_err(|e| format!("更新 SKILL.md 失败: {}", e))?;
+
+        for dir in ["scripts", "references", "assets"] {
+            std::fs::create_dir_all(skill_dir.join(dir))
+                .map_err(|e| format!("创建 {} 目录失败: {}", dir, e))?;
+        }
 
         Ok(())
     }

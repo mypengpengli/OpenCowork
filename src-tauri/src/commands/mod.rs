@@ -1,16 +1,23 @@
 use crate::capture::CaptureManager;
-use crate::model::{ModelManager, ChatWithToolsResult};
+use crate::model::{ModelManager, ChatWithToolsResult, ToolCall};
 use crate::storage::{Config, StorageManager, SummaryRecord, SearchQuery, TimeRange};
 use crate::skills::{SkillManager, SkillMetadata, Skill};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use chrono::{Duration, Local, NaiveDateTime, TimeZone};
 use std::collections::HashSet;
 use std::fs;
-use std::path::Path;
+use std::io::{self, BufRead};
+use std::path::{Component, Path, PathBuf};
+use std::process::Stdio;
 use std::sync::Arc;
 use tauri::{AppHandle, State};
 use tauri_plugin_shell::ShellExt;
+use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex as TokioMutex;
+use tokio::time::{timeout, Duration as TokioDuration};
+use glob::glob;
+use regex::RegexBuilder;
+use walkdir::WalkDir;
 
 pub struct AppState {
     pub capture_manager: Arc<TokioMutex<CaptureManager>>,
@@ -19,6 +26,14 @@ pub struct AppState {
 
 const MIN_RECENT_DETAIL_RECORDS: usize = 20;
 const RELEASE_PAGE_URL: &str = "https://github.com/mypengpengli/OpenCowork/releases/latest";
+const TOOL_MODE_UNSET_ERROR: &str = "TOOLS_MODE_UNSET";
+const MAX_TOOL_LOOPS: usize = 6;
+const DEFAULT_MAX_READ_BYTES: usize = 200_000;
+const DEFAULT_MAX_GLOB_RESULTS: usize = 500;
+const DEFAULT_MAX_GREP_RESULTS: usize = 200;
+const DEFAULT_COMMAND_TIMEOUT_MS: u64 = 120_000;
+const MAX_COMMAND_OUTPUT_CHARS: usize = 20_000;
+const MAX_GREP_FILE_BYTES: u64 = 2_000_000;
 
 impl AppState {
     pub fn new() -> Self {
@@ -130,6 +145,69 @@ struct AttachmentPayload {
     image_base64: Vec<String>,
 }
 
+#[derive(serde::Deserialize)]
+struct ReadArgs {
+    path: String,
+    #[serde(default)]
+    max_bytes: Option<usize>,
+}
+
+#[derive(serde::Deserialize)]
+struct WriteArgs {
+    path: String,
+    content: String,
+    #[serde(default)]
+    append: Option<bool>,
+}
+
+#[derive(serde::Deserialize)]
+struct EditArgs {
+    path: String,
+    old: String,
+    new: String,
+    #[serde(default)]
+    replace_all: Option<bool>,
+}
+
+#[derive(serde::Deserialize)]
+struct GlobArgs {
+    pattern: String,
+    #[serde(default)]
+    max_results: Option<usize>,
+}
+
+#[derive(serde::Deserialize)]
+struct GrepArgs {
+    pattern: String,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    glob: Option<String>,
+    #[serde(default)]
+    regex: Option<bool>,
+    #[serde(default)]
+    case_sensitive: Option<bool>,
+    #[serde(default)]
+    max_results: Option<usize>,
+}
+
+#[derive(serde::Deserialize)]
+struct BashArgs {
+    command: String,
+    #[serde(default)]
+    cwd: Option<String>,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
+}
+
+#[derive(Clone)]
+struct ToolAccess {
+    mode: String,
+    allowed_commands: Vec<String>,
+    allowed_dirs: Vec<PathBuf>,
+    base_dir: PathBuf,
+}
+
 #[tauri::command]
 pub async fn chat_with_assistant(
     message: String,
@@ -192,16 +270,24 @@ pub async fn chat_with_assistant(
 
     // 使用 API 模式时启用 Tool Use
     if config.model.provider == "api" {
-        // 使用 Tool Use 进行对话
-        let result = if attachment_payload.image_urls.is_empty() && attachment_payload.image_base64.is_empty() {
+        let system_prompt = build_tool_system_prompt(&context);
+        let result = if attachment_payload.image_urls.is_empty()
+            && attachment_payload.image_base64.is_empty()
+        {
             model_manager
-                .chat_with_tools(&config.model, &context, &user_message, history.clone(), &available_skills)
+                .chat_with_tools_with_system_prompt(
+                    &config.model,
+                    &system_prompt,
+                    &user_message,
+                    history.clone(),
+                    &available_skills,
+                )
                 .await?
         } else {
             model_manager
-                .chat_with_tools_with_images(
+                .chat_with_tools_with_system_prompt_with_images(
                     &config.model,
-                    &context,
+                    &system_prompt,
                     &user_message,
                     history.clone(),
                     &available_skills,
@@ -211,121 +297,17 @@ pub async fn chat_with_assistant(
                 .await?
         };
 
-        match result {
-            ChatWithToolsResult::Text(text) => {
-                return Ok(text);
-            }
-            ChatWithToolsResult::ToolCalls(tool_calls) => {
-                // 处理工具调用
-                let mut final_response = String::new();
-
-                for tool_call in tool_calls {
-                    match tool_call.function.name.as_str() {
-                        "invoke_skill" => {
-                            // 解析参数
-                            let args: serde_json::Value = serde_json::from_str(&tool_call.function.arguments)
-                                .map_err(|e| format!("解析工具参数失败: {}", e))?;
-
-                            let skill_name = args.get("skill_name")
-                                .and_then(|v| v.as_str())
-                                .ok_or_else(|| "缺少 skill_name 参数".to_string())?;
-
-                            let skill_args = args.get("args")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string());
-
-                            // 执行 skill
-                            let skill_result = execute_skill_internal(
-                                &storage,
-                                &config,
-                                &model_manager,
-                                &skill_manager,
-                                skill_name,
-                                skill_args,
-                                history.clone(),
-                            ).await?;
-
-                            // 将 skill 结果作为最终响应
-                            final_response = format!("🔧 已调用技能 `/{}`\n\n{}", skill_name, skill_result);
-                        }
-                        "manage_skill" => {
-                            // 解析参数
-                            let args: serde_json::Value = serde_json::from_str(&tool_call.function.arguments)
-                                .map_err(|e| format!("解析工具参数失败: {}", e))?;
-
-                            let action = args.get("action")
-                                .and_then(|v| v.as_str())
-                                .ok_or_else(|| "缺少 action 参数".to_string())?;
-
-                            let name = args.get("name")
-                                .and_then(|v| v.as_str())
-                                .ok_or_else(|| "缺少 name 参数".to_string())?;
-
-                            match action {
-                                "create" => {
-                                    let description = args.get("description")
-                                        .and_then(|v| v.as_str())
-                                        .ok_or_else(|| "创建技能需要 description 参数".to_string())?;
-                                    let instructions = args.get("instructions")
-                                        .and_then(|v| v.as_str())
-                                        .ok_or_else(|| "创建技能需要 instructions 参数".to_string())?;
-
-                                    match skill_manager.create_skill(name, description, instructions) {
-                                        Ok(_) => {
-                                            final_response = format!(
-                                                "✅ 技能 `{}` 创建成功！\n\n**描述**: {}\n\n你现在可以通过 `/{name}` 来调用它。",
-                                                name, description
-                                            );
-                                        }
-                                        Err(e) => {
-                                            final_response = format!("❌ 创建技能失败: {}", e);
-                                        }
-                                    }
-                                }
-                                "update" => {
-                                    let description = args.get("description")
-                                        .and_then(|v| v.as_str())
-                                        .ok_or_else(|| "更新技能需要 description 参数".to_string())?;
-                                    let instructions = args.get("instructions")
-                                        .and_then(|v| v.as_str())
-                                        .ok_or_else(|| "更新技能需要 instructions 参数".to_string())?;
-
-                                    match skill_manager.update_skill(name, description, instructions) {
-                                        Ok(_) => {
-                                            final_response = format!(
-                                                "✅ 技能 `{}` 更新成功！\n\n**新描述**: {}",
-                                                name, description
-                                            );
-                                        }
-                                        Err(e) => {
-                                            final_response = format!("❌ 更新技能失败: {}", e);
-                                        }
-                                    }
-                                }
-                                "delete" => {
-                                    match skill_manager.delete_skill(name) {
-                                        Ok(_) => {
-                                            final_response = format!("✅ 技能 `{}` 已删除。", name);
-                                        }
-                                        Err(e) => {
-                                            final_response = format!("❌ 删除技能失败: {}", e);
-                                        }
-                                    }
-                                }
-                                _ => {
-                                    final_response = format!("❌ 未知操作: {}", action);
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-
-                if !final_response.is_empty() {
-                    return Ok(final_response);
-                }
-            }
-        }
+        return run_tool_loop(
+            &storage,
+            &config,
+            &model_manager,
+            &skill_manager,
+            &system_prompt,
+            result,
+            &available_skills,
+            &None,
+        )
+        .await;
     }
 
     // 回退到普通对话（无 Tool Use 或 Ollama 模式）
@@ -376,16 +358,24 @@ async fn execute_skill_internal(
     skill_name: &str,
     args: Option<String>,
     history: Option<Vec<ChatHistoryMessage>>,
+    attachments: Option<Vec<AttachmentInput>>,
 ) -> Result<String, String> {
     // 加载 skill
     let skill = skill_manager.load_skill(skill_name)?;
 
     // 构建用户消息（包含参数）
-    let user_message = if let Some(ref args_str) = args {
+    let base_message = if let Some(ref args_str) = args {
         format!("执行技能 /{}: {}", skill_name, args_str)
     } else {
         format!("执行技能 /{}", skill_name)
     };
+
+    let attachment_payload = attachments
+        .as_deref()
+        .map(build_attachment_payload)
+        .unwrap_or_default();
+    let has_attachments = attachments.as_ref().map_or(false, |items| !items.is_empty());
+    let user_message = merge_user_message(&base_message, &attachment_payload.text, has_attachments);
 
     // 获取屏幕记录上下文
     let query = parse_user_query(&args.unwrap_or_default());
@@ -394,6 +384,15 @@ async fn execute_skill_internal(
 
     // 获取启用的全局提示词
     let global_prompts_section = build_global_prompts_section(config);
+
+    let skill_dir = Path::new(&skill.path)
+        .parent()
+        .unwrap_or_else(|| Path::new(&skill.path));
+    let skill_dir_display = skill_dir.to_string_lossy();
+    let allowed_tools_hint = match &skill.metadata.allowed_tools {
+        Some(list) if !list.is_empty() => format!("\n## 允许的工具\n{}\n", list.join(", ")),
+        _ => String::new(),
+    };
 
     // 构建 system prompt，注入 skill 指令
     let system_prompt = format!(
@@ -405,6 +404,10 @@ async fn execute_skill_internal(
 ## 技能指令
 {}
 
+## 技能目录
+{}
+该目录下可能有 scripts/ references/ assets/ 。如果需要运行脚本，请使用 Bash/run_command 工具，并把 cwd 设置为技能目录。{}
+
 ## 屏幕活动记录
 {}
 
@@ -413,13 +416,68 @@ async fn execute_skill_internal(
         global_prompts_section,
         skill.metadata.description,
         skill.instructions,
+        skill_dir_display,
+        allowed_tools_hint,
         screen_context
     );
 
-    // 调用模型
-    model_manager
-        .chat_with_system_prompt(&config.model, &system_prompt, &user_message, history)
-        .await
+    if config.model.provider == "api" {
+        let available_skills = skill_manager.discover_skills().unwrap_or_default();
+        let result = if attachment_payload.image_urls.is_empty()
+            && attachment_payload.image_base64.is_empty()
+        {
+            model_manager
+                .chat_with_tools_with_system_prompt(
+                    &config.model,
+                    &system_prompt,
+                    &user_message,
+                    history.clone(),
+                    &available_skills,
+                )
+                .await?
+        } else {
+            model_manager
+                .chat_with_tools_with_system_prompt_with_images(
+                    &config.model,
+                    &system_prompt,
+                    &user_message,
+                    history.clone(),
+                    &available_skills,
+                    attachment_payload.image_urls.clone(),
+                    attachment_payload.image_base64.clone(),
+                )
+                .await?
+        };
+
+        return Box::pin(run_tool_loop(
+            storage,
+            config,
+            model_manager,
+            skill_manager,
+            &system_prompt,
+            result,
+            &available_skills,
+            &skill.metadata.allowed_tools,
+        ))
+        .await;
+    }
+
+    if attachment_payload.image_urls.is_empty() && attachment_payload.image_base64.is_empty() {
+        model_manager
+            .chat_with_system_prompt(&config.model, &system_prompt, &user_message, history)
+            .await
+    } else {
+        model_manager
+            .chat_with_system_prompt_with_images(
+                &config.model,
+                &system_prompt,
+                &user_message,
+                history,
+                attachment_payload.image_urls,
+                attachment_payload.image_base64,
+            )
+            .await
+    }
 }
 
 /// 解析用户问题，提取时间范围和关键词
@@ -727,66 +785,17 @@ pub async fn invoke_skill(
     let config = storage.load_config().map_err(|e| e.to_string())?;
     let model_manager = ModelManager::new();
     let skill_manager = SkillManager::new();
-
-    // 加载 skill
-    let skill = skill_manager.load_skill(&name)?;
-
-    // 构建用户消息（包含参数）
-    let base_message = if let Some(ref args_str) = args {
-        format!("执行技能 /{}: {}", name, args_str)
-    } else {
-        format!("执行技能 /{}", name)
-    };
-
-    let attachment_payload = attachments
-        .as_deref()
-        .map(build_attachment_payload)
-        .unwrap_or_default();
-    let has_attachments = attachments.as_ref().map_or(false, |items| !items.is_empty());
-    let user_message = merge_user_message(&base_message, &attachment_payload.text, has_attachments);
-
-    // 获取屏幕记录上下文
-    let query = parse_user_query(&args.unwrap_or_default());
-    let search_result = storage.smart_search(&query).unwrap_or_default();
-    let screen_context = search_result.build_context(config.storage.max_context_chars, true);
-
-    // 构建 system prompt，注入 skill 指令
-    let system_prompt = format!(
-        r#"你是一个屏幕监控助手。现在用户调用了技能 "{}"。
-
-## 技能说明
-{}
-
-## 技能指令
-{}
-
-## 屏幕活动记录
-{}
-
-请根据技能指令和屏幕活动记录，完成用户的请求。"#,
-        skill.metadata.name,
-        skill.metadata.description,
-        skill.instructions,
-        screen_context
-    );
-
-    // 调用模型
-    if attachment_payload.image_urls.is_empty() && attachment_payload.image_base64.is_empty() {
-        model_manager
-            .chat_with_system_prompt(&config.model, &system_prompt, &user_message, history)
-            .await
-    } else {
-        model_manager
-            .chat_with_system_prompt_with_images(
-                &config.model,
-                &system_prompt,
-                &user_message,
-                history,
-                attachment_payload.image_urls,
-                attachment_payload.image_base64,
-            )
-            .await
-    }
+    execute_skill_internal(
+        &storage,
+        &config,
+        &model_manager,
+        &skill_manager,
+        &name,
+        args,
+        history,
+        attachments,
+    )
+    .await
 }
 
 /// 创建新的 skill
@@ -999,5 +1008,656 @@ fn image_mime(ext: &str) -> &'static str {
         "webp" => "image/webp",
         "bmp" => "image/bmp",
         _ => "image/png",
+    }
+}
+
+fn normalize_tool_mode(mode: &str) -> String {
+    match mode.trim().to_lowercase().as_str() {
+        "whitelist" => "whitelist".to_string(),
+        "allow_all" => "allow_all".to_string(),
+        "unset" => "unset".to_string(),
+        _ => "unset".to_string(),
+    }
+}
+
+fn build_tool_access(config: &Config, storage: &StorageManager) -> ToolAccess {
+    let mode = normalize_tool_mode(&config.tools.mode);
+    let data_dir = storage.get_data_dir().to_path_buf();
+    let mut allowed_dirs = Vec::new();
+
+    for dir in &config.tools.allowed_dirs {
+        let trimmed = dir.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let raw = PathBuf::from(trimmed);
+        let resolved = if raw.is_absolute() {
+            raw
+        } else {
+            data_dir.join(raw)
+        };
+        allowed_dirs.push(normalize_path(&resolved));
+    }
+
+    if allowed_dirs.is_empty() {
+        allowed_dirs.push(normalize_path(&data_dir));
+    }
+
+    let base_dir = allowed_dirs
+        .get(0)
+        .cloned()
+        .unwrap_or_else(|| normalize_path(&data_dir));
+
+    ToolAccess {
+        mode,
+        allowed_commands: config.tools.allowed_commands.clone(),
+        allowed_dirs,
+        base_dir,
+    }
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut result = PathBuf::new();
+    for comp in path.components() {
+        match comp {
+            Component::Prefix(prefix) => result.push(prefix.as_os_str()),
+            Component::RootDir => result.push(comp.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                result.pop();
+            }
+            Component::Normal(os) => result.push(os),
+        }
+    }
+    result
+}
+
+fn resolve_path(access: &ToolAccess, path: &str) -> PathBuf {
+    let raw = PathBuf::from(path.trim());
+    let resolved = if raw.is_absolute() {
+        raw
+    } else {
+        access.base_dir.join(raw)
+    };
+    normalize_path(&resolved)
+}
+
+fn path_is_allowed(access: &ToolAccess, path: &Path) -> bool {
+    if access.mode == "allow_all" {
+        return true;
+    }
+    let normalized = normalize_path(path);
+    access
+        .allowed_dirs
+        .iter()
+        .any(|dir| normalized.starts_with(dir))
+}
+
+fn ensure_path_allowed(access: &ToolAccess, path: &str) -> Result<PathBuf, String> {
+    let resolved = resolve_path(access, path);
+    if access.mode == "whitelist" && !path_is_allowed(access, &resolved) {
+        return Err(format!("路径不在允许范围内: {}", resolved.display()));
+    }
+    Ok(resolved)
+}
+
+fn tool_allowed_in_skill(tool_name: &str, allowed_tools: &Option<Vec<String>>) -> bool {
+    let Some(list) = allowed_tools else {
+        return true;
+    };
+    if list.is_empty() {
+        return false;
+    }
+    let target = normalize_tool_name(tool_name);
+    for item in list {
+        let trimmed = item.trim();
+        if trimmed == "*" {
+            return true;
+        }
+        let name = trimmed
+            .split('(')
+            .next()
+            .unwrap_or(trimmed)
+            .trim();
+        if normalize_tool_name(name) == target {
+            return true;
+        }
+    }
+    false
+}
+
+fn normalize_tool_name(name: &str) -> String {
+    match name.trim().to_lowercase().as_str() {
+        "update" => "edit".to_string(),
+        "run_command" => "bash".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn extract_command_token(command: &str) -> String {
+    let trimmed = command.trim_start();
+    if trimmed.starts_with('"') {
+        if let Some(end) = trimmed[1..].find('"') {
+            return trimmed[1..=end].to_string();
+        }
+    }
+    trimmed
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_string()
+}
+
+fn command_allowed(access: &ToolAccess, command: &str) -> bool {
+    if access.mode == "allow_all" {
+        return true;
+    }
+    let token = extract_command_token(command);
+    let token_lower = token.to_lowercase();
+    let base_lower = Path::new(&token)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(&token)
+        .to_lowercase();
+
+    for entry in &access.allowed_commands {
+        let trimmed = entry.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed == "*" {
+            return true;
+        }
+        let pattern = trimmed.to_lowercase();
+        if pattern.contains('*') || pattern.contains('?') {
+            if let Ok(glob_pattern) = glob::Pattern::new(&pattern) {
+                if glob_pattern.matches(&token_lower) || glob_pattern.matches(&base_lower) {
+                    return true;
+                }
+            }
+        } else if pattern == token_lower || pattern == base_lower {
+            return true;
+        }
+    }
+    false
+}
+
+fn truncate_string(value: &str, max_chars: usize) -> (String, bool) {
+    if value.chars().count() <= max_chars {
+        return (value.to_string(), false);
+    }
+    let truncated: String = value.chars().take(max_chars).collect();
+    (truncated, true)
+}
+
+fn read_file_tool(access: &ToolAccess, args: ReadArgs) -> Result<String, String> {
+    if access.mode == "unset" {
+        return Err(TOOL_MODE_UNSET_ERROR.to_string());
+    }
+    let path = ensure_path_allowed(access, &args.path)?;
+    let max_bytes = args.max_bytes.unwrap_or(DEFAULT_MAX_READ_BYTES);
+    let data = fs::read(&path).map_err(|e| format!("读取失败: {}", e))?;
+    let truncated = data.len() > max_bytes;
+    let slice = if truncated { &data[..max_bytes] } else { &data[..] };
+    let mut text = String::from_utf8_lossy(slice).to_string();
+    if truncated {
+        text.push_str(&format!("\n\n[truncated {} bytes]", data.len() - max_bytes));
+    }
+    Ok(text)
+}
+
+fn write_file_tool(access: &ToolAccess, args: WriteArgs) -> Result<String, String> {
+    if access.mode == "unset" {
+        return Err(TOOL_MODE_UNSET_ERROR.to_string());
+    }
+    let path = ensure_path_allowed(access, &args.path)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {}", e))?;
+    }
+    if args.append.unwrap_or(false) {
+        use std::io::Write;
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .map_err(|e| format!("写入失败: {}", e))?;
+        file.write_all(args.content.as_bytes())
+            .map_err(|e| format!("写入失败: {}", e))?;
+    } else {
+        fs::write(&path, args.content.as_bytes()).map_err(|e| format!("写入失败: {}", e))?;
+    }
+    Ok(format!("写入成功: {}", path.display()))
+}
+
+fn edit_file_tool(access: &ToolAccess, args: EditArgs) -> Result<String, String> {
+    if access.mode == "unset" {
+        return Err(TOOL_MODE_UNSET_ERROR.to_string());
+    }
+    let path = ensure_path_allowed(access, &args.path)?;
+    let content = fs::read_to_string(&path).map_err(|e| format!("读取失败: {}", e))?;
+    let count = content.matches(&args.old).count();
+    let replace_all = args.replace_all.unwrap_or(true);
+    let updated = if replace_all {
+        content.replace(&args.old, &args.new)
+    } else {
+        content.replacen(&args.old, &args.new, 1)
+    };
+    if updated == content {
+        return Ok("未找到可替换内容".to_string());
+    }
+    fs::write(&path, updated.as_bytes()).map_err(|e| format!("写入失败: {}", e))?;
+    Ok(format!("替换完成: {} 处", count))
+}
+
+fn glob_files_tool(access: &ToolAccess, args: GlobArgs) -> Result<String, String> {
+    if access.mode == "unset" {
+        return Err(TOOL_MODE_UNSET_ERROR.to_string());
+    }
+    let max_results = args.max_results.unwrap_or(DEFAULT_MAX_GLOB_RESULTS);
+    let pattern_path = if Path::new(&args.pattern).is_absolute() {
+        args.pattern.clone()
+    } else {
+        access
+            .base_dir
+            .join(&args.pattern)
+            .to_string_lossy()
+            .to_string()
+    };
+
+    let mut results = Vec::new();
+    for entry in glob(&pattern_path).map_err(|e| format!("glob 解析失败: {}", e))? {
+        if results.len() >= max_results {
+            break;
+        }
+        if let Ok(path) = entry {
+            if access.mode == "whitelist" && !path_is_allowed(access, &path) {
+                continue;
+            }
+            results.push(path.to_string_lossy().to_string());
+        }
+    }
+
+    if results.is_empty() {
+        Ok("未找到匹配文件".to_string())
+    } else {
+        Ok(results.join("\n"))
+    }
+}
+
+fn grep_files_tool(access: &ToolAccess, args: GrepArgs) -> Result<String, String> {
+    if access.mode == "unset" {
+        return Err(TOOL_MODE_UNSET_ERROR.to_string());
+    }
+    let max_results = args.max_results.unwrap_or(DEFAULT_MAX_GREP_RESULTS);
+    let mut files = Vec::new();
+
+    if let Some(path_str) = args.path.clone() {
+        let path = ensure_path_allowed(access, &path_str)?;
+        let filter = args
+            .glob
+            .as_deref()
+            .and_then(|pat| glob::Pattern::new(pat).ok());
+        if path.is_file() {
+            if let Some(pattern) = &filter {
+                if pattern.matches_path(&path) {
+                    files.push(path);
+                }
+            } else {
+                files.push(path);
+            }
+        } else if path.is_dir() {
+            for entry in WalkDir::new(&path).into_iter().filter_map(Result::ok) {
+                if !entry.file_type().is_file() {
+                    continue;
+                }
+                if let Some(pattern) = &filter {
+                    if let Ok(rel) = entry.path().strip_prefix(&path) {
+                        if !pattern.matches_path(rel) {
+                            continue;
+                        }
+                    }
+                }
+                files.push(entry.into_path());
+            }
+        }
+    } else if let Some(glob_pattern) = args.glob.clone() {
+        let base_dirs = if access.mode == "allow_all" {
+            vec![access.base_dir.clone()]
+        } else {
+            access.allowed_dirs.clone()
+        };
+        for base in base_dirs {
+            let pattern = base.join(&glob_pattern).to_string_lossy().to_string();
+            for entry in glob(&pattern).map_err(|e| format!("glob 解析失败: {}", e))? {
+                if let Ok(path) = entry {
+                    files.push(path);
+                }
+            }
+        }
+    } else {
+        let base = access.base_dir.clone();
+        for entry in WalkDir::new(base).into_iter().filter_map(Result::ok) {
+            if entry.file_type().is_file() {
+                files.push(entry.into_path());
+            }
+        }
+    }
+
+    let use_regex = args.regex.unwrap_or(false);
+    let case_sensitive = args.case_sensitive.unwrap_or(true);
+    let regex = if use_regex {
+        RegexBuilder::new(&args.pattern)
+            .case_insensitive(!case_sensitive)
+            .build()
+            .map_err(|e| format!("正则解析失败: {}", e))?
+    } else {
+        RegexBuilder::new(&regex::escape(&args.pattern))
+            .case_insensitive(!case_sensitive)
+            .build()
+            .map_err(|e| format!("正则解析失败: {}", e))?
+    };
+
+    let mut results = Vec::new();
+    for path in files {
+        if access.mode == "whitelist" && !path_is_allowed(access, &path) {
+            continue;
+        }
+        if results.len() >= max_results {
+            break;
+        }
+        if let Ok(meta) = fs::metadata(&path) {
+            if meta.len() > MAX_GREP_FILE_BYTES {
+                continue;
+            }
+        }
+        let file = fs::File::open(&path).map_err(|e| format!("读取失败: {}", e))?;
+        let reader = io::BufReader::new(file);
+        for (idx, line) in reader.lines().enumerate() {
+            if results.len() >= max_results {
+                break;
+            }
+            let line = line.unwrap_or_default();
+            if regex.is_match(&line) {
+                results.push(format!(
+                    "{}:{}:{}",
+                    path.to_string_lossy(),
+                    idx + 1,
+                    line
+                ));
+            }
+        }
+    }
+
+    if results.is_empty() {
+        Ok("未找到匹配内容".to_string())
+    } else {
+        Ok(results.join("\n"))
+    }
+}
+
+async fn run_command_tool(access: &ToolAccess, args: BashArgs) -> Result<String, String> {
+    if access.mode == "unset" {
+        return Err(TOOL_MODE_UNSET_ERROR.to_string());
+    }
+    if access.mode == "whitelist" && !command_allowed(access, &args.command) {
+        return Ok("命令不在允许列表中".to_string());
+    }
+
+    let cwd = args
+        .cwd
+        .as_deref()
+        .map(|dir| resolve_path(access, dir))
+        .unwrap_or_else(|| access.base_dir.clone());
+
+    if access.mode == "whitelist" && !path_is_allowed(access, &cwd) {
+        return Ok(format!("工作目录不在允许范围内: {}", cwd.display()));
+    }
+
+    let timeout_ms = args.timeout_ms.unwrap_or(DEFAULT_COMMAND_TIMEOUT_MS);
+
+    let mut cmd = build_shell_command(&args.command);
+    cmd.current_dir(&cwd)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let output = timeout(TokioDuration::from_millis(timeout_ms), cmd.output())
+        .await
+        .map_err(|_| "命令超时".to_string())?
+        .map_err(|e| format!("执行失败: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let mut response = format!(
+        "exit_code: {}\n",
+        output.status.code().unwrap_or(-1)
+    );
+
+    if !stdout.trim().is_empty() {
+        let (truncated, cut) = truncate_string(stdout.trim_end(), MAX_COMMAND_OUTPUT_CHARS);
+        response.push_str("stdout:\n");
+        response.push_str(&truncated);
+        if cut {
+            response.push_str("\n[stdout truncated]");
+        }
+        response.push('\n');
+    }
+
+    if !stderr.trim().is_empty() {
+        let (truncated, cut) = truncate_string(stderr.trim_end(), MAX_COMMAND_OUTPUT_CHARS);
+        response.push_str("stderr:\n");
+        response.push_str(&truncated);
+        if cut {
+            response.push_str("\n[stderr truncated]");
+        }
+    }
+
+    Ok(response.trim_end().to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn build_shell_command(command: &str) -> TokioCommand {
+    let mut cmd = TokioCommand::new("cmd");
+    cmd.arg("/C").arg(command);
+    cmd
+}
+
+#[cfg(not(target_os = "windows"))]
+fn build_shell_command(command: &str) -> TokioCommand {
+    let mut cmd = TokioCommand::new("sh");
+    cmd.arg("-c").arg(command);
+    cmd
+}
+
+fn build_tool_system_prompt(context: &str) -> String {
+    format!(
+        r#"你是一个屏幕监控助手，帮助用户回顾和理解他们的操作历史。
+
+{}
+
+请根据上述操作记录，回答用户的问题。如果记录中没有相关信息，请如实告知。
+
+你有以下能力：
+1. 如果用户的请求需要使用某个技能来完成，请调用 invoke_skill 工具。
+2. 如果用户想要创建、修改或删除技能，请调用 manage_skill 工具。
+3. 你可以使用 Read/Write/Edit/Update/Glob/Grep 工具读写和搜索文件。
+4. 你可以使用 Bash/run_command 工具运行命令（受权限限制）。"#,
+        context
+    )
+}
+
+async fn run_tool_loop(
+    storage: &StorageManager,
+    config: &Config,
+    model_manager: &ModelManager,
+    skill_manager: &SkillManager,
+    system_prompt: &str,
+    mut result: ChatWithToolsResult,
+    available_skills: &[SkillMetadata],
+    allowed_tools: &Option<Vec<String>>,
+) -> Result<String, String> {
+    let access = build_tool_access(config, storage);
+    let mut loops = 0usize;
+
+    loop {
+        match result {
+            ChatWithToolsResult::Text(text) => return Ok(text),
+            ChatWithToolsResult::ToolCalls { calls, messages } => {
+                if loops >= MAX_TOOL_LOOPS {
+                    return Err("工具调用次数过多，已停止".to_string());
+                }
+
+                let mut tool_results = Vec::new();
+                for call in calls {
+                    let output = execute_tool_call(
+                        &call,
+                        &access,
+                        storage,
+                        config,
+                        model_manager,
+                        skill_manager,
+                        available_skills,
+                        allowed_tools,
+                    )
+                    .await?;
+                    tool_results.push((call.id.clone(), output));
+                }
+
+                result = model_manager
+                    .continue_with_tool_results(
+                        &config.model,
+                        system_prompt,
+                        messages,
+                        tool_results,
+                        available_skills,
+                    )
+                    .await?;
+                loops += 1;
+            }
+        }
+    }
+}
+
+async fn execute_tool_call(
+    tool_call: &ToolCall,
+    access: &ToolAccess,
+    storage: &StorageManager,
+    config: &Config,
+    model_manager: &ModelManager,
+    skill_manager: &SkillManager,
+    _available_skills: &[SkillMetadata],
+    allowed_tools: &Option<Vec<String>>,
+) -> Result<String, String> {
+    let tool_name = tool_call.function.name.as_str();
+    let args_value: serde_json::Value = serde_json::from_str(&tool_call.function.arguments)
+        .map_err(|e| format!("解析工具参数失败: {}", e))?;
+
+    let needs_skill_permission = matches!(
+        tool_name,
+        "Read" | "Write" | "Edit" | "Update" | "Glob" | "Grep" | "Bash" | "run_command"
+    );
+    if needs_skill_permission && !tool_allowed_in_skill(tool_name, allowed_tools) {
+        return Ok(format!("工具未被 skill 允许: {}", tool_name));
+    }
+
+    match tool_name {
+        "Read" => {
+            let args: ReadArgs = serde_json::from_value(args_value)
+                .map_err(|e| format!("Read 参数错误: {}", e))?;
+            read_file_tool(access, args)
+        }
+        "Write" => {
+            let args: WriteArgs = serde_json::from_value(args_value)
+                .map_err(|e| format!("Write 参数错误: {}", e))?;
+            write_file_tool(access, args)
+        }
+        "Edit" | "Update" => {
+            let args: EditArgs = serde_json::from_value(args_value)
+                .map_err(|e| format!("Edit 参数错误: {}", e))?;
+            edit_file_tool(access, args)
+        }
+        "Glob" => {
+            let args: GlobArgs = serde_json::from_value(args_value)
+                .map_err(|e| format!("Glob 参数错误: {}", e))?;
+            glob_files_tool(access, args)
+        }
+        "Grep" => {
+            let args: GrepArgs = serde_json::from_value(args_value)
+                .map_err(|e| format!("Grep 参数错误: {}", e))?;
+            grep_files_tool(access, args)
+        }
+        "Bash" | "run_command" => {
+            let args: BashArgs = serde_json::from_value(args_value)
+                .map_err(|e| format!("Bash 参数错误: {}", e))?;
+            run_command_tool(access, args).await
+        }
+        "invoke_skill" => {
+            let skill_name = args_value
+                .get("skill_name")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| "缺少 skill_name 参数".to_string())?;
+            let skill_args = args_value
+                .get("args")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            execute_skill_internal(
+                storage,
+                config,
+                model_manager,
+                skill_manager,
+                skill_name,
+                skill_args,
+                None,
+                None,
+            )
+            .await
+        }
+        "manage_skill" => {
+            let action = args_value
+                .get("action")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| "缺少 action 参数".to_string())?;
+            let name = args_value
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| "缺少 name 参数".to_string())?;
+
+            match action {
+                "create" => {
+                    let description = args_value
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| "创建技能需要 description 参数".to_string())?;
+                    let instructions = args_value
+                        .get("instructions")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| "创建技能需要 instructions 参数".to_string())?;
+                    match skill_manager.create_skill(name, description, instructions) {
+                        Ok(_) => Ok(format!("技能 `{}` 创建成功。", name)),
+                        Err(e) => Ok(format!("创建技能失败: {}", e)),
+                    }
+                }
+                "update" => {
+                    let description = args_value
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| "更新技能需要 description 参数".to_string())?;
+                    let instructions = args_value
+                        .get("instructions")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| "更新技能需要 instructions 参数".to_string())?;
+                    match skill_manager.update_skill(name, description, instructions) {
+                        Ok(_) => Ok(format!("技能 `{}` 更新成功。", name)),
+                        Err(e) => Ok(format!("更新技能失败: {}", e)),
+                    }
+                }
+                "delete" => match skill_manager.delete_skill(name) {
+                    Ok(_) => Ok(format!("技能 `{}` 已删除。", name)),
+                    Err(e) => Ok(format!("删除技能失败: {}", e)),
+                },
+                _ => Ok(format!("未知操作: {}", action)),
+            }
+        }
+        _ => Ok(format!("未知工具: {}", tool_name)),
     }
 }

@@ -1,6 +1,20 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
-import { NLayout, NLayoutContent, NInput, NButton, NSpace, NSpin, NTag, NIcon, NDropdown, useMessage } from 'naive-ui'
+import {
+  NLayout,
+  NLayoutContent,
+  NInput,
+  NButton,
+  NSpace,
+  NSpin,
+  NTag,
+  NIcon,
+  NDropdown,
+  NModal,
+  NRadioGroup,
+  NRadio,
+  useMessage,
+} from 'naive-ui'
 import { Send, PlayCircleOutline, StopCircleOutline, AddOutline, SaveOutline, AttachOutline, CloseOutline, DocumentOutline } from '@vicons/ionicons5'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/api/dialog'
@@ -22,9 +36,22 @@ const isLoading = ref(false)
 const isHistoryLoading = ref(false)
 const attachments = ref<ChatAttachment[]>([])
 let attachmentSeq = 0
+const toolModeModalVisible = ref(false)
+const toolModeSelection = ref<'whitelist' | 'allow_all'>('whitelist')
+const pendingRequest = ref<PendingRequest | null>(null)
 
 const MAX_ATTACHMENTS = 6
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'])
+const TOOL_MODE_UNSET_ERROR = 'TOOLS_MODE_UNSET'
+
+interface PendingRequest {
+  message: string
+  history: { role: string; content: string }[]
+  attachments: ChatAttachment[]
+  isSkill: boolean
+  skillName?: string
+  skillArgs?: string | null
+}
 
 // Skill 提示相关
 const showSkillHints = ref(false)
@@ -141,6 +168,112 @@ watch(
   }
 )
 
+async function executeRequest(payload: PendingRequest, includeUserMessage: boolean) {
+  if (isLoading.value) return
+
+  if (includeUserMessage) {
+    chatStore.addMessage({
+      role: 'user',
+      content: payload.message,
+      timestamp: new Date().toISOString(),
+      attachments: payload.attachments.length > 0 ? payload.attachments : undefined,
+    })
+  }
+
+  isLoading.value = true
+  let placeholderAdded = false
+
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const attachmentsPayload = payload.attachments.map(item => ({
+      path: item.path,
+      name: item.name,
+      kind: item.kind,
+    }))
+
+    let response: string
+    if (payload.isSkill) {
+      const skillName = payload.skillName || ''
+      chatStore.addMessage({
+        role: 'assistant',
+        content: t('main.chat.invokingSkill', { skill: skillName }),
+        timestamp: new Date().toISOString(),
+      })
+      placeholderAdded = true
+
+      response = await invoke<string>('invoke_skill', {
+        name: skillName.toLowerCase(),
+        args: payload.skillArgs || null,
+        history: payload.history.length > 0 ? payload.history : null,
+        attachments: attachmentsPayload.length > 0 ? attachmentsPayload : null,
+      })
+
+      chatStore.messages.pop()
+      placeholderAdded = false
+    } else {
+      response = await invoke<string>('chat_with_assistant', {
+        message: payload.message,
+        history: payload.history.length > 0 ? payload.history : null,
+        attachments: attachmentsPayload.length > 0 ? attachmentsPayload : null,
+      })
+    }
+
+    chatStore.addMessage({
+      role: 'assistant',
+      content: response,
+      timestamp: new Date().toISOString(),
+    })
+  } catch (error) {
+    const errorText = String(error)
+    if (errorText.includes(TOOL_MODE_UNSET_ERROR)) {
+      if (placeholderAdded) {
+        chatStore.messages.pop()
+      }
+      pendingRequest.value = payload
+      toolModeModalVisible.value = true
+      return
+    }
+
+    chatStore.addMessage({
+      role: 'assistant',
+      content: t('main.chat.error', { error: errorText }),
+      timestamp: new Date().toISOString(),
+    })
+  } finally {
+    isLoading.value = false
+    await nextTick()
+    scrollToBottom()
+  }
+}
+
+async function applyToolModeSelection() {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const config = await invoke<any>('get_config')
+    const updatedConfig = {
+      ...config,
+      tools: {
+        ...(config?.tools || {}),
+        mode: toolModeSelection.value,
+      },
+    }
+    await invoke('save_config', { config: updatedConfig })
+    toolModeModalVisible.value = false
+    const payload = pendingRequest.value
+    pendingRequest.value = null
+    if (payload) {
+      await executeRequest(payload, false)
+    }
+  } catch (error) {
+    message.error(String(error))
+  }
+}
+
+function cancelToolModeSelection() {
+  toolModeModalVisible.value = false
+  pendingRequest.value = null
+}
+
 async function sendMessage() {
   if (isLoading.value) return
 
@@ -149,79 +282,23 @@ async function sendMessage() {
   if (!userMessage && !hasAttachments) return
 
   const messageAttachments = attachments.value.map(item => ({ ...item }))
+  const historyForModel = chatStore.chatHistoryForModel
+    .map(m => ({ role: m.role, content: m.content }))
+
   inputMessage.value = ''
   attachments.value = []
 
-  chatStore.addMessage({
-    role: 'user',
-    content: userMessage,
-    timestamp: new Date().toISOString(),
-    attachments: messageAttachments.length > 0 ? messageAttachments : undefined,
-  })
-
-  isLoading.value = true
-
-  try {
-    const { invoke } = await import('@tauri-apps/api/core')
-    // Get chat history for context (excluding the message we just added)
-    const historyForModel = chatStore.chatHistoryForModel
-      .slice(0, -1)  // Exclude the user message we just added
-      .map(m => ({ role: m.role, content: m.content }))
-
-    let response: string
-    const attachmentsPayload = messageAttachments.map(item => ({
-      path: item.path,
-      name: item.name,
-      kind: item.kind,
-    }))
-
-    // 检测 /skill-name 语法
-    const skillMatch = userMessage.match(/^\/([a-z0-9-]+)(?:\s+(.*))?$/i)
-    if (skillMatch) {
-      const [, skillName, args] = skillMatch
-
-      // 显示正在调用 skill 的提示
-      chatStore.addMessage({
-        role: 'assistant',
-        content: t('main.chat.invokingSkill', { skill: skillName }),
-        timestamp: new Date().toISOString(),
-      })
-
-      // 调用 skill
-      response = await invoke<string>('invoke_skill', {
-        name: skillName.toLowerCase(),
-        args: args || null,
-        history: historyForModel.length > 0 ? historyForModel : null,
-        attachments: attachmentsPayload.length > 0 ? attachmentsPayload : null,
-      })
-
-      // 移除"正在调用"的临时消息，替换为实际结果
-      chatStore.messages.pop()
-    } else {
-      // 普通对话
-      response = await invoke<string>('chat_with_assistant', {
-        message: userMessage,
-        history: historyForModel.length > 0 ? historyForModel : null,
-        attachments: attachmentsPayload.length > 0 ? attachmentsPayload : null,
-      })
-    }
-
-    chatStore.addMessage({
-      role: 'assistant',
-      content: response,
-      timestamp: new Date().toISOString()
-    })
-  } catch (error) {
-    chatStore.addMessage({
-      role: 'assistant',
-      content: t('main.chat.error', { error: String(error) }),
-      timestamp: new Date().toISOString(),
-    })
-  } finally {
-    isLoading.value = false
-    await nextTick()
-    scrollToBottom()
+  const skillMatch = userMessage.match(/^\/([a-z0-9-]+)(?:\s+(.*))?$/i)
+  const payload: PendingRequest = {
+    message: userMessage,
+    history: historyForModel,
+    attachments: messageAttachments,
+    isSkill: Boolean(skillMatch),
+    skillName: skillMatch?.[1],
+    skillArgs: skillMatch?.[2] || null,
   }
+
+  await executeRequest(payload, true)
 }
 
 async function loadAlertHistory() {
@@ -541,6 +618,23 @@ onUnmounted(() => {
       </div>
     </NLayoutContent>
   </NLayout>
+
+  <NModal v-model:show="toolModeModalVisible" preset="card" :title="t('main.tools.mode.title')" style="width: 520px;">
+    <p>{{ t('main.tools.mode.desc') }}</p>
+    <NRadioGroup v-model:value="toolModeSelection" style="margin-top: 12px;">
+      <NSpace vertical>
+        <NRadio value="whitelist">{{ t('main.tools.mode.whitelist') }}</NRadio>
+        <NRadio value="allow_all">{{ t('main.tools.mode.allowAll') }}</NRadio>
+      </NSpace>
+    </NRadioGroup>
+    <p class="tool-mode-hint">{{ t('main.tools.mode.hint') }}</p>
+    <template #footer>
+      <NSpace justify="end">
+        <NButton @click="cancelToolModeSelection">{{ t('common.cancel') }}</NButton>
+        <NButton type="primary" @click="applyToolModeSelection">{{ t('common.save') }}</NButton>
+      </NSpace>
+    </template>
+  </NModal>
 </template>
 
 <style scoped>
@@ -609,6 +703,12 @@ onUnmounted(() => {
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 10px;
+}
+
+.tool-mode-hint {
+  margin-top: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 12px;
 }
 
 .attachment-chip {

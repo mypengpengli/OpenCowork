@@ -19,7 +19,7 @@ struct ChatRequest {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-struct Message {
+pub struct Message {
     role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<MessageContent>,
@@ -31,7 +31,7 @@ struct Message {
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(untagged)]
-enum MessageContent {
+pub enum MessageContent {
     Text(String),
     Parts(Vec<ContentPart>),
 }
@@ -66,7 +66,7 @@ pub struct ToolCallFunction {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-struct ContentPart {
+pub(crate) struct ContentPart {
     #[serde(rename = "type")]
     content_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -76,7 +76,7 @@ struct ContentPart {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-struct ImageUrl {
+pub(crate) struct ImageUrl {
     url: String,
 }
 
@@ -105,7 +105,10 @@ pub enum ChatWithToolsResult {
     /// AI 直接返回文本
     Text(String),
     /// AI 请求调用工具
-    ToolCalls(Vec<ToolCall>),
+    ToolCalls {
+        calls: Vec<ToolCall>,
+        messages: Vec<Message>,
+    },
 }
 
 impl ApiClient {
@@ -490,6 +493,145 @@ impl ApiClient {
     pub fn create_skill_tools(skills: &[crate::skills::SkillMetadata]) -> Vec<Tool> {
         let mut tools = Vec::new();
 
+        // File and command tools
+        tools.push(Tool {
+            tool_type: "function".to_string(),
+            function: ToolFunction {
+                name: "Read".to_string(),
+                description: "Read a text file from disk.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "File path to read" },
+                        "max_bytes": { "type": "integer", "description": "Optional max bytes to read" }
+                    },
+                    "required": ["path"]
+                }),
+            },
+        });
+
+        tools.push(Tool {
+            tool_type: "function".to_string(),
+            function: ToolFunction {
+                name: "Write".to_string(),
+                description: "Write text content to a file.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "File path to write" },
+                        "content": { "type": "string", "description": "Content to write" },
+                        "append": { "type": "boolean", "description": "Append instead of overwrite" }
+                    },
+                    "required": ["path", "content"]
+                }),
+            },
+        });
+
+        tools.push(Tool {
+            tool_type: "function".to_string(),
+            function: ToolFunction {
+                name: "Edit".to_string(),
+                description: "Replace text in a file.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "File path to edit" },
+                        "old": { "type": "string", "description": "Text to replace" },
+                        "new": { "type": "string", "description": "Replacement text" },
+                        "replace_all": { "type": "boolean", "description": "Replace all occurrences (default true)" }
+                    },
+                    "required": ["path", "old", "new"]
+                }),
+            },
+        });
+
+        tools.push(Tool {
+            tool_type: "function".to_string(),
+            function: ToolFunction {
+                name: "Update".to_string(),
+                description: "Alias for Edit.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "File path to edit" },
+                        "old": { "type": "string", "description": "Text to replace" },
+                        "new": { "type": "string", "description": "Replacement text" },
+                        "replace_all": { "type": "boolean", "description": "Replace all occurrences (default true)" }
+                    },
+                    "required": ["path", "old", "new"]
+                }),
+            },
+        });
+
+        tools.push(Tool {
+            tool_type: "function".to_string(),
+            function: ToolFunction {
+                name: "Glob".to_string(),
+                description: "List files matching a glob pattern.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "pattern": { "type": "string", "description": "Glob pattern" },
+                        "max_results": { "type": "integer", "description": "Optional max results" }
+                    },
+                    "required": ["pattern"]
+                }),
+            },
+        });
+
+        tools.push(Tool {
+            tool_type: "function".to_string(),
+            function: ToolFunction {
+                name: "Grep".to_string(),
+                description: "Search for text in files.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "pattern": { "type": "string", "description": "Search pattern" },
+                        "path": { "type": "string", "description": "File or directory to search" },
+                        "glob": { "type": "string", "description": "Optional glob filter (e.g. **/*.txt)" },
+                        "regex": { "type": "boolean", "description": "Treat pattern as regex" },
+                        "case_sensitive": { "type": "boolean", "description": "Case-sensitive search" },
+                        "max_results": { "type": "integer", "description": "Optional max results" }
+                    },
+                    "required": ["pattern"]
+                }),
+            },
+        });
+
+        tools.push(Tool {
+            tool_type: "function".to_string(),
+            function: ToolFunction {
+                name: "Bash".to_string(),
+                description: "Run a shell command.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "command": { "type": "string", "description": "Command to run" },
+                        "cwd": { "type": "string", "description": "Working directory" },
+                        "timeout_ms": { "type": "integer", "description": "Timeout in milliseconds" }
+                    },
+                    "required": ["command"]
+                }),
+            },
+        });
+        tools.push(Tool {
+            tool_type: "function".to_string(),
+            function: ToolFunction {
+                name: "run_command".to_string(),
+                description: "Alias for Bash.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "command": { "type": "string", "description": "Command to run" },
+                        "cwd": { "type": "string", "description": "Working directory" },
+                        "timeout_ms": { "type": "integer", "description": "Timeout in milliseconds" }
+                    },
+                    "required": ["command"]
+                }),
+            },
+        });
+
         // 1. manage_skill 工具 - 始终可用，用于创建/更新/删除技能
         tools.push(Tool {
             tool_type: "function".to_string(),
@@ -584,26 +726,31 @@ impl ApiClient {
             tool_calls: None,
             tool_call_id: None,
         }];
+        let mut messages_for_return = Vec::new();
 
         // Add conversation history if provided
         if let Some(hist) = history {
             for msg in hist {
-                messages.push(Message {
+                let message = Message {
                     role: msg.role,
                     content: Some(MessageContent::Text(msg.content)),
                     tool_calls: None,
                     tool_call_id: None,
-                });
+                };
+                messages.push(message.clone());
+                messages_for_return.push(message);
             }
         }
 
         // Add current user message
-        messages.push(Message {
+        let user_message = Message {
             role: "user".to_string(),
             content: Some(MessageContent::Text(user_message.to_string())),
             tool_calls: None,
             tool_call_id: None,
-        });
+        };
+        messages.push(user_message.clone());
+        messages_for_return.push(user_message);
 
         let request = ChatRequest {
             model: self.config.model.clone(),
@@ -647,7 +794,17 @@ impl ApiClient {
         // 检查是否有 tool_calls
         if let Some(ref tool_calls) = choice.message.tool_calls {
             if !tool_calls.is_empty() {
-                return Ok(ChatWithToolsResult::ToolCalls(tool_calls.clone()));
+                let assistant_message = Message {
+                    role: "assistant".to_string(),
+                    content: choice.message.content.clone().map(MessageContent::Text),
+                    tool_calls: Some(tool_calls.clone()),
+                    tool_call_id: None,
+                };
+                messages_for_return.push(assistant_message);
+                return Ok(ChatWithToolsResult::ToolCalls {
+                    calls: tool_calls.clone(),
+                    messages: messages_for_return,
+                });
             }
         }
 
@@ -678,25 +835,30 @@ impl ApiClient {
             tool_calls: None,
             tool_call_id: None,
         }];
+        let mut messages_for_return = Vec::new();
 
         if let Some(hist) = history {
             for msg in hist {
-                messages.push(Message {
+                let message = Message {
                     role: msg.role,
                     content: Some(MessageContent::Text(msg.content)),
                     tool_calls: None,
                     tool_call_id: None,
-                });
+                };
+                messages.push(message.clone());
+                messages_for_return.push(message);
             }
         }
 
         let user_content = Self::build_user_message_content(user_message, image_urls);
-        messages.push(Message {
+        let user_message = Message {
             role: "user".to_string(),
             content: Some(user_content),
             tool_calls: None,
             tool_call_id: None,
-        });
+        };
+        messages.push(user_message.clone());
+        messages_for_return.push(user_message);
 
         let request = ChatRequest {
             model: self.config.model.clone(),
@@ -739,7 +901,17 @@ impl ApiClient {
 
         if let Some(ref tool_calls) = choice.message.tool_calls {
             if !tool_calls.is_empty() {
-                return Ok(ChatWithToolsResult::ToolCalls(tool_calls.clone()));
+                let assistant_message = Message {
+                    role: "assistant".to_string(),
+                    content: choice.message.content.clone().map(MessageContent::Text),
+                    tool_calls: Some(tool_calls.clone()),
+                    tool_call_id: None,
+                };
+                messages_for_return.push(assistant_message);
+                return Ok(ChatWithToolsResult::ToolCalls {
+                    calls: tool_calls.clone(),
+                    messages: messages_for_return,
+                });
             }
         }
 
@@ -753,12 +925,11 @@ impl ApiClient {
     }
 
     /// 继续带 tool 结果的对话
-    pub async fn continue_with_tool_result(
+    pub async fn continue_with_tool_results(
         &self,
         system_prompt: &str,
         messages_so_far: Vec<Message>,
-        tool_call_id: &str,
-        tool_result: &str,
+        tool_results: Vec<(String, String)>,
         tools: Vec<Tool>,
     ) -> Result<ChatWithToolsResult, String> {
         let url = format!("{}/chat/completions", self.config.endpoint);
@@ -770,16 +941,22 @@ impl ApiClient {
             tool_call_id: None,
         }];
 
+        let mut messages_for_return = messages_so_far;
+
         // 添加之前的消息
-        messages.extend(messages_so_far);
+        messages.extend(messages_for_return.iter().cloned());
 
         // 添加 tool 结果
-        messages.push(Message {
-            role: "tool".to_string(),
-            content: Some(MessageContent::Text(tool_result.to_string())),
-            tool_calls: None,
-            tool_call_id: Some(tool_call_id.to_string()),
-        });
+        for (tool_call_id, tool_result) in tool_results {
+            let tool_message = Message {
+                role: "tool".to_string(),
+                content: Some(MessageContent::Text(tool_result)),
+                tool_calls: None,
+                tool_call_id: Some(tool_call_id),
+            };
+            messages.push(tool_message.clone());
+            messages_for_return.push(tool_message);
+        }
 
         let request = ChatRequest {
             model: self.config.model.clone(),
@@ -823,7 +1000,17 @@ impl ApiClient {
         // 检查是否有更多 tool_calls
         if let Some(ref tool_calls) = choice.message.tool_calls {
             if !tool_calls.is_empty() {
-                return Ok(ChatWithToolsResult::ToolCalls(tool_calls.clone()));
+                let assistant_message = Message {
+                    role: "assistant".to_string(),
+                    content: choice.message.content.clone().map(MessageContent::Text),
+                    tool_calls: Some(tool_calls.clone()),
+                    tool_call_id: None,
+                };
+                messages_for_return.push(assistant_message);
+                return Ok(ChatWithToolsResult::ToolCalls {
+                    calls: tool_calls.clone(),
+                    messages: messages_for_return,
+                });
             }
         }
 

@@ -97,6 +97,11 @@ const formValue = ref({
   maxScreenshots: 10000,
   maxContextChars: 10000,
   autoClearOnStart: false,
+
+  // 工具权限
+  toolMode: 'unset',
+  toolAllowedCommands: '',
+  toolAllowedDirs: '',
 })
 
 const providerOptions = computed(() => [
@@ -110,6 +115,12 @@ const apiTypeOptions = computed(() => [
   { label: t('settings.form.api.custom'), value: 'custom' },
 ])
 
+const toolModeOptions = computed(() => [
+  { label: t('settings.tools.mode.unset'), value: 'unset' },
+  { label: t('settings.tools.mode.whitelist'), value: 'whitelist' },
+  { label: t('settings.tools.mode.allowAll'), value: 'allow_all' },
+])
+
 const drawerTitle = computed(() => {
   if (drawerMode.value === 'edit') return t('settings.profile.drawer.edit')
   if (drawerMode.value === 'copy') return t('settings.profile.drawer.copy')
@@ -119,6 +130,18 @@ const drawerTitle = computed(() => {
 const languageToggleLabel = computed(() =>
   locale.value === 'zh' ? t('language.english') : t('language.chinese')
 )
+
+function listToText(values?: string[]) {
+  if (!values || values.length === 0) return ''
+  return values.join('\n')
+}
+
+function textToList(value: string) {
+  return value
+    .split(/[\n,]/)
+    .map(item => item.trim())
+    .filter(Boolean)
+}
 
 function normalizeConfig(raw: any) {
   return {
@@ -152,6 +175,11 @@ function normalizeConfig(raw: any) {
       max_context_chars: raw?.storage?.max_context_chars || 10000,
       auto_clear_on_start: raw?.storage?.auto_clear_on_start ?? false,
     },
+    tools: {
+      mode: raw?.tools?.mode || 'unset',
+      allowed_commands: raw?.tools?.allowed_commands || [],
+      allowed_dirs: raw?.tools?.allowed_dirs || [],
+    },
   }
 }
 
@@ -182,6 +210,9 @@ function applyConfigToForm(config: any) {
     maxScreenshots: normalized.storage.max_screenshots,
     maxContextChars: normalized.storage.max_context_chars,
     autoClearOnStart: normalized.storage.auto_clear_on_start ?? false,
+    toolMode: normalized.tools?.mode || 'unset',
+    toolAllowedCommands: listToText(normalized.tools?.allowed_commands),
+    toolAllowedDirs: listToText(normalized.tools?.allowed_dirs),
   }
 }
 
@@ -216,6 +247,11 @@ function buildConfigFromForm() {
       max_screenshots: formValue.value.maxScreenshots,
       max_context_chars: formValue.value.maxContextChars,
       auto_clear_on_start: formValue.value.autoClearOnStart,
+    },
+    tools: {
+      mode: formValue.value.toolMode,
+      allowed_commands: textToList(formValue.value.toolAllowedCommands),
+      allowed_dirs: textToList(formValue.value.toolAllowedDirs),
     },
   })
 }
@@ -913,6 +949,31 @@ async function openReleasePage() {
                   </template>
                   {{ t('settings.form.autoClearTip') }}
                 </NTooltip>
+              </NFormItem>
+            </NCard>
+
+            <NDivider />
+
+            <!-- 工具权限 -->
+            <NCard :title="t('settings.form.toolsConfig')" size="small">
+              <NFormItem :label="t('settings.form.toolsMode')">
+                <NSelect v-model:value="formValue.toolMode" :options="toolModeOptions" />
+              </NFormItem>
+              <NFormItem :label="t('settings.form.toolsAllowedCommands')">
+                <NInput
+                  v-model:value="formValue.toolAllowedCommands"
+                  type="textarea"
+                  :autosize="{ minRows: 2, maxRows: 6 }"
+                  :placeholder="t('settings.form.toolsAllowedCommandsPlaceholder')"
+                />
+              </NFormItem>
+              <NFormItem :label="t('settings.form.toolsAllowedDirs')">
+                <NInput
+                  v-model:value="formValue.toolAllowedDirs"
+                  type="textarea"
+                  :autosize="{ minRows: 2, maxRows: 6 }"
+                  :placeholder="t('settings.form.toolsAllowedDirsPlaceholder')"
+                />
               </NFormItem>
             </NCard>
 
