@@ -142,7 +142,13 @@ function startProcessPanel(requestId: string) {
 
 function appendProcessItem(payload: ProgressEventPayload) {
   if (!showProcessPanel.value) return
-  if (activeRequestId.value && payload.request_id !== activeRequestId.value) return
+  if (activeRequestId.value && payload.request_id !== activeRequestId.value) {
+    if (processItems.value.length === 0 && processStatus.value === 'running') {
+      activeRequestId.value = payload.request_id
+    } else {
+      return
+    }
+  }
   const item: ProgressItem = {
     id: `${payload.timestamp}-${processItems.value.length}`,
     stage: payload.stage,
@@ -297,6 +303,13 @@ async function executeRequest(payload: PendingRequest, includeUserMessage: boole
         timestamp: new Date().toISOString(),
       })
       placeholderAdded = true
+      appendProcessItem({
+        request_id: payload.requestId,
+        stage: 'step',
+        message: '调用技能',
+        detail: skillName ? `/${skillName}` : undefined,
+        timestamp: new Date().toISOString(),
+      })
 
       response = await invoke<string>('invoke_skill', {
         name: skillName.toLowerCase(),
