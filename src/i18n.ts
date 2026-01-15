@@ -675,9 +675,9 @@ export function translate(locale: Locale, key: string, params?: Record<string, s
 
 export function useI18n() {
   const localeStore = useLocaleStore()
-  const locale = computed(() => localeStore.locale.value)
+  const locale = computed(() => localeStore.locale)
   const t = (key: string, params?: Record<string, string | number>) =>
-    translate(localeStore.locale.value, key, params)
+    translate(localeStore.locale, key, params)
 
   return {
     locale,

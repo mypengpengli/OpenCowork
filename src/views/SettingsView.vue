@@ -283,17 +283,6 @@ async function loadSystemLocale() {
   systemLocaleError.value = ''
   try {
     const { invoke } = await import('@tauri-apps/api/core')
-    const locale = await invoke<string>('get_system_locale')
-    systemLocale.value = locale ? String(locale) : ''
-    // 不再自动覆盖语言设置，仅用于显示系统语言信息
-    // 语言设置由 locale store 管理，用户可以手动切换
-  } catch (error) {
-    systemLocaleError.value = String(error)
-  }
-}
-
-async function logUiLocale() {
-  try {
     let storedLocale = ''
     let storedVersion = ''
     try {
@@ -302,14 +291,16 @@ async function logUiLocale() {
     } catch {
       // localStorage unavailable
     }
-    const { invoke } = await import('@tauri-apps/api/core')
-    await invoke('log_ui_locale', {
-      ui_locale: localeStore.locale.value,
+    const locale = await invoke<string>('get_system_locale', {
+      ui_locale: localeStore.locale,
       stored_locale: storedLocale || undefined,
       stored_version: storedVersion || undefined,
     })
-  } catch {
-    // ignore
+    systemLocale.value = locale ? String(locale) : ''
+    // 不再自动覆盖语言设置，仅用于显示系统语言信息
+    // 语言设置由 locale store 管理，用户可以手动切换
+  } catch (error) {
+    systemLocaleError.value = String(error)
   }
 }
 
@@ -466,7 +457,6 @@ async function testConnection() {
 
 onMounted(async () => {
   await loadSystemLocale()
-  await logUiLocale()
   await loadCurrentConfig()
   await refreshProfiles()
   // 加载 Skills

@@ -12,7 +12,7 @@ export const useCaptureStore = defineStore('capture', () => {
   const lastEvent = ref<{ id: number; type: 'warning' | 'success' | 'error'; message: string } | null>(null)
   const localeStore = useLocaleStore()
   const t = (key: string, params?: Record<string, string | number>) =>
-    translate(localeStore.locale.value, key, params)
+    translate(localeStore.locale, key, params)
 
   let statusInterval: number | null = null
   let eventSeq = 0

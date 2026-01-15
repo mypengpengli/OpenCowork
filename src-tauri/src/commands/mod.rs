@@ -51,7 +51,17 @@ pub async fn get_config() -> Result<Config, String> {
 }
 
 #[tauri::command]
-pub async fn get_system_locale() -> Result<String, String> {
+pub async fn get_system_locale(
+    ui_locale: Option<String>,
+    stored_locale: Option<String>,
+    stored_version: Option<String>,
+) -> Result<String, String> {
+    println!(
+        "[locale] ui_locale={} stored_locale={} stored_version={}",
+        ui_locale.as_deref().unwrap_or(""),
+        stored_locale.as_deref().unwrap_or(""),
+        stored_version.as_deref().unwrap_or("")
+    );
     #[cfg(target_os = "windows")]
     {
         match windows_ui_is_zh() {

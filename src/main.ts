@@ -38,8 +38,40 @@ watch(
   { immediate: true }
 )
 
+async function syncLocaleWithSystem() {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    let storedLocale = ''
+    let storedVersion = ''
+    try {
+      storedLocale = localStorage.getItem('opencowork-locale') || ''
+      storedVersion = localStorage.getItem('opencowork-locale-version') || ''
+    } catch {
+      // localStorage unavailable
+    }
+    const systemLocale = await invoke<string>('get_system_locale', {
+      ui_locale: localeStore.locale,
+      stored_locale: storedLocale || undefined,
+      stored_version: storedVersion || undefined,
+    })
+    const normalized = String(systemLocale || '')
+      .trim()
+      .toLowerCase()
+      .startsWith('zh')
+      ? 'zh'
+      : 'en'
+    if (normalized !== localeStore.locale) {
+      localeStore.setLocale(normalized)
+    }
+  } catch (error) {
+    console.error('Failed to sync system locale:', error)
+  }
+}
+
+syncLocaleWithSystem()
+
 const t = (key: string, params?: Record<string, string | number>) =>
-  translate(localeStore.locale.value, key, params)
+  translate(localeStore.locale, key, params)
 
 function formatLocalTimestamp(date: Date): string {
   const pad = (value: number) => value.toString().padStart(2, '0')

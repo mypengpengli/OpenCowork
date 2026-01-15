@@ -41,7 +41,7 @@ export const useChatStore = defineStore('chat', () => {
   const seenAlerts = new Set<string>()
   const localeStore = useLocaleStore()
   const t = (key: string, params?: Record<string, string | number>) =>
-    translate(localeStore.locale.value, key, params)
+    translate(localeStore.locale, key, params)
 
   // 获取用于发送给模型的对话历史（只取最近N轮，不包含alert）
   const chatHistoryForModel = computed(() => {
