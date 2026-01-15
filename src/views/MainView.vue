@@ -17,7 +17,7 @@ import {
 } from 'naive-ui'
 import { Send, PlayCircleOutline, StopCircleOutline, AddOutline, SaveOutline, AttachOutline, CloseOutline, DocumentOutline } from '@vicons/ionicons5'
 import { convertFileSrc } from '@tauri-apps/api/core'
-import { open } from '@tauri-apps/api/dialog'
+import { open } from '@tauri-apps/plugin-dialog'
 import { useChatStore, type ChatAttachment, type AttachmentKind } from '../stores/chat'
 import { useCaptureStore } from '../stores/capture'
 import { useSkillsStore } from '../stores/skills'

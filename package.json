@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-dialog": "^2.0.0",
     "@vicons/ionicons5": "^0.12.0",
     "@vueuse/core": "^10.7.0",
     "naive-ui": "^2.38.0",
