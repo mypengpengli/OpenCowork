@@ -39,7 +39,7 @@ type DrawerMode = 'new' | 'edit' | 'copy'
 
 const message = useMessage()
 const skillsStore = useSkillsStore()
-const { t, locale, toggleLocale } = useI18n()
+const { t } = useI18n()
 
 // Skills 相关状态
 const activeTab = ref('profiles')
@@ -135,10 +135,6 @@ const drawerTitle = computed(() => {
   if (drawerMode.value === 'copy') return t('settings.profile.drawer.copy')
   return t('settings.profile.drawer.new')
 })
-
-const languageToggleLabel = computed(() =>
-  locale.value === 'zh' ? t('language.english') : t('language.chinese')
-)
 
 function listToText(values?: string[]) {
   if (!values || values.length === 0) return ''
@@ -629,7 +625,6 @@ async function openReleasePage() {
             <h2>{{ t('settings.header.profiles') }}</h2>
             <NSpace>
               <NButton @click="openReleasePage">{{ t('settings.buttons.checkUpdate') }}</NButton>
-              <NButton @click="toggleLocale">{{ languageToggleLabel }}</NButton>
               <NButton type="primary" @click="openNewProfile">{{ t('settings.buttons.newProfile') }}</NButton>
             </NSpace>
           </div>
