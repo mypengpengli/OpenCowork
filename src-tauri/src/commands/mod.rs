@@ -563,6 +563,10 @@ async fn execute_skill_internal(
         screen_context
     );
 
+    if let Some(progress) = progress {
+        progress.emit_step("请求模型执行技能".to_string(), Some(format!("/{}", skill.metadata.name)));
+    }
+
     if config.model.provider == "api" {
         let available_skills = skill_manager.discover_skills().unwrap_or_default();
         let result = if attachment_payload.image_urls.is_empty()
@@ -933,6 +937,7 @@ pub async fn invoke_skill(
     let progress = ProgressEmitter::new(&app_handle, config.ui.show_progress, request_id);
     if let Some(ref progress) = progress {
         progress.emit_start(&format!("开始执行技能 /{}", name));
+        progress.emit_step("调用技能".to_string(), Some(format!("/{}", name)));
     }
     let result = execute_skill_internal(
         &storage,
@@ -1346,6 +1351,15 @@ fn truncate_string(value: &str, max_chars: usize) -> (String, bool) {
     }
     let truncated: String = value.chars().take(max_chars).collect();
     (truncated, true)
+}
+
+fn command_mentions_script(command: &str) -> bool {
+    let lower = command.to_lowercase();
+    if lower.contains("scripts/") || lower.contains("scripts\\") {
+        return true;
+    }
+    let script_exts = [".ps1", ".py", ".sh", ".bat", ".cmd"];
+    script_exts.iter().any(|ext| lower.contains(ext))
 }
 
 fn read_file_tool(access: &ToolAccess, args: ReadArgs) -> Result<String, String> {
@@ -1786,7 +1800,12 @@ async fn execute_tool_call(
                 .map_err(|e| format!("Bash 参数错误: {}", e))?;
             if let Some(progress) = progress {
                 let (detail, _) = truncate_string(&args.command, 200);
-                progress.emit_step("执行命令".to_string(), Some(detail));
+                let step_label = if command_mentions_script(&args.command) {
+                    "运行脚本"
+                } else {
+                    "执行命令"
+                };
+                progress.emit_step(step_label.to_string(), Some(detail));
             }
             run_command_tool(access, args).await
         }

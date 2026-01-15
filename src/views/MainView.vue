@@ -561,9 +561,6 @@ async function toggleCapture() {
 onMounted(async () => {
   scrollToBottom()
   captureStore.startStatusPolling()
-  // 加载 Skills 列表
-  await skillsStore.loadSkills()
-  await loadProcessSetting()
   try {
     const { listen } = await import('@tauri-apps/api/event')
     progressUnlisten = await listen<ProgressEventPayload>('assistant-progress', (event) => {
@@ -579,6 +576,9 @@ onMounted(async () => {
   } catch (error) {
     console.error('Failed to listen progress events:', error)
   }
+  // 加载 Skills 列表
+  await skillsStore.loadSkills()
+  await loadProcessSetting()
 })
 
 onUnmounted(() => {

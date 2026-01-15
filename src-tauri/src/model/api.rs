@@ -81,8 +81,31 @@ pub(crate) struct ImageUrl {
 }
 
 #[derive(Deserialize)]
+struct ApiError {
+    message: String,
+    #[serde(default)]
+    r#type: Option<String>,
+    #[serde(default)]
+    code: Option<String>,
+    #[serde(default)]
+    param: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct ChatResponse {
-    choices: Vec<Choice>,
+    #[serde(default)]
+    choices: Option<Vec<Choice>>,
+    #[serde(default)]
+    error: Option<ApiError>,
+}
+
+impl ChatResponse {
+    fn first_choice(&self) -> Result<&Choice, String> {
+        self.choices
+            .as_ref()
+            .and_then(|choices| choices.first())
+            .ok_or_else(|| "API 响应缺少 choices".to_string())
+    }
 }
 
 #[derive(Deserialize)]
@@ -191,13 +214,12 @@ impl ApiClient {
             return Err(format!("API 错误 {}: {}", status, text));
         }
 
-        let chat_response: ChatResponse = serde_json::from_str(&text)
-            .map_err(|e| format!("解析响应失败: {}", e))?;
-
-        chat_response
-            .choices
-            .first()
-            .and_then(|c| c.message.content.clone())
+        let chat_response = Self::parse_chat_response(&text)?;
+        let choice = chat_response.first_choice()?;
+        choice
+            .message
+            .content
+            .clone()
             .ok_or_else(|| "没有返回内容".to_string())
     }
 
@@ -269,13 +291,12 @@ impl ApiClient {
             return Err(format!("API 错误 {}: {}", status, text));
         }
 
-        let chat_response: ChatResponse = serde_json::from_str(&text)
-            .map_err(|e| format!("解析响应失败: {}", e))?;
-
-        chat_response
-            .choices
-            .first()
-            .and_then(|c| c.message.content.clone())
+        let chat_response = Self::parse_chat_response(&text)?;
+        let choice = chat_response.first_choice()?;
+        choice
+            .message
+            .content
+            .clone()
             .ok_or_else(|| "没有返回内容".to_string())
     }
 
@@ -345,13 +366,12 @@ impl ApiClient {
             return Err(format!("API 错误 {}: {}", status, text));
         }
 
-        let chat_response: ChatResponse = serde_json::from_str(&text)
-            .map_err(|e| format!("解析响应失败: {}", e))?;
-
-        chat_response
-            .choices
-            .first()
-            .and_then(|c| c.message.content.clone())
+        let chat_response = Self::parse_chat_response(&text)?;
+        let choice = chat_response.first_choice()?;
+        choice
+            .message
+            .content
+            .clone()
             .ok_or_else(|| "没有返回内容".to_string())
     }
 
@@ -376,6 +396,39 @@ impl ApiClient {
         }
 
         MessageContent::Parts(parts)
+    }
+
+    fn format_api_error(error: &ApiError) -> String {
+        let mut details = Vec::new();
+        if let Some(code) = &error.code {
+            if !code.is_empty() {
+                details.push(format!("code={}", code));
+            }
+        }
+        if let Some(kind) = &error.r#type {
+            if !kind.is_empty() {
+                details.push(format!("type={}", kind));
+            }
+        }
+        if let Some(param) = &error.param {
+            if !param.is_empty() {
+                details.push(format!("param={}", param));
+            }
+        }
+        if details.is_empty() {
+            format!("API 错误: {}", error.message)
+        } else {
+            format!("API 错误: {} ({})", error.message, details.join(", "))
+        }
+    }
+
+    fn parse_chat_response(text: &str) -> Result<ChatResponse, String> {
+        let chat_response: ChatResponse = serde_json::from_str(text)
+            .map_err(|e| format!("解析响应失败: {}", e))?;
+        if let Some(error) = &chat_response.error {
+            return Err(Self::format_api_error(error));
+        }
+        Ok(chat_response)
     }
     pub async fn analyze_image(&self, image_base64: &str, prompt: &str) -> Result<String, String> {
         let url = format!("{}/chat/completions", self.config.endpoint);
@@ -429,13 +482,12 @@ impl ApiClient {
             return Err(format!("API 错误 {}: {}", status, text));
         }
 
-        let chat_response: ChatResponse = serde_json::from_str(&text)
-            .map_err(|e| format!("解析响应失败: {}", e))?;
-
-        chat_response
-            .choices
-            .first()
-            .and_then(|c| c.message.content.clone())
+        let chat_response = Self::parse_chat_response(&text)?;
+        let choice = chat_response.first_choice()?;
+        choice
+            .message
+            .content
+            .clone()
             .ok_or_else(|| "没有返回内容".to_string())
     }
     pub async fn test_connection_with_fallback(&self) -> Result<(), String> {
@@ -783,13 +835,8 @@ impl ApiClient {
             return Err(format!("API 错误 {}: {}", status, text));
         }
 
-        let chat_response: ChatResponse = serde_json::from_str(&text)
-            .map_err(|e| format!("解析响应失败: {}", e))?;
-
-        let choice = chat_response
-            .choices
-            .first()
-            .ok_or_else(|| "没有返回内容".to_string())?;
+        let chat_response = Self::parse_chat_response(&text)?;
+        let choice = chat_response.first_choice()?;
 
         // 检查是否有 tool_calls
         if let Some(ref tool_calls) = choice.message.tool_calls {
@@ -891,13 +938,8 @@ impl ApiClient {
             return Err(format!("API 错误 {}: {}", status, text));
         }
 
-        let chat_response: ChatResponse = serde_json::from_str(&text)
-            .map_err(|e| format!("解析响应失败: {}", e))?;
-
-        let choice = chat_response
-            .choices
-            .first()
-            .ok_or_else(|| "没有返回内容".to_string())?;
+        let chat_response = Self::parse_chat_response(&text)?;
+        let choice = chat_response.first_choice()?;
 
         if let Some(ref tool_calls) = choice.message.tool_calls {
             if !tool_calls.is_empty() {
@@ -989,13 +1031,8 @@ impl ApiClient {
             return Err(format!("API 错误 {}: {}", status, text));
         }
 
-        let chat_response: ChatResponse = serde_json::from_str(&text)
-            .map_err(|e| format!("解析响应失败: {}", e))?;
-
-        let choice = chat_response
-            .choices
-            .first()
-            .ok_or_else(|| "没有返回内容".to_string())?;
+        let chat_response = Self::parse_chat_response(&text)?;
+        let choice = chat_response.first_choice()?;
 
         // 检查是否有更多 tool_calls
         if let Some(ref tool_calls) = choice.message.tool_calls {
