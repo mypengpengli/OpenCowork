@@ -1,6 +1,6 @@
 ---
 name: skill-creator
-description: 编写、修改、审查或修复技能（SKILL.md/技能目录结构）；当用户要求创建/更新/优化技能、补充 scripts/references/assets、修复 frontmatter、校验技能格式或生成技能模板时使用。Use when creating or updating skills, fixing frontmatter/structure, or generating skill templates.
+description: 创建有效技能的指南。当用户希望创建新技能（或更新优化修改现有技能）以通过专业知识、工作流程或工具集成扩展的功能时，应使用此技能。Use when creating or updating skills, fixing frontmatter/structure, or generating skill templates.
 license: Complete terms in LICENSE.txt
 ---
 
@@ -16,9 +16,9 @@ This skill provides guidance for creating effective skills.
 
 ## About Skills
 
-Skills are modular, self-contained packages that extend Codex's capabilities by providing
+Skills are modular, self-contained packages that extend the assistant's capabilities by providing
 specialized knowledge, workflows, and tools. Think of them as "onboarding guides" for specific
-domains or tasks—they transform Codex from a general-purpose agent into a specialized agent
+domains or tasks—they transform the assistant from a general-purpose agent into a specialized agent
 equipped with procedural knowledge that no model can fully possess.
 
 ### What Skills Provide

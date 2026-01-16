@@ -655,7 +655,7 @@ impl ApiClient {
             tool_type: "function".to_string(),
             function: ToolFunction {
                 name: "Bash".to_string(),
-                description: "Run a shell command.".to_string(),
+                description: "Run a shell command. On Windows this uses cmd /C; prefer dir or powershell -Command.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -671,7 +671,7 @@ impl ApiClient {
             tool_type: "function".to_string(),
             function: ToolFunction {
                 name: "run_command".to_string(),
-                description: "Alias for Bash.".to_string(),
+                description: "Alias for Bash (same behavior).".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {

@@ -28,6 +28,7 @@ const MIN_RECENT_DETAIL_RECORDS: usize = 20;
 const RELEASE_PAGE_URL: &str = "https://github.com/mypengpengli/OpenCowork/releases/latest";
 const TOOL_MODE_UNSET_ERROR: &str = "TOOLS_MODE_UNSET";
 const MAX_TOOL_LOOPS: usize = 999;
+const MAX_REPEAT_TOOL_LOOPS: usize = 3;
 const DEFAULT_MAX_READ_BYTES: usize = 200_000;
 const DEFAULT_MAX_GLOB_RESULTS: usize = 500;
 const DEFAULT_MAX_GREP_RESULTS: usize = 200;
@@ -556,6 +557,13 @@ async fn execute_skill_internal(
         Some(list) if !list.is_empty() => format!("\n## 允许的工具\n{}\n", list.join(", ")),
         _ => String::new(),
     };
+    let shell_hint = build_shell_hint();
+    let extra_hint = format!(
+        "\n## Environment\n{}\n\n## Execution Hint\nYou are running /{}. Do not invoke the same skill again.\n",
+        shell_hint,
+        skill.metadata.name
+    );
+    let allowed_tools_hint = format!("{}{}", allowed_tools_hint, extra_hint);
 
     // 构建 system prompt，注入 skill 指令
     let system_prompt = format!(
@@ -589,7 +597,12 @@ async fn execute_skill_internal(
     }
 
     if config.model.provider == "api" {
-        let available_skills = skill_manager.discover_skills().unwrap_or_default();
+        let available_skills = skill_manager
+            .discover_skills()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|entry| entry.name != skill.metadata.name)
+            .collect::<Vec<_>>();
         let result = if attachment_payload.image_urls.is_empty()
             && attachment_payload.image_base64.is_empty()
         {
@@ -1709,7 +1722,35 @@ fn build_shell_command(command: &str) -> TokioCommand {
     cmd
 }
 
+
+fn build_shell_hint() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        "Windows uses cmd /C for Bash/run_command. Prefer dir or powershell -Command Get-ChildItem; avoid find/ls/head/grep."
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        "Unix-like systems use sh -c for Bash/run_command."
+    }
+}
+
+fn parse_exit_code(output: &str) -> Option<i32> {
+    let mut lines = output.lines();
+    let first = lines.next()?.trim();
+    let prefix = "exit_code:";
+    if !first.starts_with(prefix) {
+        return None;
+    }
+    first[prefix.len()..].trim().parse::<i32>().ok()
+}
+
+fn is_tool_failure(output: &str) -> bool {
+    parse_exit_code(output).map_or(false, |code| code != 0)
+}
+
 fn build_tool_system_prompt(context: &str) -> String {
+    let shell_hint = build_shell_hint();
+    let context = format!("{}\n\n## Environment\n{}", context, shell_hint);
     format!(
         r#"你是一个屏幕监控助手，帮助用户回顾和理解他们的操作历史。
 
@@ -1739,6 +1780,8 @@ async fn run_tool_loop(
 ) -> Result<String, String> {
     let access = build_tool_access(config, storage);
     let mut loops = 0usize;
+    let mut last_tool_calls: Option<Vec<(String, String)>> = None;
+    let mut repeat_loops = 0usize;
 
     loop {
         match result {
@@ -1760,8 +1803,13 @@ async fn run_tool_loop(
                     ));
                 }
 
+                let signature: Vec<(String, String)> = calls
+                    .iter()
+                    .map(|call| (call.function.name.clone(), call.function.arguments.clone()))
+                    .collect();
+
                 let mut tool_results = Vec::new();
-                for call in calls {
+                for call in &calls {
                     let output = execute_tool_call(
                         &call,
                         &access,
@@ -1776,6 +1824,33 @@ async fn run_tool_loop(
                     .await?;
                     tool_results.push((call.id.clone(), output));
                 }
+                let has_failure = tool_results
+                    .iter()
+                    .any(|(_, output)| is_tool_failure(output));
+                let is_repeat = last_tool_calls.as_ref() == Some(&signature);
+                if is_repeat && has_failure {
+                    repeat_loops += 1;
+                } else {
+                    repeat_loops = 0;
+                }
+                last_tool_calls = Some(signature);
+                
+                if repeat_loops >= MAX_REPEAT_TOOL_LOOPS {
+                    let pending: Vec<String> = calls
+                        .iter()
+                        .map(|call| call.function.name.clone())
+                        .collect();
+                    let pending_hint = if pending.is_empty() {
+                        String::new()
+                    } else {
+                        format!("Repeated tools: {}", pending.join(", "))
+                    };
+                    return Ok(format!(
+                        "Hint: detected repeated tool calls with failures; stopped to avoid a loop. {}",
+                        pending_hint
+                    ));
+                }
+                
 
                 result = model_manager
                     .continue_with_tool_results(

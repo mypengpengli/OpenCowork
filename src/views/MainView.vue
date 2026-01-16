@@ -46,7 +46,6 @@ const processExpanded = ref(true)
 const processStatus = ref<'idle' | 'running' | 'done' | 'error'>('idle')
 const processItems = ref<ProgressItem[]>([])
 const activeRequestId = ref<string | null>(null)
-let processHideTimer: number | null = null
 let progressUnlisten: (() => void) | null = null
 
 const MAX_ATTACHMENTS = 6
@@ -113,26 +112,7 @@ watch(inputMessage, (newVal) => {
   }
 })
 
-function clearProcessHideTimer() {
-  if (processHideTimer !== null) {
-    clearTimeout(processHideTimer)
-    processHideTimer = null
-  }
-}
-
-function scheduleProcessHide() {
-  clearProcessHideTimer()
-  processHideTimer = window.setTimeout(() => {
-    processVisible.value = false
-    processExpanded.value = false
-    processItems.value = []
-    processStatus.value = 'idle'
-    activeRequestId.value = null
-  }, 3000)
-}
-
 function startProcessPanel(requestId: string) {
-  clearProcessHideTimer()
   activeRequestId.value = requestId
   processItems.value = []
   processStatus.value = 'running'
@@ -168,7 +148,6 @@ function finishProcessPanel(status: 'done' | 'error') {
   if (!processVisible.value) return
   processStatus.value = status
   processExpanded.value = false
-  scheduleProcessHide()
 }
 
 function toggleProcessExpanded() {
