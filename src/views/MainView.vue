@@ -124,13 +124,7 @@ function startProcessPanel() {
 function appendProcessItem(payload: ProgressEventPayload) {
   if (!showProcessPanel.value) return
   if (cancelledRequestIds.has(payload.request_id)) return
-  if (activeRequestId.value && payload.request_id !== activeRequestId.value) {
-    if (processItems.value.length === 0 && processStatus.value === 'running') {
-      activeRequestId.value = payload.request_id
-    } else {
-      return
-    }
-  }
+  if (!activeRequestId.value || payload.request_id !== activeRequestId.value) return
   const item: ProgressItem = {
     id: `${payload.timestamp}-${processItems.value.length}`,
     stage: payload.stage,
@@ -347,12 +341,10 @@ async function executeRequest(payload: PendingRequest, includeUserMessage: boole
       timestamp: new Date().toISOString(),
     })
   } finally {
-    if (activeRequestId.value === payload.requestId) {
-      isLoading.value = false
-      activeRequestId.value = null
-      if (showProcessPanel.value && !wasCancelled) {
-        finishProcessPanel('done')
-      }
+    isLoading.value = false
+    activeRequestId.value = null
+    if (showProcessPanel.value && !wasCancelled) {
+      finishProcessPanel('done')
     }
     await nextTick()
     scrollToBottom()
@@ -366,6 +358,7 @@ async function stopRequest() {
 
   cancelledRequestIds.add(requestId)
   isLoading.value = false
+  activeRequestId.value = null
   if (showProcessPanel.value) {
     finishProcessPanel('error')
   }
@@ -599,6 +592,7 @@ onMounted(async () => {
     progressUnlisten = await listen<ProgressEventPayload>('assistant-progress', (event) => {
       const payload = event.payload
       if (!payload || !payload.request_id) return
+      if (!activeRequestId.value || payload.request_id !== activeRequestId.value) return
       appendProcessItem(payload)
       if (payload.stage === 'done') {
         finishProcessPanel('done')
