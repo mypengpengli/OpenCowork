@@ -108,10 +108,22 @@ pub struct StorageConfig {
     pub max_context_chars: usize,  // 上下文最大字符数，用户可调整
     #[serde(default)]
     pub auto_clear_on_start: bool,  // 启动时自动清空历史
+    #[serde(default = "default_context_mode")]
+    pub context_mode: String,  // 对话上下文模式：auto | always | off
+    #[serde(default = "default_context_detail_hours")]
+    pub context_detail_hours: u32,  // detail 仅保留最近 N 小时
 }
 
 fn default_max_context_chars() -> usize {
     10000  // 默认10000字符
+}
+
+fn default_context_mode() -> String {
+    "auto".to_string()
+}
+
+fn default_context_detail_hours() -> u32 {
+    24
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,6 +200,8 @@ impl Default for Config {
                 max_screenshots: 10000,
                 max_context_chars: 10000,  // 默认10000字符
                 auto_clear_on_start: false,
+                context_mode: default_context_mode(),
+                context_detail_hours: default_context_detail_hours(),
             },
             tools: ToolConfig {
                 mode: default_tool_mode(),
@@ -839,7 +853,12 @@ impl Default for SearchResult {
 
 impl SearchResult {
     /// 构建上下文字符串，控制在指定token数内
-    pub fn build_context(&self, max_chars: usize, include_detail: bool) -> String {
+    pub fn build_context(
+        &self,
+        max_chars: usize,
+        include_detail: bool,
+        detail_cutoff: Option<&str>,
+    ) -> String {
         let mut context = String::new();
         let mut current_len = 0;
 
@@ -894,7 +913,9 @@ impl SearchResult {
                 entry.push_str(&line);
                 current_len += line.len();
 
-                if include_detail && !record.detail.is_empty() {
+                let allow_detail = include_detail
+                    && detail_cutoff.map_or(true, |cutoff| record.timestamp >= cutoff);
+                if allow_detail && !record.detail.is_empty() {
                     let detail_text = record.detail.replace('\n', " ");
                     let detail_line = format!("  细节: {}\n", detail_text);
                     if current_len + detail_line.len() > max_chars {

@@ -344,42 +344,57 @@ pub async fn chat_with_assistant(
     let available_skills = skill_manager.discover_skills().unwrap_or_default();
 
     // 分析用户问题，提取时间范围和关键词
-    let query = parse_user_query(&message);
+    let use_context = should_use_screen_context(&config.storage.context_mode, &message);
+    let detail_cutoff = build_detail_cutoff(&config);
+    let context = if use_context {
+        // 分析用户问题，提取时间范围和关键词
+        let query = parse_user_query(&message);
 
-    // 智能检索相关记录
-    let mut search_result = storage.smart_search(&query)?;
+        // 智能检索相关记录
+        let mut search_result = storage.smart_search(&query)?;
 
-    if search_result.records.is_empty() && !query.keywords.is_empty() {
-        let mut relaxed = query.clone();
-        relaxed.keywords.clear();
-        if let Ok(relaxed_result) = storage.smart_search(&relaxed) {
-            if !relaxed_result.records.is_empty() || !relaxed_result.aggregated.is_empty() {
-                search_result = relaxed_result;
+        if search_result.records.is_empty() && !query.keywords.is_empty() {
+            let mut relaxed = query.clone();
+            relaxed.keywords.clear();
+            if let Ok(relaxed_result) = storage.smart_search(&relaxed) {
+                if !relaxed_result.records.is_empty() || !relaxed_result.aggregated.is_empty() {
+                    search_result = relaxed_result;
+                }
             }
         }
-    }
 
-    if matches!(query.time_range, TimeRange::Recent(_))
-        && search_result.records.len() < MIN_RECENT_DETAIL_RECORDS
-    {
-        let fallback = storage.get_recent_records(
-            MIN_RECENT_DETAIL_RECORDS,
-            config.storage.retention_days,
-        );
-        if !fallback.is_empty() {
-            search_result.records = merge_recent_records(
-                search_result.records,
-                fallback,
+        if matches!(query.time_range, TimeRange::Recent(_))
+            && search_result.records.len() < MIN_RECENT_DETAIL_RECORDS
+        {
+            let mut fallback = storage.get_recent_records(
                 MIN_RECENT_DETAIL_RECORDS,
+                config.storage.retention_days,
             );
+            if let Some(ref cutoff) = detail_cutoff {
+                fallback.retain(|record| record.timestamp >= *cutoff);
+            }
+            if !fallback.is_empty() {
+                search_result.records = merge_recent_records(
+                    search_result.records,
+                    fallback,
+                    MIN_RECENT_DETAIL_RECORDS,
+                );
+            }
         }
-    }
 
-    // 构建上下文（使用配置中的最大字符数）
-    let context = search_result.build_context(config.storage.max_context_chars, query.include_detail);
+        let include_detail = query.include_detail && config.storage.context_detail_hours != 0;
+        // 构建上下文（使用配置中的最大字符数）
+        let context = search_result.build_context(
+            config.storage.max_context_chars,
+            include_detail,
+            detail_cutoff.as_deref(),
+        );
 
-    // 注入启用的全局提示词
-    let context = build_context_with_global_prompts(&config, context);
+        // 注入启用的全局提示词
+        build_context_with_global_prompts(&config, context)
+    } else {
+        build_context_with_global_prompts(&config, String::new())
+    };
 
     // 处理附件内容
     let attachment_payload = attachments
@@ -522,7 +537,13 @@ async fn execute_skill_internal(
     // 获取屏幕记录上下文
     let query = parse_user_query(&args.unwrap_or_default());
     let search_result = storage.smart_search(&query).unwrap_or_default();
-    let screen_context = search_result.build_context(config.storage.max_context_chars, true);
+    let include_detail = config.storage.context_detail_hours != 0;
+    let detail_cutoff = build_detail_cutoff(config);
+    let screen_context = search_result.build_context(
+        config.storage.max_context_chars,
+        include_detail,
+        detail_cutoff.as_deref(),
+    );
 
     // 获取启用的全局提示词
     let global_prompts_section = build_global_prompts_section(config);
@@ -725,6 +746,54 @@ fn wants_detail(message: &str) -> bool {
 
     triggers.iter().any(|kw| msg.contains(kw))
 }
+
+fn should_use_screen_context(mode: &str, message: &str) -> bool {
+    match mode {
+        "always" => true,
+        "off" => false,
+        _ => wants_screen_context_auto(message),
+    }
+}
+
+fn wants_screen_context_auto(message: &str) -> bool {
+    if wants_detail(message) {
+        return true;
+    }
+
+    let msg = message.to_lowercase();
+    let context_triggers = [
+        "??", "??", "??", "??", "??", "??", "??", "??",
+        "??", "??", "??", "??", "??", "??", "??", "??",
+        "??", "??", "??", "??", "??", "alert", "log", "error",
+        "crash", "issue", "history", "record", "records", "activity",
+    ];
+    if context_triggers.iter().any(|kw| msg.contains(kw)) {
+        return true;
+    }
+
+    let time_triggers = [
+        "??", "??", "??", "??", "??", "??", "??", "??", "??",
+        "??", "??", "??", "recent", "earlier", "before", "today",
+        "yesterday", "this week", "last week",
+    ];
+    let action_triggers = [
+        "??", "??", "??", "??", "??", "??", "??", "??", "??",
+        "??", "??", "??", "??", "open", "click", "type", "input",
+        "edit", "save",
+    ];
+    time_triggers.iter().any(|kw| msg.contains(kw))
+        && action_triggers.iter().any(|kw| msg.contains(kw))
+}
+
+fn build_detail_cutoff(config: &Config) -> Option<String> {
+    let hours = config.storage.context_detail_hours;
+    if hours == 0 {
+        return None;
+    }
+    let cutoff = Local::now() - Duration::hours(hours as i64);
+    Some(cutoff.format("%Y-%m-%dT%H:%M:%S").to_string())
+}
+
 
 /// 构建包含全局提示词的上下文
 fn build_context_with_global_prompts(config: &Config, context: String) -> String {

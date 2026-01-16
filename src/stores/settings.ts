@@ -31,6 +31,8 @@ export interface AppConfig {
     max_screenshots: number
     max_context_chars: number
     auto_clear_on_start: boolean
+    context_mode: 'auto' | 'always' | 'off'
+    context_detail_hours: number
   }
   tools: {
     mode: 'unset' | 'whitelist' | 'allow_all'
@@ -73,6 +75,8 @@ export const useSettingsStore = defineStore('settings', () => {
       max_screenshots: 10000,
       max_context_chars: 10000,
       auto_clear_on_start: false,
+      context_mode: 'auto',
+      context_detail_hours: 24,
     },
     tools: {
       mode: 'unset',

@@ -103,6 +103,8 @@ const formValue = ref({
   maxScreenshots: 10000,
   maxContextChars: 10000,
   autoClearOnStart: false,
+  contextMode: 'auto',
+  contextDetailHours: 24,
 
   // 工具权限
   toolMode: 'unset',
@@ -133,6 +135,12 @@ const toolModeOptions = computed(() => [
   { label: t('settings.tools.mode.unset'), value: 'unset' },
   { label: t('settings.tools.mode.whitelist'), value: 'whitelist' },
   { label: t('settings.tools.mode.allowAll'), value: 'allow_all' },
+])
+
+const contextModeOptions = computed(() => [
+  { label: t('settings.form.contextMode.auto'), value: 'auto' },
+  { label: t('settings.form.contextMode.always'), value: 'always' },
+  { label: t('settings.form.contextMode.off'), value: 'off' },
 ])
 
 const drawerTitle = computed(() => {
@@ -184,6 +192,8 @@ function normalizeConfig(raw: any) {
       max_screenshots: raw?.storage?.max_screenshots || 10000,
       max_context_chars: raw?.storage?.max_context_chars || 10000,
       auto_clear_on_start: raw?.storage?.auto_clear_on_start ?? false,
+      context_mode: raw?.storage?.context_mode || 'auto',
+      context_detail_hours: raw?.storage?.context_detail_hours ?? 24,
     },
     tools: {
       mode: raw?.tools?.mode || 'unset',
@@ -223,6 +233,8 @@ function applyConfigToForm(config: any) {
     maxScreenshots: normalized.storage.max_screenshots,
     maxContextChars: normalized.storage.max_context_chars,
     autoClearOnStart: normalized.storage.auto_clear_on_start ?? false,
+    contextMode: normalized.storage.context_mode ?? 'auto',
+    contextDetailHours: normalized.storage.context_detail_hours ?? 24,
     toolMode: normalized.tools?.mode || 'unset',
     toolAllowedCommands: listToText(normalized.tools?.allowed_commands),
     toolAllowedDirs: listToText(normalized.tools?.allowed_dirs),
@@ -261,6 +273,8 @@ function buildConfigFromForm() {
       max_screenshots: formValue.value.maxScreenshots,
       max_context_chars: formValue.value.maxContextChars,
       auto_clear_on_start: formValue.value.autoClearOnStart,
+      context_mode: formValue.value.contextMode,
+      context_detail_hours: formValue.value.contextDetailHours,
     },
     tools: {
       mode: formValue.value.toolMode,
@@ -1009,6 +1023,29 @@ async function openReleasePage() {
                     </NInputNumber>
                   </template>
                   {{ t('settings.form.contextSizeTip') }}
+                </NTooltip>
+              </NFormItem>
+              <NFormItem :label="t('settings.form.contextMode')">
+                <NTooltip trigger="hover">
+                  <template #trigger>
+                    <NSelect v-model:value="formValue.contextMode" :options="contextModeOptions" />
+                  </template>
+                  {{ t('settings.form.contextModeTip') }}
+                </NTooltip>
+              </NFormItem>
+              <NFormItem :label="t('settings.form.contextDetailHours')">
+                <NTooltip trigger="hover">
+                  <template #trigger>
+                    <NInputNumber
+                      v-model:value="formValue.contextDetailHours"
+                      :min="0"
+                      :max="168"
+                      :step="1"
+                    >
+                      <template #suffix>{{ t('settings.form.hoursUnit') }}</template>
+                    </NInputNumber>
+                  </template>
+                  {{ t('settings.form.contextDetailHoursTip') }}
                 </NTooltip>
               </NFormItem>
               <NFormItem :label="t('settings.form.autoClear')">
