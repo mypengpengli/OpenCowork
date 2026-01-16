@@ -2,7 +2,6 @@
 import { computed } from 'vue'
 import { NAvatar, NIcon } from 'naive-ui'
 import { PersonOutline, HardwareChipOutline, WarningOutline, DocumentOutline } from '@vicons/ionicons5'
-import { convertFileSrc } from '@tauri-apps/api/core'
 import { localeToDateLocale, useI18n } from '../../i18n'
 import type { ChatAttachment } from '../../stores/chat'
 
@@ -22,13 +21,6 @@ const isUser = computed(() => props.message.role === 'user')
 const isAlert = computed(() => props.message.isAlert)
 const { t, locale } = useI18n()
 const attachments = computed(() => props.message.attachments || [])
-
-function attachmentPreview(attachment: ChatAttachment): string {
-  if (attachment.kind !== 'image') {
-    return ''
-  }
-  return convertFileSrc(attachment.path)
-}
 
 function formatTime(timestamp: string): string {
   const date = new Date(timestamp)
@@ -72,13 +64,7 @@ function formatTime(timestamp: string): string {
       </div>
       <div v-if="attachments.length > 0" class="attachment-list">
         <div v-for="attachment in attachments" :key="attachment.id" class="attachment-item">
-          <img
-            v-if="attachment.kind === 'image'"
-            :src="attachmentPreview(attachment)"
-            :alt="attachment.name"
-            class="attachment-image"
-          />
-          <div v-else class="attachment-doc">
+          <div class="attachment-doc">
             <NIcon size="16">
               <DocumentOutline />
             </NIcon>

@@ -16,7 +16,6 @@ import {
   useMessage,
 } from 'naive-ui'
 import { Send, PlayCircleOutline, StopCircleOutline, AddOutline, SaveOutline, AttachOutline, CloseOutline, DocumentOutline } from '@vicons/ionicons5'
-import { convertFileSrc } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useChatStore, type ChatAttachment, type AttachmentKind } from '../stores/chat'
 import { useCaptureStore } from '../stores/capture'
@@ -169,10 +168,6 @@ function pathBasename(filePath: string): string {
 function attachmentKindFromPath(filePath: string): AttachmentKind {
   const ext = filePath.split('.').pop()?.toLowerCase() || ''
   return IMAGE_EXTENSIONS.has(ext) ? 'image' : 'document'
-}
-
-function attachmentPreview(attachment: ChatAttachment): string {
-  return attachment.kind === 'image' ? convertFileSrc(attachment.path) : ''
 }
 
 async function addAttachments() {
@@ -754,13 +749,7 @@ onUnmounted(() => {
 
         <div v-if="attachments.length > 0" class="attachments-bar">
           <div v-for="attachment in attachments" :key="attachment.id" class="attachment-chip">
-            <img
-              v-if="attachment.kind === 'image'"
-              :src="attachmentPreview(attachment)"
-              :alt="attachment.name"
-              class="attachment-thumb"
-            />
-            <NIcon v-else size="16" class="attachment-icon">
+            <NIcon size="16" class="attachment-icon">
               <DocumentOutline />
             </NIcon>
             <span class="attachment-name">{{ attachment.name }}</span>
