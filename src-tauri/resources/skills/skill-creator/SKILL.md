@@ -32,9 +32,9 @@ equipped with procedural knowledge that no model can fully possess.
 
 ### Concise is Key
 
-The context window is a public good. Skills share the context window with everything else Codex needs: system prompt, conversation history, other Skills' metadata, and the actual user request.
+The context window is a public good. Skills share the context window with everything else the assistant needs: system prompt, conversation history, other Skills' metadata, and the actual user request.
 
-**Default assumption: Codex is already very smart.** Only add context Codex doesn't already have. Challenge each piece of information: "Does Codex really need this explanation?" and "Does this paragraph justify its token cost?"
+**Default assumption: The assistant is already very smart.** Only add context the assistant doesn't already have. Challenge each piece of information: "Does the assistant really need this explanation?" and "Does this paragraph justify its token cost?"
 
 Prefer concise examples over verbose explanations.
 
@@ -48,7 +48,7 @@ Match the level of specificity to the task's fragility and variability:
 
 **Low freedom (specific scripts, few parameters)**: Use when operations are fragile and error-prone, consistency is critical, or a specific sequence must be followed.
 
-Think of Codex as exploring a path: a narrow bridge with cliffs needs specific guardrails (low freedom), while an open field allows many routes (high freedom).
+Think of the assistant as exploring a path: a narrow bridge with cliffs needs specific guardrails (low freedom), while an open field allows many routes (high freedom).
 
 ### Anatomy of a Skill
 
@@ -71,7 +71,7 @@ skill-name/
 
 Every SKILL.md consists of:
 
-- **Frontmatter** (YAML): Contains `name` and `description` fields. These are the only fields that Codex reads to determine when the skill gets used, thus it is very important to be clear and comprehensive in describing what the skill is, and when it should be used.
+- **Frontmatter** (YAML): Contains `name` and `description` fields. These are the only fields that the assistant reads to determine when the skill gets used, thus it is very important to be clear and comprehensive in describing what the skill is, and when it should be used.
 - **Body** (Markdown): Instructions and guidance for using the skill. Only loaded AFTER the skill triggers (if at all).
 
 #### Bundled Resources (optional)
@@ -83,16 +83,16 @@ Executable code (Python/Bash/etc.) for tasks that require deterministic reliabil
 - **When to include**: When the same code is being rewritten repeatedly or deterministic reliability is needed
 - **Example**: `scripts/rotate_pdf.py` for PDF rotation tasks
 - **Benefits**: Token efficient, deterministic, may be executed without loading into context
-- **Note**: Scripts may still need to be read by Codex for patching or environment-specific adjustments
+- **Note**: Scripts may still need to be read by the assistant for patching or environment-specific adjustments
 
 ##### References (`references/`)
 
 Documentation and reference material intended to be loaded as needed into context to inform Codex's process and thinking.
 
-- **When to include**: For documentation that Codex should reference while working
+- **When to include**: For documentation that the assistant should reference while working
 - **Examples**: `references/finance.md` for financial schemas, `references/mnda.md` for company NDA template, `references/policies.md` for company policies, `references/api_docs.md` for API specifications
 - **Use cases**: Database schemas, API documentation, domain knowledge, company policies, detailed workflow guides
-- **Benefits**: Keeps SKILL.md lean, loaded only when Codex determines it's needed
+- **Benefits**: Keeps SKILL.md lean, loaded only when the assistant determines it's needed
 - **Best practice**: If files are large (>10k words), include grep search patterns in SKILL.md
 - **Avoid duplication**: Information should live in either SKILL.md or references files, not both. Prefer references files for detailed information unless it's truly core to the skill—this keeps SKILL.md lean while making information discoverable without hogging the context window. Keep only essential procedural instructions and workflow guidance in SKILL.md; move detailed reference material, schemas, and examples to references files.
 
@@ -103,7 +103,7 @@ Files not intended to be loaded into context, but rather used within the output 
 - **When to include**: When the skill needs files that will be used in the final output
 - **Examples**: `assets/logo.png` for brand assets, `assets/slides.pptx` for PowerPoint templates, `assets/frontend-template/` for HTML/React boilerplate, `assets/font.ttf` for typography
 - **Use cases**: Templates, images, icons, boilerplate code, fonts, sample documents that get copied or modified
-- **Benefits**: Separates output resources from documentation, enables Codex to use files without loading them into context
+- **Benefits**: Separates output resources from documentation, enables the assistant to use files without loading them into context
 
 #### What to Not Include in a Skill
 
@@ -123,7 +123,7 @@ Skills use a three-level loading system to manage context efficiently:
 
 1. **Metadata (name + description)** - Always in context (~100 words)
 2. **SKILL.md body** - When skill triggers (<5k words)
-3. **Bundled resources** - As needed by Codex (Unlimited because scripts can be executed without reading into context window)
+3. **Bundled resources** - As needed by the assistant (Unlimited because scripts can be executed without reading into context window)
 
 #### Progressive Disclosure Patterns
 
@@ -148,7 +148,7 @@ Extract text with pdfplumber:
 - **Examples**: See [EXAMPLES.md](EXAMPLES.md) for common patterns
 ```
 
-Codex loads FORMS.md, REFERENCE.md, or EXAMPLES.md only when needed.
+The assistant loads FORMS.md, REFERENCE.md, or EXAMPLES.md only when needed.
 
 **Pattern 2: Domain-specific organization**
 
@@ -164,7 +164,7 @@ bigquery-skill/
     └── marketing.md (campaigns, attribution)
 ```
 
-When a user asks about sales metrics, Codex only reads sales.md.
+When a user asks about sales metrics, the assistant only reads sales.md.
 
 Similarly, for skills supporting multiple frameworks or variants, organize by variant:
 
@@ -177,7 +177,7 @@ cloud-deploy/
     └── azure.md (Azure deployment patterns)
 ```
 
-When the user chooses AWS, Codex only reads aws.md.
+When the user chooses AWS, the assistant only reads aws.md.
 
 **Pattern 3: Conditional details**
 
@@ -198,12 +198,12 @@ For simple edits, modify the XML directly.
 **For OOXML details**: See [OOXML.md](OOXML.md)
 ```
 
-Codex reads REDLINING.md or OOXML.md only when the user needs those features.
+The assistant reads REDLINING.md or OOXML.md only when the user needs those features.
 
 **Important guidelines:**
 
 - **Avoid deeply nested references** - Keep references one level deep from SKILL.md. All reference files should link directly from SKILL.md.
-- **Structure longer reference files** - For files longer than 100 lines, include a table of contents at the top so Codex can see the full scope when previewing.
+- **Structure longer reference files** - For files longer than 100 lines, include a table of contents at the top so the assistant can see the full scope when previewing.
 
 ## 快速检查清单
 
@@ -301,7 +301,7 @@ After initialization, customize or remove the generated SKILL.md and example fil
 
 ### Step 4: Edit the Skill
 
-When editing the (newly-generated or existing) skill, remember that the skill is being created for another instance of Codex to use. Include information that would be beneficial and non-obvious to Codex. Consider what procedural knowledge, domain-specific details, or reusable assets would help another Codex instance execute these tasks more effectively.
+When editing the (newly-generated or existing) skill, remember that the skill is being created for another instance of the assistant to use. Include information that would be beneficial and non-obvious to the assistant. Consider what procedural knowledge, domain-specific details, or reusable assets would help another assistant instance execute these tasks more effectively.
 
 #### Learn Proven Design Patterns
 
@@ -329,10 +329,10 @@ Any example files and directories not needed for the skill should be deleted. Th
 Write the YAML frontmatter with `name` and `description`:
 
 - `name`: The skill name
-- `description`: This is the primary triggering mechanism for your skill, and helps Codex understand when to use the skill.
+- `description`: This is the primary triggering mechanism for your skill, and helps the assistant understand when to use the skill.
   - Include both what the Skill does and specific triggers/contexts for when to use it.
-  - Include all "when to use" information here - Not in the body. The body is only loaded after triggering, so "When to Use This Skill" sections in the body are not helpful to Codex.
-  - Example description for a `docx` skill: "Comprehensive document creation, editing, and analysis with support for tracked changes, comments, formatting preservation, and text extraction. Use when Codex needs to work with professional documents (.docx files) for: (1) Creating new documents, (2) Modifying or editing content, (3) Working with tracked changes, (4) Adding comments, or any other document tasks"
+  - Include all "when to use" information here - Not in the body. The body is only loaded after triggering, so "When to Use This Skill" sections in the body are not helpful to the assistant.
+  - Example description for a `docx` skill: "Comprehensive document creation, editing, and analysis with support for tracked changes, comments, formatting preservation, and text extraction. Use when the assistant needs to work with professional documents (.docx files) for: (1) Creating new documents, (2) Modifying or editing content, (3) Working with tracked changes, (4) Adding comments, or any other document tasks"
 
 允许的可选字段：`license`、`metadata`、`allowed-tools`（仅在确有需要且运行时支持时使用）。除这些以外不要添加其他字段。
 
