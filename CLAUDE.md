@@ -128,10 +128,11 @@ Skills are reusable AI capabilities that can be invoked manually (`/skill-name`)
 ### Skills Directory Structure
 ```
 data/skills/
-├── calculator/
-│   └── SKILL.md
-├── export/
-│   └── SKILL.md
+├── skill-creator/           # Built-in skill for creating new skills
+│   ├── SKILL.md
+│   ├── assets/
+│   ├── references/
+│   └── scripts/
 └── custom-skill/
     └── SKILL.md
 ```
@@ -141,6 +142,12 @@ data/skills/
 ---
 name: skill-name
 description: Description used by AI to decide when to invoke this skill
+allowed_tools:              # Optional: restrict which tools this skill can use
+  - read_file
+  - run_command
+model: gpt-4o               # Optional: override default model for this skill
+context: screen             # Optional: "screen" | "none" - whether to include screen context
+user_invocable: true        # Optional: whether user can invoke via /skill-name (default true)
 metadata:
   author: opencowork
   version: "1.0"
@@ -151,6 +158,14 @@ metadata:
 ## Instructions
 Markdown content with skill instructions...
 ```
+
+### Built-in Skill: skill-creator
+The `skill-creator` skill helps users create new skills. It includes:
+- `scripts/init_skill.py` - Initialize new skill directory structure
+- `scripts/package_skill.py` - Package skill for distribution
+- `scripts/quick_validate.py` - Validate skill format
+- `references/` - Documentation on workflows and output patterns
+- `assets/template.md` - Template for new skills
 
 ### Skill Invocation Flow
 1. **Manual**: User types `/skill-name args` in chat

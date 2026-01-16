@@ -4,9 +4,10 @@ use crate::storage::{Config, StorageManager, SummaryRecord, SearchQuery, TimeRan
 use crate::skills::{SkillManager, SkillMetadata, Skill};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use chrono::{Duration, Local, NaiveDateTime, TimeZone};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::fs;
-use std::io::{self, BufRead};
+use std::io::{self, BufRead, BufReader};
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -15,6 +16,10 @@ use tauri_plugin_shell::ShellExt;
 use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex as TokioMutex;
 use tokio::time::{timeout, Duration as TokioDuration};
+use tokio_util::sync::CancellationToken;
+use quick_xml::Reader;
+use quick_xml::events::Event;
+use zip::ZipArchive;
 use glob::glob;
 use regex::RegexBuilder;
 use walkdir::WalkDir;
@@ -22,11 +27,13 @@ use walkdir::WalkDir;
 pub struct AppState {
     pub capture_manager: Arc<TokioMutex<CaptureManager>>,
     pub storage_manager: Arc<StorageManager>,
+    pub request_cancellations: Arc<TokioMutex<HashMap<String, CancellationToken>>>,
 }
 
 const MIN_RECENT_DETAIL_RECORDS: usize = 20;
 const RELEASE_PAGE_URL: &str = "https://github.com/mypengpengli/OpenCowork/releases/latest";
 const TOOL_MODE_UNSET_ERROR: &str = "TOOLS_MODE_UNSET";
+const REQUEST_CANCELLED_ERROR: &str = "REQUEST_CANCELLED";
 const MAX_TOOL_LOOPS: usize = 999;
 const MAX_REPEAT_TOOL_LOOPS: usize = 3;
 const DEFAULT_MAX_READ_BYTES: usize = 200_000;
@@ -41,6 +48,7 @@ impl AppState {
         Self {
             capture_manager: Arc::new(TokioMutex::new(CaptureManager::new())),
             storage_manager: Arc::new(StorageManager::new()),
+            request_cancellations: Arc::new(TokioMutex::new(HashMap::new())),
         }
     }
 }
@@ -173,6 +181,18 @@ pub async fn get_capture_status(state: State<'_, AppState>) -> Result<CaptureSta
     })
 }
 
+#[tauri::command]
+pub async fn cancel_request(state: State<'_, AppState>, request_id: String) -> Result<(), String> {
+    let token = {
+        let map = state.request_cancellations.lock().await;
+        map.get(&request_id).cloned()
+    };
+    if let Some(token) = token {
+        token.cancel();
+    }
+    Ok(())
+}
+
 #[derive(serde::Serialize)]
 pub struct CaptureStatus {
     pub is_capturing: bool,
@@ -264,6 +284,40 @@ impl ProgressEmitter {
     }
 }
 
+async fn register_cancel_token(
+    state: &State<'_, AppState>,
+    request_id: &str,
+) -> CancellationToken {
+    let mut map = state.request_cancellations.lock().await;
+    map.entry(request_id.to_string())
+        .or_insert_with(CancellationToken::new)
+        .clone()
+}
+
+async fn clear_cancel_token(state: &State<'_, AppState>, request_id: &str) {
+    let mut map = state.request_cancellations.lock().await;
+    map.remove(request_id);
+}
+
+fn check_cancel(cancel_token: Option<&CancellationToken>) -> Result<(), String> {
+    if let Some(token) = cancel_token {
+        if token.is_cancelled() {
+            return Err(REQUEST_CANCELLED_ERROR.to_string());
+        }
+    }
+    Ok(())
+}
+
+async fn await_with_cancel<T, F>(token: &CancellationToken, fut: F) -> Result<T, String>
+where
+    F: Future<Output = Result<T, String>>,
+{
+    tokio::select! {
+        _ = token.cancelled() => Err(REQUEST_CANCELLED_ERROR.to_string()),
+        result = fut => result,
+    }
+}
+
 #[derive(serde::Deserialize)]
 struct ReadArgs {
     path: String,
@@ -334,12 +388,12 @@ pub async fn chat_with_assistant(
     attachments: Option<Vec<AttachmentInput>>,
     request_id: Option<String>,
     app_handle: AppHandle,
+    state: State<'_, AppState>,
 ) -> Result<String, String> {
     let storage = StorageManager::new();
     let config = storage.load_config().map_err(|e| e.to_string())?;
     let model_manager = ModelManager::new();
     let skill_manager = SkillManager::new();
-    let progress = ProgressEmitter::new(&app_handle, config.ui.show_progress, request_id);
 
     // 获取可用 skills 列表（用于自动发现和 Tool Use）
     let available_skills = skill_manager.discover_skills().unwrap_or_default();
@@ -405,8 +459,14 @@ pub async fn chat_with_assistant(
     let has_attachments = attachments.as_ref().map_or(false, |items| !items.is_empty());
     let user_message = merge_user_message(&message, &attachment_payload.text, has_attachments);
 
-    // 使用 API 模式时启用 Tool Use
-    if config.model.provider == "api" {
+    let request_id = request_id.unwrap_or_else(|| {
+        format!("req-{}", Local::now().timestamp_millis())
+    });
+    let cancel_token = register_cancel_token(&state, &request_id).await;
+    let progress = ProgressEmitter::new(&app_handle, config.ui.show_progress, Some(request_id.clone()));
+
+    let response = (async {
+        let response = if config.model.provider == "api" {
         let system_prompt = build_tool_system_prompt(&context);
         if let Some(ref progress) = progress {
             progress.emit_start("开始处理请求");
@@ -414,18 +474,21 @@ pub async fn chat_with_assistant(
         let result = if attachment_payload.image_urls.is_empty()
             && attachment_payload.image_base64.is_empty()
         {
-            model_manager
-                .chat_with_tools_with_system_prompt(
+            await_with_cancel(
+                &cancel_token,
+                model_manager.chat_with_tools_with_system_prompt(
                     &config.model,
                     &system_prompt,
                     &user_message,
                     history.clone(),
                     &available_skills,
-                )
-                .await?
+                ),
+            )
+            .await?
         } else {
-            model_manager
-                .chat_with_tools_with_system_prompt_with_images(
+            await_with_cancel(
+                &cancel_token,
+                model_manager.chat_with_tools_with_system_prompt_with_images(
                     &config.model,
                     &system_prompt,
                     &user_message,
@@ -433,8 +496,9 @@ pub async fn chat_with_assistant(
                     &available_skills,
                     attachment_payload.image_urls.clone(),
                     attachment_payload.image_base64.clone(),
-                )
-                .await?
+                ),
+            )
+            .await?
         };
 
         let response = run_tool_loop(
@@ -446,6 +510,7 @@ pub async fn chat_with_assistant(
             result,
             &available_skills,
             &None,
+            Some(&cancel_token),
             progress.as_ref(),
         )
         .await;
@@ -456,53 +521,68 @@ pub async fn chat_with_assistant(
                 progress.emit_error("处理失败");
             }
         }
-        return response;
-    }
+        response
+    } else {
+        let skills_hint = if !available_skills.is_empty() {
+            let skills_list: Vec<String> = available_skills
+                .iter()
+                .filter(|s| s.user_invocable.unwrap_or(true))
+                .map(|s| format!("- /{}: {}", s.name, s.description))
+                .collect();
 
-    // 回退到普通对话（无 Tool Use 或 Ollama 模式）
-    let skills_hint = if !available_skills.is_empty() {
-        let skills_list: Vec<String> = available_skills
-            .iter()
-            .filter(|s| s.user_invocable.unwrap_or(true))
-            .map(|s| format!("- /{}: {}", s.name, s.description))
-            .collect();
-
-        if skills_list.is_empty() {
+            if skills_list.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "\n\n## 可用技能\n用户可以使用以下技能（输入 /技能名 调用）：\n{}\n\n如果用户的请求与某个技能相关，你可以建议用户使用该技能。",
+                    skills_list.join("\n")
+                )
+            }
+        } else {
             String::new()
-        } else {
-            format!(
-                "\n\n## 可用技能\n用户可以使用以下技能（输入 /技能名 调用）：\n{}\n\n如果用户的请求与某个技能相关，你可以建议用户使用该技能。",
-                skills_list.join("\n")
-            )
-        }
-    } else {
-        String::new()
-    };
+        };
 
-    let context_with_skills = format!("{}{}", context, skills_hint);
-    let response = if attachment_payload.image_urls.is_empty() && attachment_payload.image_base64.is_empty() {
-        model_manager
-            .chat_with_history(&config.model, &context_with_skills, &user_message, history)
-            .await
-    } else {
-        model_manager
-            .chat_with_history_with_images(
-                &config.model,
-                &context_with_skills,
-                &user_message,
-                history,
-                attachment_payload.image_urls,
-                attachment_payload.image_base64,
+        let context_with_skills = format!("{}{}", context, skills_hint);
+        let response = if attachment_payload.image_urls.is_empty()
+            && attachment_payload.image_base64.is_empty()
+        {
+            await_with_cancel(
+                &cancel_token,
+                model_manager.chat_with_history(
+                    &config.model,
+                    &context_with_skills,
+                    &user_message,
+                    history,
+                ),
             )
             .await
-    };
-    if let Some(ref progress) = progress {
-        if response.is_ok() {
-            progress.emit_done("处理完成");
         } else {
-            progress.emit_error("处理失败");
+            await_with_cancel(
+                &cancel_token,
+                model_manager.chat_with_history_with_images(
+                    &config.model,
+                    &context_with_skills,
+                    &user_message,
+                    history,
+                    attachment_payload.image_urls,
+                    attachment_payload.image_base64,
+                ),
+            )
+            .await
+        };
+        if let Some(ref progress) = progress {
+            if response.is_ok() {
+                progress.emit_done("处理完成");
+            } else {
+                progress.emit_error("处理失败");
+            }
         }
-    }
+        response
+        };
+        response
+    })
+    .await;
+    clear_cancel_token(&state, &request_id).await;
     response
 }
 
@@ -516,10 +596,12 @@ async fn execute_skill_internal(
     args: Option<String>,
     history: Option<Vec<ChatHistoryMessage>>,
     attachments: Option<Vec<AttachmentInput>>,
+    cancel_token: Option<&CancellationToken>,
     progress: Option<&ProgressEmitter>,
 ) -> Result<String, String> {
     // 加载 skill
     let skill = skill_manager.load_skill(skill_name)?;
+    check_cancel(cancel_token)?;
 
     // 构建用户消息（包含参数）
     let base_message = if let Some(ref args_str) = args {
@@ -606,27 +688,57 @@ async fn execute_skill_internal(
         let result = if attachment_payload.image_urls.is_empty()
             && attachment_payload.image_base64.is_empty()
         {
-            model_manager
-                .chat_with_tools_with_system_prompt(
-                    &config.model,
-                    &system_prompt,
-                    &user_message,
-                    history.clone(),
-                    &available_skills,
+            if let Some(token) = cancel_token {
+                await_with_cancel(
+                    token,
+                    model_manager.chat_with_tools_with_system_prompt(
+                        &config.model,
+                        &system_prompt,
+                        &user_message,
+                        history.clone(),
+                        &available_skills,
+                    ),
                 )
                 .await?
+            } else {
+                model_manager
+                    .chat_with_tools_with_system_prompt(
+                        &config.model,
+                        &system_prompt,
+                        &user_message,
+                        history.clone(),
+                        &available_skills,
+                    )
+                    .await?
+            }
         } else {
-            model_manager
-                .chat_with_tools_with_system_prompt_with_images(
-                    &config.model,
-                    &system_prompt,
-                    &user_message,
-                    history.clone(),
-                    &available_skills,
-                    attachment_payload.image_urls.clone(),
-                    attachment_payload.image_base64.clone(),
+            if let Some(token) = cancel_token {
+                await_with_cancel(
+                    token,
+                    model_manager.chat_with_tools_with_system_prompt_with_images(
+                        &config.model,
+                        &system_prompt,
+                        &user_message,
+                        history.clone(),
+                        &available_skills,
+                        attachment_payload.image_urls.clone(),
+                        attachment_payload.image_base64.clone(),
+                    ),
                 )
                 .await?
+            } else {
+                model_manager
+                    .chat_with_tools_with_system_prompt_with_images(
+                        &config.model,
+                        &system_prompt,
+                        &user_message,
+                        history.clone(),
+                        &available_skills,
+                        attachment_payload.image_urls.clone(),
+                        attachment_payload.image_base64.clone(),
+                    )
+                    .await?
+            }
         };
 
         return Box::pin(run_tool_loop(
@@ -638,26 +750,55 @@ async fn execute_skill_internal(
             result,
             &available_skills,
             &skill.metadata.allowed_tools,
+            cancel_token,
             progress,
         ))
         .await;
     }
 
     if attachment_payload.image_urls.is_empty() && attachment_payload.image_base64.is_empty() {
-        model_manager
-            .chat_with_system_prompt(&config.model, &system_prompt, &user_message, history)
-            .await
-    } else {
-        model_manager
-            .chat_with_system_prompt_with_images(
-                &config.model,
-                &system_prompt,
-                &user_message,
-                history,
-                attachment_payload.image_urls,
-                attachment_payload.image_base64,
+        if let Some(token) = cancel_token {
+            await_with_cancel(
+                token,
+                model_manager.chat_with_system_prompt(
+                    &config.model,
+                    &system_prompt,
+                    &user_message,
+                    history,
+                ),
             )
             .await
+        } else {
+            model_manager
+                .chat_with_system_prompt(&config.model, &system_prompt, &user_message, history)
+                .await
+        }
+    } else {
+        if let Some(token) = cancel_token {
+            await_with_cancel(
+                token,
+                model_manager.chat_with_system_prompt_with_images(
+                    &config.model,
+                    &system_prompt,
+                    &user_message,
+                    history,
+                    attachment_payload.image_urls,
+                    attachment_payload.image_base64,
+                ),
+            )
+            .await
+        } else {
+            model_manager
+                .chat_with_system_prompt_with_images(
+                    &config.model,
+                    &system_prompt,
+                    &user_message,
+                    history,
+                    attachment_payload.image_urls,
+                    attachment_payload.image_base64,
+                )
+                .await
+        }
     }
 }
 
@@ -1011,12 +1152,17 @@ pub async fn invoke_skill(
     attachments: Option<Vec<AttachmentInput>>,
     request_id: Option<String>,
     app_handle: AppHandle,
+    state: State<'_, AppState>,
 ) -> Result<String, String> {
     let storage = StorageManager::new();
     let config = storage.load_config().map_err(|e| e.to_string())?;
     let model_manager = ModelManager::new();
     let skill_manager = SkillManager::new();
-    let progress = ProgressEmitter::new(&app_handle, config.ui.show_progress, request_id);
+    let request_id = request_id.unwrap_or_else(|| {
+        format!("req-{}", Local::now().timestamp_millis())
+    });
+    let cancel_token = register_cancel_token(&state, &request_id).await;
+    let progress = ProgressEmitter::new(&app_handle, config.ui.show_progress, Some(request_id.clone()));
     if let Some(ref progress) = progress {
         progress.emit_start(&format!("开始执行技能 /{}", name));
         progress.emit_step("调用技能".to_string(), Some(format!("/{}", name)));
@@ -1030,6 +1176,7 @@ pub async fn invoke_skill(
         args,
         history,
         attachments,
+        Some(&cancel_token),
         progress.as_ref(),
     )
     .await;
@@ -1040,6 +1187,7 @@ pub async fn invoke_skill(
             progress.emit_error("处理失败");
         }
     }
+    clear_cancel_token(&state, &request_id).await;
     result
 }
 
@@ -1132,7 +1280,8 @@ fn build_attachment_payload(attachments: &[AttachmentInput]) -> AttachmentPayloa
         }
 
         let is_image = matches!(attachment.kind.as_deref(), Some("image")) || is_image_ext(&ext);
-        let is_text_doc = matches!(attachment.kind.as_deref(), Some("document")) || is_text_doc_ext(&ext);
+        let is_text_doc = is_text_doc_ext(&ext);
+        let is_office_doc = is_office_doc_ext(&ext);
 
         if is_image {
             if image_urls.len() >= MAX_ATTACHMENT_IMAGES {
@@ -1171,6 +1320,32 @@ fn build_attachment_payload(attachments: &[AttachmentInput]) -> AttachmentPayloa
                 }
                 Err(err) => {
                     notes.push(format!("- {} (读取失败: {})", name, err));
+                }
+            }
+            continue;
+        }
+
+        if is_office_doc {
+            let parsed = match ext.as_str() {
+                "docx" => extract_docx_text(&attachment.path, MAX_ATTACHMENT_TEXT_CHARS),
+                "xlsx" => extract_xlsx_text(&attachment.path, MAX_ATTACHMENT_TEXT_CHARS),
+                _ => Err(format!("不支持的 Office 格式: {}", ext)),
+            };
+            match parsed {
+                Ok(mut content) => {
+                    if content.len() > MAX_ATTACHMENT_TEXT_CHARS {
+                        content.truncate(MAX_ATTACHMENT_TEXT_CHARS);
+                        content.push_str("\n...(已截断)");
+                    }
+                    let trimmed = content.trim();
+                    if trimmed.is_empty() {
+                        notes.push(format!("- {} (文件内容为空)", name));
+                    } else {
+                        doc_sections.push(format!("### {}\n{}", name, trimmed));
+                    }
+                }
+                Err(err) => {
+                    notes.push(format!("- {} (解析失败: {})", name, err));
                 }
             }
             continue;
@@ -1244,6 +1419,251 @@ fn is_image_ext(ext: &str) -> bool {
 
 fn is_text_doc_ext(ext: &str) -> bool {
     matches!(ext, "txt" | "md" | "json" | "csv" | "log" | "yaml" | "yml")
+}
+
+fn is_office_doc_ext(ext: &str) -> bool {
+    matches!(ext, "docx" | "xlsx")
+}
+
+fn extract_docx_text(path: &str, max_chars: usize) -> Result<String, String> {
+    let file = fs::File::open(path).map_err(|e| format!("读取失败: {}", e))?;
+    let mut archive = ZipArchive::new(file).map_err(|e| format!("打开压缩失败: {}", e))?;
+    let doc_file = archive
+        .by_name("word/document.xml")
+        .map_err(|_| "未找到 word/document.xml".to_string())?;
+
+    let mut reader = Reader::from_reader(BufReader::new(doc_file));
+    reader.trim_text(true);
+
+    let mut buf = Vec::new();
+    let mut text = String::new();
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                if e.name().as_ref() == b"w:p" {
+                    if !text.ends_with('\n') && !text.is_empty() {
+                        text.push('\n');
+                    }
+                } else if e.name().as_ref() == b"w:tab" {
+                    text.push('\t');
+                }
+            }
+            Ok(Event::End(e)) => {
+                if e.name().as_ref() == b"w:p" {
+                    text.push('\n');
+                }
+            }
+            Ok(Event::Text(e)) => {
+                let content = e
+                    .unescape()
+                    .map_err(|err| format!("解析 Word 失败: {}", err))?;
+                if !content.is_empty() {
+                    text.push_str(&content);
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(err) => return Err(format!("解析 Word 失败: {}", err)),
+            _ => {}
+        }
+        if text.len() >= max_chars {
+            break;
+        }
+        buf.clear();
+    }
+
+    Ok(text)
+}
+
+fn extract_xlsx_text(path: &str, max_chars: usize) -> Result<String, String> {
+    let file = fs::File::open(path).map_err(|e| format!("读取失败: {}", e))?;
+    let mut archive = ZipArchive::new(file).map_err(|e| format!("打开压缩失败: {}", e))?;
+    let shared_strings = read_shared_strings(&mut archive).unwrap_or_default();
+
+    let mut sheet_names = Vec::new();
+    for i in 0..archive.len() {
+        let name = {
+            let file = archive
+                .by_index(i)
+                .map_err(|e| format!("读取工作表失败: {}", e))?;
+            file.name().to_string()
+        };
+        if name.starts_with("xl/worksheets/")
+            && name.ends_with(".xml")
+            && !name.contains("_rels/")
+        {
+            sheet_names.push(name);
+        }
+    }
+    sheet_names.sort();
+
+    let mut output = String::new();
+    for sheet_name in sheet_names {
+        if output.len() >= max_chars {
+            break;
+        }
+
+        let display = sheet_name
+            .rsplit('/')
+            .next()
+            .unwrap_or(sheet_name.as_str());
+        output.push_str(&format!("Sheet: {}\n", display));
+
+        let sheet_file = archive
+            .by_name(&sheet_name)
+            .map_err(|e| format!("读取工作表失败: {}", e))?;
+        let mut reader = Reader::from_reader(BufReader::new(sheet_file));
+        reader.trim_text(true);
+
+        let mut buf = Vec::new();
+        let mut cell_ref = String::new();
+        let mut cell_type: Option<String> = None;
+        let mut value = String::new();
+        let mut in_value = false;
+
+        loop {
+            match reader.read_event_into(&mut buf) {
+                Ok(Event::Start(e)) => {
+                    match e.name().as_ref() {
+                        b"c" => {
+                            cell_ref.clear();
+                            cell_type = None;
+                            value.clear();
+                            for attr in e.attributes().with_checks(false) {
+                                let attr = attr
+                                    .map_err(|err| format!("解析 Excel 属性失败: {}", err))?;
+                                let key = attr.key.as_ref();
+                                if key == b"r" {
+                                    cell_ref = attr
+                                        .unescape_value()
+                                        .map_err(|err| format!("解析 Excel 单元格失败: {}", err))?
+                                        .to_string();
+                                } else if key == b"t" {
+                                    cell_type = Some(
+                                        attr.unescape_value()
+                                            .map_err(|err| format!("解析 Excel 单元格失败: {}", err))?
+                                            .to_string(),
+                                    );
+                                }
+                            }
+                        }
+                        b"v" | b"t" => {
+                            in_value = true;
+                            value.clear();
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(Event::End(e)) => {
+                    match e.name().as_ref() {
+                        b"v" | b"t" => {
+                            in_value = false;
+                        }
+                        b"c" => {
+                            if !value.trim().is_empty() {
+                                let resolved = resolve_xlsx_cell_value(
+                                    value.trim(),
+                                    cell_type.as_deref(),
+                                    &shared_strings,
+                                );
+                                if !resolved.trim().is_empty() {
+                                    if cell_ref.is_empty() {
+                                        output.push_str(&resolved);
+                                    } else {
+                                        output.push_str(&format!("{}: {}", cell_ref, resolved));
+                                    }
+                                    output.push('\n');
+                                }
+                            }
+                            cell_ref.clear();
+                            cell_type = None;
+                            value.clear();
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(Event::Text(e)) => {
+                    if in_value {
+                        let content = e
+                            .unescape()
+                            .map_err(|err| format!("解析 Excel 失败: {}", err))?;
+                        if !content.is_empty() {
+                            value.push_str(&content);
+                        }
+                    }
+                }
+                Ok(Event::Eof) => break,
+                Err(err) => return Err(format!("解析 Excel 失败: {}", err)),
+                _ => {}
+            }
+
+            if output.len() >= max_chars {
+                break;
+            }
+            buf.clear();
+        }
+
+        output.push('\n');
+    }
+
+    Ok(output)
+}
+
+fn read_shared_strings(archive: &mut ZipArchive<fs::File>) -> Result<Vec<String>, String> {
+    let file = match archive.by_name("xl/sharedStrings.xml") {
+        Ok(file) => file,
+        Err(_) => return Ok(Vec::new()),
+    };
+
+    let mut reader = Reader::from_reader(BufReader::new(file));
+    reader.trim_text(true);
+    let mut buf = Vec::new();
+    let mut strings = Vec::new();
+    let mut current = String::new();
+    let mut in_si = false;
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                if e.name().as_ref() == b"si" {
+                    in_si = true;
+                    current.clear();
+                }
+            }
+            Ok(Event::End(e)) => {
+                if e.name().as_ref() == b"si" {
+                    strings.push(current.clone());
+                    current.clear();
+                    in_si = false;
+                }
+            }
+            Ok(Event::Text(e)) => {
+                if in_si {
+                    let content = e
+                        .unescape()
+                        .map_err(|err| format!("解析 Excel 失败: {}", err))?;
+                    current.push_str(&content);
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(err) => return Err(format!("解析 Excel 失败: {}", err)),
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    Ok(strings)
+}
+
+fn resolve_xlsx_cell_value(value: &str, cell_type: Option<&str>, shared_strings: &[String]) -> String {
+    match cell_type {
+        Some("s") => value
+            .parse::<usize>()
+            .ok()
+            .and_then(|idx| shared_strings.get(idx).cloned())
+            .unwrap_or_else(|| value.to_string()),
+        _ => value.to_string(),
+    }
 }
 
 fn image_mime(ext: &str) -> &'static str {
@@ -1776,6 +2196,7 @@ async fn run_tool_loop(
     mut result: ChatWithToolsResult,
     available_skills: &[SkillMetadata],
     allowed_tools: &Option<Vec<String>>,
+    cancel_token: Option<&CancellationToken>,
     progress: Option<&ProgressEmitter>,
 ) -> Result<String, String> {
     let access = build_tool_access(config, storage);
@@ -1784,6 +2205,7 @@ async fn run_tool_loop(
     let mut repeat_loops = 0usize;
 
     loop {
+        check_cancel(cancel_token)?;
         match result {
             ChatWithToolsResult::Text(text) => return Ok(text),
             ChatWithToolsResult::ToolCalls { calls, messages } => {
@@ -1810,18 +2232,39 @@ async fn run_tool_loop(
 
                 let mut tool_results = Vec::new();
                 for call in &calls {
-                    let output = execute_tool_call(
-                        &call,
-                        &access,
-                        storage,
-                        config,
-                        model_manager,
-                        skill_manager,
-                        available_skills,
-                        allowed_tools,
-                        progress,
-                    )
-                    .await?;
+                    check_cancel(cancel_token)?;
+                    let output = if let Some(token) = cancel_token {
+                        await_with_cancel(
+                            token,
+                            execute_tool_call(
+                                &call,
+                                &access,
+                                storage,
+                                config,
+                                model_manager,
+                                skill_manager,
+                                available_skills,
+                                allowed_tools,
+                                Some(token),
+                                progress,
+                            ),
+                        )
+                        .await?
+                    } else {
+                        execute_tool_call(
+                            &call,
+                            &access,
+                            storage,
+                            config,
+                            model_manager,
+                            skill_manager,
+                            available_skills,
+                            allowed_tools,
+                            None,
+                            progress,
+                        )
+                        .await?
+                    };
                     tool_results.push((call.id.clone(), output));
                 }
                 let has_failure = tool_results
@@ -1852,15 +2295,29 @@ async fn run_tool_loop(
                 }
                 
 
-                result = model_manager
-                    .continue_with_tool_results(
-                        &config.model,
-                        system_prompt,
-                        messages,
-                        tool_results,
-                        available_skills,
+                result = if let Some(token) = cancel_token {
+                    await_with_cancel(
+                        token,
+                        model_manager.continue_with_tool_results(
+                            &config.model,
+                            system_prompt,
+                            messages,
+                            tool_results,
+                            available_skills,
+                        ),
                     )
-                    .await?;
+                    .await?
+                } else {
+                    model_manager
+                        .continue_with_tool_results(
+                            &config.model,
+                            system_prompt,
+                            messages,
+                            tool_results,
+                            available_skills,
+                        )
+                        .await?
+                };
                 loops += 1;
             }
         }
@@ -1876,11 +2333,13 @@ async fn execute_tool_call(
     skill_manager: &SkillManager,
     _available_skills: &[SkillMetadata],
     allowed_tools: &Option<Vec<String>>,
+    cancel_token: Option<&CancellationToken>,
     progress: Option<&ProgressEmitter>,
 ) -> Result<String, String> {
     let tool_name = tool_call.function.name.as_str();
     let args_value: serde_json::Value = serde_json::from_str(&tool_call.function.arguments)
         .map_err(|e| format!("解析工具参数失败: {}", e))?;
+    check_cancel(cancel_token)?;
 
     let needs_skill_permission = matches!(
         tool_name,
@@ -1978,6 +2437,7 @@ async fn execute_tool_call(
                 skill_args,
                 None,
                 None,
+                cancel_token,
                 progress,
             )
             .await

@@ -51,6 +51,8 @@ let progressUnlisten: (() => void) | null = null
 const MAX_ATTACHMENTS = 6
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'])
 const TOOL_MODE_UNSET_ERROR = 'TOOLS_MODE_UNSET'
+const REQUEST_CANCELLED_ERROR = 'REQUEST_CANCELLED'
+const cancelledRequestIds = new Set<string>()
 
 interface PendingRequest {
   message: string
@@ -112,8 +114,7 @@ watch(inputMessage, (newVal) => {
   }
 })
 
-function startProcessPanel(requestId: string) {
-  activeRequestId.value = requestId
+function startProcessPanel() {
   processItems.value = []
   processStatus.value = 'running'
   processExpanded.value = true
@@ -122,6 +123,7 @@ function startProcessPanel(requestId: string) {
 
 function appendProcessItem(payload: ProgressEventPayload) {
   if (!showProcessPanel.value) return
+  if (cancelledRequestIds.has(payload.request_id)) return
   if (activeRequestId.value && payload.request_id !== activeRequestId.value) {
     if (processItems.value.length === 0 && processStatus.value === 'running') {
       activeRequestId.value = payload.request_id
@@ -248,9 +250,10 @@ watch(
 async function executeRequest(payload: PendingRequest, includeUserMessage: boolean) {
   if (isLoading.value) return
 
+  activeRequestId.value = payload.requestId
   await loadProcessSetting()
   if (showProcessPanel.value) {
-    startProcessPanel(payload.requestId)
+    startProcessPanel()
   }
 
   if (includeUserMessage) {
@@ -264,6 +267,7 @@ async function executeRequest(payload: PendingRequest, includeUserMessage: boole
 
   isLoading.value = true
   let placeholderAdded = false
+  let wasCancelled = false
 
   try {
     const { invoke } = await import('@tauri-apps/api/core')
@@ -309,6 +313,12 @@ async function executeRequest(payload: PendingRequest, includeUserMessage: boole
       })
     }
 
+    if (cancelledRequestIds.has(payload.requestId)) {
+      cancelledRequestIds.delete(payload.requestId)
+      wasCancelled = true
+      return
+    }
+
     chatStore.addMessage({
       role: 'assistant',
       content: response,
@@ -316,6 +326,11 @@ async function executeRequest(payload: PendingRequest, includeUserMessage: boole
     })
   } catch (error) {
     const errorText = String(error)
+    if (errorText.includes(REQUEST_CANCELLED_ERROR) || cancelledRequestIds.has(payload.requestId)) {
+      cancelledRequestIds.delete(payload.requestId)
+      wasCancelled = true
+      return
+    }
     if (errorText.includes(TOOL_MODE_UNSET_ERROR)) {
       if (placeholderAdded) {
         chatStore.messages.pop()
@@ -332,13 +347,39 @@ async function executeRequest(payload: PendingRequest, includeUserMessage: boole
       timestamp: new Date().toISOString(),
     })
   } finally {
-    isLoading.value = false
-    if (showProcessPanel.value && activeRequestId.value === payload.requestId) {
-      finishProcessPanel('done')
+    if (activeRequestId.value === payload.requestId) {
+      isLoading.value = false
+      activeRequestId.value = null
+      if (showProcessPanel.value && !wasCancelled) {
+        finishProcessPanel('done')
+      }
     }
     await nextTick()
     scrollToBottom()
   }
+}
+
+async function stopRequest() {
+  if (!isLoading.value) return
+  const requestId = activeRequestId.value
+  if (!requestId) return
+
+  cancelledRequestIds.add(requestId)
+  isLoading.value = false
+  if (showProcessPanel.value) {
+    finishProcessPanel('error')
+  }
+  pendingRequest.value = null
+  toolModeModalVisible.value = false
+
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('cancel_request', { request_id: requestId })
+  } catch (error) {
+    console.error('Failed to cancel request:', error)
+  }
+
+  message.info(t('main.chat.cancelled'))
 }
 
 async function applyToolModeSelection() {
@@ -754,8 +795,19 @@ onUnmounted(() => {
             @keydown="handleKeydown"
           />
           <NButton
+            v-if="isLoading"
+            type="error"
+            :title="t('common.stop')"
+            @click="stopRequest"
+          >
+            <template #icon>
+              <NIcon><StopCircleOutline /></NIcon>
+            </template>
+          </NButton>
+          <NButton
+            v-else
             type="primary"
-            :disabled="(!inputMessage.trim() && attachments.length === 0) || isLoading"
+            :disabled="(!inputMessage.trim() && attachments.length === 0)"
             @click="sendMessage"
           >
             <template #icon>
