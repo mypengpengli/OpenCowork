@@ -10,7 +10,7 @@ use std::io::{self, BufRead};
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
-use tauri::{AppHandle, State, Manager, Emitter};
+use tauri::{AppHandle, State, Emitter};
 use tauri_plugin_shell::ShellExt;
 use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex as TokioMutex;

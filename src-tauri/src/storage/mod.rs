@@ -914,7 +914,7 @@ impl SearchResult {
                 current_len += line.len();
 
                 let allow_detail = include_detail
-                    && detail_cutoff.map_or(true, |cutoff| record.timestamp >= cutoff);
+                    && detail_cutoff.map_or(true, |cutoff| record.timestamp.as_str() >= cutoff);
                 if allow_detail && !record.detail.is_empty() {
                     let detail_text = record.detail.replace('\n', " ");
                     let detail_line = format!("  细节: {}\n", detail_text);
