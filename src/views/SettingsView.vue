@@ -676,12 +676,6 @@ async function openReleasePage() {
           <div class="settings-header">
             <div class="settings-title">
               <h2>{{ t('settings.header.profiles') }}</h2>
-              <p class="settings-locale">
-                {{ t('settings.locale.systemValue', { value: systemLocale || t('common.unknown') }) }}
-              </p>
-              <p v-if="systemLocaleError" class="settings-locale error">
-                {{ t('settings.locale.systemError', { error: systemLocaleError }) }}
-              </p>
             </div>
             <NSpace>
               <NButton @click="openReleasePage">{{ t('settings.buttons.checkUpdate') }}</NButton>
