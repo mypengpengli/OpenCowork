@@ -1,6 +1,6 @@
 ---
 name: skill-creator
-description: Guide for creating effective skills. This skill should be used when users want to create a new skill (or update an existing skill) that extends Claude's capabilities with specialized knowledge, workflows, or tool integrations.
+description: 编写、修改、审查或修复技能（SKILL.md/技能目录结构）；当用户要求创建/更新/优化技能、补充 scripts/references/assets、修复 frontmatter、校验技能格式或生成技能模板时使用。Use when creating or updating skills, fixing frontmatter/structure, or generating skill templates.
 license: Complete terms in LICENSE.txt
 ---
 
@@ -8,11 +8,17 @@ license: Complete terms in LICENSE.txt
 
 This skill provides guidance for creating effective skills.
 
+## 语言约定（重要）
+
+- 默认使用中文撰写 SKILL.md 与参考文档。
+- 文件名/路径/命令/代码标识符保持英文或原样。
+- 用户明确要求英文时，再改用英文。
+
 ## About Skills
 
-Skills are modular, self-contained packages that extend Claude's capabilities by providing
+Skills are modular, self-contained packages that extend Codex's capabilities by providing
 specialized knowledge, workflows, and tools. Think of them as "onboarding guides" for specific
-domains or tasks—they transform Claude from a general-purpose agent into a specialized agent
+domains or tasks—they transform Codex from a general-purpose agent into a specialized agent
 equipped with procedural knowledge that no model can fully possess.
 
 ### What Skills Provide
@@ -26,9 +32,9 @@ equipped with procedural knowledge that no model can fully possess.
 
 ### Concise is Key
 
-The context window is a public good. Skills share the context window with everything else Claude needs: system prompt, conversation history, other Skills' metadata, and the actual user request.
+The context window is a public good. Skills share the context window with everything else Codex needs: system prompt, conversation history, other Skills' metadata, and the actual user request.
 
-**Default assumption: Claude is already very smart.** Only add context Claude doesn't already have. Challenge each piece of information: "Does Claude really need this explanation?" and "Does this paragraph justify its token cost?"
+**Default assumption: Codex is already very smart.** Only add context Codex doesn't already have. Challenge each piece of information: "Does Codex really need this explanation?" and "Does this paragraph justify its token cost?"
 
 Prefer concise examples over verbose explanations.
 
@@ -42,7 +48,7 @@ Match the level of specificity to the task's fragility and variability:
 
 **Low freedom (specific scripts, few parameters)**: Use when operations are fragile and error-prone, consistency is critical, or a specific sequence must be followed.
 
-Think of Claude as exploring a path: a narrow bridge with cliffs needs specific guardrails (low freedom), while an open field allows many routes (high freedom).
+Think of Codex as exploring a path: a narrow bridge with cliffs needs specific guardrails (low freedom), while an open field allows many routes (high freedom).
 
 ### Anatomy of a Skill
 
@@ -65,7 +71,7 @@ skill-name/
 
 Every SKILL.md consists of:
 
-- **Frontmatter** (YAML): Contains `name` and `description` fields. These are the only fields that Claude reads to determine when the skill gets used, thus it is very important to be clear and comprehensive in describing what the skill is, and when it should be used.
+- **Frontmatter** (YAML): Contains `name` and `description` fields. These are the only fields that Codex reads to determine when the skill gets used, thus it is very important to be clear and comprehensive in describing what the skill is, and when it should be used.
 - **Body** (Markdown): Instructions and guidance for using the skill. Only loaded AFTER the skill triggers (if at all).
 
 #### Bundled Resources (optional)
@@ -77,27 +83,27 @@ Executable code (Python/Bash/etc.) for tasks that require deterministic reliabil
 - **When to include**: When the same code is being rewritten repeatedly or deterministic reliability is needed
 - **Example**: `scripts/rotate_pdf.py` for PDF rotation tasks
 - **Benefits**: Token efficient, deterministic, may be executed without loading into context
-- **Note**: Scripts may still need to be read by Claude for patching or environment-specific adjustments
+- **Note**: Scripts may still need to be read by Codex for patching or environment-specific adjustments
 
 ##### References (`references/`)
 
-Documentation and reference material intended to be loaded as needed into context to inform Claude's process and thinking.
+Documentation and reference material intended to be loaded as needed into context to inform Codex's process and thinking.
 
-- **When to include**: For documentation that Claude should reference while working
+- **When to include**: For documentation that Codex should reference while working
 - **Examples**: `references/finance.md` for financial schemas, `references/mnda.md` for company NDA template, `references/policies.md` for company policies, `references/api_docs.md` for API specifications
 - **Use cases**: Database schemas, API documentation, domain knowledge, company policies, detailed workflow guides
-- **Benefits**: Keeps SKILL.md lean, loaded only when Claude determines it's needed
+- **Benefits**: Keeps SKILL.md lean, loaded only when Codex determines it's needed
 - **Best practice**: If files are large (>10k words), include grep search patterns in SKILL.md
 - **Avoid duplication**: Information should live in either SKILL.md or references files, not both. Prefer references files for detailed information unless it's truly core to the skill—this keeps SKILL.md lean while making information discoverable without hogging the context window. Keep only essential procedural instructions and workflow guidance in SKILL.md; move detailed reference material, schemas, and examples to references files.
 
 ##### Assets (`assets/`)
 
-Files not intended to be loaded into context, but rather used within the output Claude produces.
+Files not intended to be loaded into context, but rather used within the output Codex produces.
 
 - **When to include**: When the skill needs files that will be used in the final output
 - **Examples**: `assets/logo.png` for brand assets, `assets/slides.pptx` for PowerPoint templates, `assets/frontend-template/` for HTML/React boilerplate, `assets/font.ttf` for typography
 - **Use cases**: Templates, images, icons, boilerplate code, fonts, sample documents that get copied or modified
-- **Benefits**: Separates output resources from documentation, enables Claude to use files without loading them into context
+- **Benefits**: Separates output resources from documentation, enables Codex to use files without loading them into context
 
 #### What to Not Include in a Skill
 
@@ -117,7 +123,7 @@ Skills use a three-level loading system to manage context efficiently:
 
 1. **Metadata (name + description)** - Always in context (~100 words)
 2. **SKILL.md body** - When skill triggers (<5k words)
-3. **Bundled resources** - As needed by Claude (Unlimited because scripts can be executed without reading into context window)
+3. **Bundled resources** - As needed by Codex (Unlimited because scripts can be executed without reading into context window)
 
 #### Progressive Disclosure Patterns
 
@@ -142,7 +148,7 @@ Extract text with pdfplumber:
 - **Examples**: See [EXAMPLES.md](EXAMPLES.md) for common patterns
 ```
 
-Claude loads FORMS.md, REFERENCE.md, or EXAMPLES.md only when needed.
+Codex loads FORMS.md, REFERENCE.md, or EXAMPLES.md only when needed.
 
 **Pattern 2: Domain-specific organization**
 
@@ -158,7 +164,7 @@ bigquery-skill/
     └── marketing.md (campaigns, attribution)
 ```
 
-When a user asks about sales metrics, Claude only reads sales.md.
+When a user asks about sales metrics, Codex only reads sales.md.
 
 Similarly, for skills supporting multiple frameworks or variants, organize by variant:
 
@@ -171,7 +177,7 @@ cloud-deploy/
     └── azure.md (Azure deployment patterns)
 ```
 
-When the user chooses AWS, Claude only reads aws.md.
+When the user chooses AWS, Codex only reads aws.md.
 
 **Pattern 3: Conditional details**
 
@@ -192,12 +198,27 @@ For simple edits, modify the XML directly.
 **For OOXML details**: See [OOXML.md](OOXML.md)
 ```
 
-Claude reads REDLINING.md or OOXML.md only when the user needs those features.
+Codex reads REDLINING.md or OOXML.md only when the user needs those features.
 
 **Important guidelines:**
 
 - **Avoid deeply nested references** - Keep references one level deep from SKILL.md. All reference files should link directly from SKILL.md.
-- **Structure longer reference files** - For files longer than 100 lines, include a table of contents at the top so Claude can see the full scope when previewing.
+- **Structure longer reference files** - For files longer than 100 lines, include a table of contents at the top so Codex can see the full scope when previewing.
+
+## 快速检查清单
+
+- frontmatter: `name`/`description` 必填；目录名必须与 `name` 一致；`name` 使用小写+连字符；`description` 写清触发场景/关键词
+- 正文使用命令式语气，避免冗长背景；详细规范放到 `references/`
+- `scripts/`/`references/`/`assets/` 若存在，需在 SKILL.md 中说明用途；无用占位文件要删除
+- 自动化脚本使用 run_command/Bash 执行，并将 cwd 设为技能目录
+- 自检：运行 `scripts/quick_validate.py <skill-dir>`；最小模板见 `assets/template.md`
+
+## 常见失败原因
+
+- frontmatter 结束标记 `---` 不在独立一行
+- 目录名与 `name` 不一致（会被忽略）
+- description 过于模糊，无法触发技能
+- 需要自动化却没有脚本或未说明如何执行
 
 ## Skill Creation Process
 
@@ -274,11 +295,13 @@ The script:
 - Creates example resource directories: `scripts/`, `references/`, and `assets/`
 - Adds example files in each directory that can be customized or deleted
 
+默认生成的 SKILL.md 模板为中文；如用户明确要求英文，再整体切换为英文。模板与示例目录可按需删改。
+
 After initialization, customize or remove the generated SKILL.md and example files as needed.
 
 ### Step 4: Edit the Skill
 
-When editing the (newly-generated or existing) skill, remember that the skill is being created for another instance of Claude to use. Include information that would be beneficial and non-obvious to Claude. Consider what procedural knowledge, domain-specific details, or reusable assets would help another Claude instance execute these tasks more effectively.
+When editing the (newly-generated or existing) skill, remember that the skill is being created for another instance of Codex to use. Include information that would be beneficial and non-obvious to Codex. Consider what procedural knowledge, domain-specific details, or reusable assets would help another Codex instance execute these tasks more effectively.
 
 #### Learn Proven Design Patterns
 
@@ -299,19 +322,19 @@ Any example files and directories not needed for the skill should be deleted. Th
 
 #### Update SKILL.md
 
-**Writing Guidelines:** Always use imperative/infinitive form.
+**Writing Guidelines:** Always use imperative/infinitive form. 默认中文撰写，必要时使用英文。
 
 ##### Frontmatter
 
 Write the YAML frontmatter with `name` and `description`:
 
 - `name`: The skill name
-- `description`: This is the primary triggering mechanism for your skill, and helps Claude understand when to use the skill.
+- `description`: This is the primary triggering mechanism for your skill, and helps Codex understand when to use the skill.
   - Include both what the Skill does and specific triggers/contexts for when to use it.
-  - Include all "when to use" information here - Not in the body. The body is only loaded after triggering, so "When to Use This Skill" sections in the body are not helpful to Claude.
-  - Example description for a `docx` skill: "Comprehensive document creation, editing, and analysis with support for tracked changes, comments, formatting preservation, and text extraction. Use when Claude needs to work with professional documents (.docx files) for: (1) Creating new documents, (2) Modifying or editing content, (3) Working with tracked changes, (4) Adding comments, or any other document tasks"
+  - Include all "when to use" information here - Not in the body. The body is only loaded after triggering, so "When to Use This Skill" sections in the body are not helpful to Codex.
+  - Example description for a `docx` skill: "Comprehensive document creation, editing, and analysis with support for tracked changes, comments, formatting preservation, and text extraction. Use when Codex needs to work with professional documents (.docx files) for: (1) Creating new documents, (2) Modifying or editing content, (3) Working with tracked changes, (4) Adding comments, or any other document tasks"
 
-Do not include any other fields in YAML frontmatter.
+允许的可选字段：`license`、`metadata`、`allowed-tools`（仅在确有需要且运行时支持时使用）。除这些以外不要添加其他字段。
 
 ##### Body
 

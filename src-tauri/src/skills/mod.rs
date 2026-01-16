@@ -39,23 +39,35 @@ struct BuiltinSkill {
 
 const BUILTIN_SKILLS: &[BuiltinSkill] = &[
     BuiltinSkill {
-        name: "skill-authoring",
+        name: "skill-creator",
         files: &[
             BuiltinFile {
                 rel_path: "SKILL.md",
-                contents: include_str!("../../resources/skills/skill-authoring/SKILL.md"),
+                contents: include_str!("../../resources/skills/skill-creator/SKILL.md"),
             },
             BuiltinFile {
-                rel_path: "references/REFERENCE.md",
-                contents: include_str!("../../resources/skills/skill-authoring/references/REFERENCE.md"),
+                rel_path: "references/workflows.md",
+                contents: include_str!("../../resources/skills/skill-creator/references/workflows.md"),
+            },
+            BuiltinFile {
+                rel_path: "references/output-patterns.md",
+                contents: include_str!("../../resources/skills/skill-creator/references/output-patterns.md"),
             },
             BuiltinFile {
                 rel_path: "assets/template.md",
-                contents: include_str!("../../resources/skills/skill-authoring/assets/template.md"),
+                contents: include_str!("../../resources/skills/skill-creator/assets/template.md"),
             },
             BuiltinFile {
-                rel_path: "scripts/run.ps1",
-                contents: include_str!("../../resources/skills/skill-authoring/scripts/run.ps1"),
+                rel_path: "scripts/init_skill.py",
+                contents: include_str!("../../resources/skills/skill-creator/scripts/init_skill.py"),
+            },
+            BuiltinFile {
+                rel_path: "scripts/package_skill.py",
+                contents: include_str!("../../resources/skills/skill-creator/scripts/package_skill.py"),
+            },
+            BuiltinFile {
+                rel_path: "scripts/quick_validate.py",
+                contents: include_str!("../../resources/skills/skill-creator/scripts/quick_validate.py"),
             },
         ],
     },
