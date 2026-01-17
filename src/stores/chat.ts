@@ -37,6 +37,7 @@ const MAX_HISTORY_FOR_CONTEXT = 10  // 发送给模型的最大对话轮数
 
 export const useChatStore = defineStore('chat', () => {
   const messages = ref<ChatMessage[]>([])
+  const activeConversationId = ref<string | null>(null)
   const savedConversations = ref<SavedConversation[]>([])
   const seenAlerts = new Set<string>()
   const localeStore = useLocaleStore()
@@ -56,6 +57,7 @@ export const useChatStore = defineStore('chat', () => {
 
   function addMessage(message: ChatMessage) {
     messages.value.push(message)
+    saveCurrentConversation()
   }
 
   function addAlert(message: ChatMessage) {
@@ -70,36 +72,18 @@ export const useChatStore = defineStore('chat', () => {
   function clearMessages() {
     messages.value = []
     seenAlerts.clear()
+    activeConversationId.value = null
   }
 
   // 新建对话（清空当前对话）
   function newConversation() {
-    messages.value = []
-    seenAlerts.clear()
+    saveCurrentConversation()
+    clearMessages()
   }
 
   // 保存当前对话
-  function saveCurrentConversation(title?: string) {
-    const nonAlertMessages = messages.value.filter(m => !m.isAlert)
-    if (nonAlertMessages.length === 0) {
-      return null
-    }
-
-    const now = new Date().toISOString()
-    const id = `conv_${Date.now()}`
-    const autoTitle = title || generateTitle(nonAlertMessages)
-
-    const conversation: SavedConversation = {
-      id,
-      title: autoTitle,
-      messages: nonAlertMessages,
-      createdAt: now,
-      updatedAt: now,
-    }
-
-    savedConversations.value.unshift(conversation)
-    persistConversations()
-    return conversation
+  function saveCurrentConversation() {
+    syncActiveConversation()
   }
 
   // 加载已保存的对话
@@ -108,6 +92,7 @@ export const useChatStore = defineStore('chat', () => {
     if (conversation) {
       messages.value = [...conversation.messages]
       seenAlerts.clear()
+      activeConversationId.value = conversation.id
       return true
     }
     return false
@@ -119,6 +104,9 @@ export const useChatStore = defineStore('chat', () => {
     if (index !== -1) {
       savedConversations.value.splice(index, 1)
       persistConversations()
+      if (activeConversationId.value === id) {
+        clearMessages()
+      }
       return true
     }
     return false
@@ -148,6 +136,35 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  function syncActiveConversation() {
+    const nonAlertMessages = messages.value.filter(m => !m.isAlert)
+    if (nonAlertMessages.length === 0) {
+      return
+    }
+
+    const now = new Date().toISOString()
+    const id = activeConversationId.value || `conv_${Date.now()}`
+    const title = generateTitle(nonAlertMessages)
+    const existingIndex = savedConversations.value.findIndex(c => c.id === id)
+    const existing = existingIndex === -1 ? null : savedConversations.value[existingIndex]
+
+    const conversation: SavedConversation = {
+      id,
+      title,
+      messages: nonAlertMessages,
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+    }
+
+    if (existingIndex !== -1) {
+      savedConversations.value.splice(existingIndex, 1)
+    }
+
+    savedConversations.value.unshift(conversation)
+    activeConversationId.value = id
+    persistConversations()
+  }
+
   // 自动生成对话标题（取第一条用户消息的前20个字符）
   function generateTitle(msgs: ChatMessage[]): string {
     const firstUserMsg = msgs.find(m => m.role === 'user')
@@ -163,13 +180,13 @@ export const useChatStore = defineStore('chat', () => {
 
   return {
     messages,
+    activeConversationId,
     savedConversations,
     chatHistoryForModel,
     addMessage,
     addAlert,
     clearMessages,
     newConversation,
-    saveCurrentConversation,
     loadConversation,
     deleteConversation,
   }

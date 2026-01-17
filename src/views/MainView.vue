@@ -9,13 +9,12 @@ import {
   NSpin,
   NTag,
   NIcon,
-  NDropdown,
   NModal,
   NRadioGroup,
   NRadio,
   useMessage,
 } from 'naive-ui'
-import { Send, PlayCircleOutline, StopCircleOutline, AddOutline, SaveOutline, AttachOutline, CloseOutline, DocumentOutline } from '@vicons/ionicons5'
+import { Send, PlayCircleOutline, StopCircleOutline, AttachOutline, CloseOutline, DocumentOutline } from '@vicons/ionicons5'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useChatStore, type ChatAttachment, type AttachmentKind } from '../stores/chat'
 import { useCaptureStore } from '../stores/capture'
@@ -477,37 +476,6 @@ function formatLocalTimestamp(date: Date): string {
 }
 
 
-function newConversation() {
-  if (chatStore.messages.length > 0) {
-    const confirmed = window.confirm(t('main.chat.newConfirm'))
-    if (!confirmed) return
-  }
-  chatStore.newConversation()
-  message.success(t('main.chat.newSuccess'))
-}
-
-function saveConversation() {
-  const result = chatStore.saveCurrentConversation()
-  if (result) {
-    message.success(t('main.chat.saved', { title: result.title }))
-  } else {
-    message.warning(t('main.chat.saveEmpty'))
-  }
-}
-
-function loadSavedConversation(id: string) {
-  if (chatStore.loadConversation(id)) {
-    message.success(t('main.chat.loaded'))
-  }
-}
-
-const savedConversationOptions = computed(() => {
-  return chatStore.savedConversations.map(conv => ({
-    label: conv.title,
-    key: conv.id,
-  }))
-})
-
 function clearChat() {
   const confirmed = window.confirm(t('main.chat.clearConfirm'))
   if (!confirmed) return
@@ -627,27 +595,6 @@ onUnmounted(() => {
             </NTag>
           </NSpace>
           <NSpace align="center">
-            <NButton size="small" secondary @click="newConversation">
-              <template #icon>
-                <NIcon><AddOutline /></NIcon>
-              </template>
-              {{ t('common.new') }}
-            </NButton>
-            <NButton size="small" secondary @click="saveConversation">
-              <template #icon>
-                <NIcon><SaveOutline /></NIcon>
-              </template>
-              {{ t('common.save') }}
-            </NButton>
-            <NDropdown
-              v-if="savedConversationOptions.length > 0"
-              :options="savedConversationOptions"
-              @select="loadSavedConversation"
-            >
-              <NButton size="small" secondary>
-                {{ t('main.buttons.history') }} ({{ savedConversationOptions.length }})
-              </NButton>
-            </NDropdown>
             <NButton size="small" secondary :loading="isHistoryLoading" @click="loadAlertHistory">
               {{ t('main.buttons.loadAlerts') }}
             </NButton>
