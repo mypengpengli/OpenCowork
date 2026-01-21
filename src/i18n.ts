@@ -27,7 +27,7 @@ const messages: Record<Locale, Messages> = {
     'common.create': '创建',
     'common.refresh': '刷新',
     'common.clear': '清空',
-    'common.start': '开始',
+    'common.start': '开始读屏',
     'common.stop': '停止',
     'main.status.capturing': '监控中',
     'main.status.paused': '已暂停',
