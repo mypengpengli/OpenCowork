@@ -38,3 +38,9 @@ p {
   border-radius: 8px;
   display: inline-block;
 }
+
+.contact {
+  margin-top: 3rem;
+  font-size: 0.85rem;
+  opacity: 0.6;
+}
