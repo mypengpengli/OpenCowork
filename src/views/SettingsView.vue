@@ -54,6 +54,11 @@ const skillsDir = ref('')
 const systemLocale = ref('')
 const systemLocaleError = ref('')
 const localeStore = useLocaleStore()
+const updateChecking = ref(false)
+const updateInstalling = ref(false)
+const updateAvailable = ref(false)
+const updateVersion = ref('')
+let pendingUpdate: any = null
 
 // 全局提示词相关状态
 interface GlobalPromptItem {
@@ -665,6 +670,56 @@ async function openReleasePage() {
     message.error(t('settings.update.openFailed', { error: String(error) }))
   }
 }
+
+function resetUpdateState() {
+  pendingUpdate = null
+  updateAvailable.value = false
+  updateVersion.value = ''
+}
+
+async function checkForUpdates() {
+  if (updateChecking.value || updateInstalling.value) return
+  updateChecking.value = true
+  try {
+    const { check } = await import('@tauri-apps/plugin-updater')
+    const update = await check()
+    if (update?.available) {
+      pendingUpdate = update
+      updateAvailable.value = true
+      updateVersion.value = update.version || ''
+      message.info(
+        t('settings.update.available', {
+          version: updateVersion.value || t('common.unknown'),
+        }),
+      )
+      return
+    }
+    resetUpdateState()
+    message.success(t('settings.update.upToDate'))
+  } catch (error) {
+    message.error(t('settings.update.failed', { error: String(error) }))
+  } finally {
+    updateChecking.value = false
+  }
+}
+
+async function installUpdate() {
+  if (updateInstalling.value) return
+  if (!pendingUpdate) {
+    await checkForUpdates()
+  }
+  if (!pendingUpdate) return
+  updateInstalling.value = true
+  try {
+    message.info(t('settings.update.downloading'))
+    await pendingUpdate.downloadAndInstall()
+    message.success(t('settings.update.installing'))
+  } catch (error) {
+    message.error(t('settings.update.installFailed', { error: String(error) }))
+  } finally {
+    updateInstalling.value = false
+  }
+}
 </script>
 
 <template>
@@ -678,7 +733,16 @@ async function openReleasePage() {
               <h2>{{ t('settings.header.profiles') }}</h2>
             </div>
             <NSpace>
-              <NButton @click="openReleasePage">{{ t('settings.buttons.checkUpdate') }}</NButton>
+              <NTag v-if="updateAvailable" type="warning" size="small">
+                {{ t('settings.update.availableTag', { version: updateVersion || t('common.unknown') }) }}
+              </NTag>
+              <NButton
+                :loading="updateChecking || updateInstalling"
+                :type="updateAvailable ? 'primary' : 'default'"
+                @click="updateAvailable ? installUpdate() : checkForUpdates()"
+              >
+                {{ updateAvailable ? t('settings.buttons.startUpdate') : t('settings.buttons.checkUpdate') }}
+              </NButton>
               <NButton type="primary" @click="openNewProfile">{{ t('settings.buttons.newProfile') }}</NButton>
             </NSpace>
           </div>

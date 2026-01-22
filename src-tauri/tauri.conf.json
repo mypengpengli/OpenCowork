@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OpenCowork",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "identifier": "com.opencowork.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -37,6 +37,16 @@
         "type": "offlineInstaller",
         "silent": true
       }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/mypengpengli/OpenCowork/releases/latest/download/latest.json"
+      ],
+      "dialog": true,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDExQkI5RkI2OUEwNUE4QkIKUldTN3FBV2F0cCs3RVJsNy9Sb2hDTzhJb3FVSkNXR0tFeDZia3pNNHh6YVhTZDdEa2gxUloxV2oK"
     }
   }
 }
