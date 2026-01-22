@@ -9,6 +9,7 @@
     "dialog:allow-open",
     "dialog:allow-save",
     "dialog:allow-message",
-    "dialog:allow-ask"
+    "dialog:allow-ask",
+    "updater:default"
   ]
 }
