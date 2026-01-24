@@ -13,7 +13,7 @@ function App() {
     <div className="container">
       <h1>Hello World!</h1>
       <p>欢迎来到 AI随学 - aisuixue.com</p>
-      <p>网站部署成功！</p>
+      <p>网站部署成功�?/p>
       <div style={{ margin: '2rem 0' }}>
         <a 
           href="#" 
@@ -32,9 +32,10 @@ function App() {
         </a>
       </div>
       <p className="tech-stack">Vite + React + TypeScript</p>
-      <p className="contact">联系邮箱：306100898@qq.com</p>
+      <p className="contact">此域名出售，联系邮箱：306100898@qq.com</p>
     </div>
   )
 }
 
 export default App
+
