@@ -13,10 +13,10 @@ function App() {
     <div className="container">
       <h1>Hello World!</h1>
       <p>欢迎来到 AI随学 - aisuixue.com</p>
-      <p>网站部署成功�?/p>
+      <p>网站部署成功</p>
       <div style={{ margin: '2rem 0' }}>
-        <a 
-          href="#" 
+        <a
+          href="#"
           onClick={(e) => {
             e.preventDefault()
             setCurrentPage('game')
@@ -38,4 +38,3 @@ function App() {
 }
 
 export default App
-
