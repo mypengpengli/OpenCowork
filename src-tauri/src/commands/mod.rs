@@ -1,7 +1,7 @@
 use crate::capture::CaptureManager;
 use crate::model::{ModelManager, ChatWithToolsResult, ToolCall};
 use crate::storage::{Config, StorageManager, SummaryRecord, SearchQuery, TimeRange};
-use crate::skills::{SkillManager, SkillMetadata, Skill};
+use crate::skills::{SkillManager, SkillMetadata, Skill, SkillsWatcher};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use chrono::{Duration, Local, NaiveDateTime, TimeZone};
 use std::collections::{HashMap, HashSet};
@@ -10,8 +10,8 @@ use std::fs;
 use std::io::{self, BufRead, BufReader};
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Arc;
-use tauri::{AppHandle, State, Emitter};
+use std::sync::{Arc, Mutex};
+use tauri::{AppHandle, State, Emitter, Manager};
 use tauri_plugin_shell::ShellExt;
 use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex as TokioMutex;
@@ -28,6 +28,7 @@ pub struct AppState {
     pub capture_manager: Arc<TokioMutex<CaptureManager>>,
     pub storage_manager: Arc<StorageManager>,
     pub request_cancellations: Arc<TokioMutex<HashMap<String, CancellationToken>>>,
+    pub skills_watcher: Mutex<Option<SkillsWatcher>>,
 }
 
 const MIN_RECENT_DETAIL_RECORDS: usize = 20;
@@ -49,6 +50,7 @@ impl AppState {
             capture_manager: Arc::new(TokioMutex::new(CaptureManager::new())),
             storage_manager: Arc::new(StorageManager::new()),
             request_cancellations: Arc::new(TokioMutex::new(HashMap::new())),
+            skills_watcher: Mutex::new(None),
         }
     }
 }

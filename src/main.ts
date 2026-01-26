@@ -8,6 +8,7 @@ import HistoryView from './views/HistoryView.vue'
 import NotificationView from './views/NotificationView.vue'
 import { useChatStore } from './stores/chat'
 import { useLocaleStore } from './stores/locale'
+import { useSkillsStore } from './stores/skills'
 import { translate } from './i18n'
 
 const router = createRouter({
@@ -29,6 +30,7 @@ app.mount('#app')
 
 const chatStore = useChatStore(pinia)
 const localeStore = useLocaleStore(pinia)
+const skillsStore = useSkillsStore(pinia)
 const startupGraceMs = 2000
 let lastAlertTimestamp: string | null = formatLocalTimestamp(new Date(Date.now() - startupGraceMs))
 
@@ -71,6 +73,7 @@ async function syncLocaleWithSystem() {
 }
 
 syncLocaleWithSystem()
+skillsStore.startSkillsWatcher()
 
 const t = (key: string, params?: Record<string, string | number>) =>
   translate(localeStore.locale, key, params)

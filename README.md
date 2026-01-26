@@ -2,7 +2,7 @@
 
 OpenCowork is designed to stay simple and lightweight. It focuses on two core capabilities: screen monitoring and the Skills system. Because Skills are infinitely extensible, OpenCowork includes built-in creation, management, update, and deletion of Skills. You can ask the model to generate a Skill for any workflow (for example, a file-organization Skill), or import an existing Skill. If a Skill has flaws, you can have the model revise it or edit `SKILL.md` yourself.
 
-[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](https://github.com/mypengpengli/OpenCowork)
+[![Version](https://img.shields.io/badge/version-0.2.5-blue.svg)](https://github.com/mypengpengli/OpenCowork)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/mypengpengli/OpenCowork?style=social)](https://github.com/mypengpengli/OpenCowork)
 
@@ -135,7 +135,8 @@ Worried about token consumption? OpenCowork uses perceptual hashing to compare f
 - **Vue 3 + TypeScript**: Modern frontend, smooth experience
 - **Dual Model Support**: Cloud API (OpenAI/Claude) or local Ollama
 - **Two-Layer Storage**: Raw records + smart aggregation, balancing detail and efficiency
-- **Privacy First**: All data stored locally, screenshots never saved to disk
+- **Privacy First**: All data stored locally; screenshots are saved on disk and governed by retention settings
+- **Skills Hot Reload**: Edit `SKILL.md` and the in-app list updates automatically
 - **Tool Use Support**: AI can autonomously create, modify, and delete skills
 - **Global Prompts**: Save personal info once, auto-inject into every conversation
 
@@ -181,9 +182,11 @@ macOS:   ~/Library/Application Support/opencowork/data/
 Linux:   ~/.local/share/opencowork/data/
 ```
 
+Skills live under `<data>/skills` and edits are picked up automatically.
+
 **Privacy Guarantee**:
 - All data stored locally only
-- Screenshots are not saved to disk, only AI-analyzed text summaries
+- Screenshots are stored locally for analysis and can be purged by retention settings
 - Images are sent to AI providers during API calls
 
 ## Build

@@ -1,6 +1,10 @@
 mod parser;
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use tauri::Emitter;
 use serde::{Deserialize, Serialize};
 use crate::storage::StorageManager;
 
@@ -202,7 +206,9 @@ impl SkillManager {
         let instructions = ensure_resource_section(instructions);
         let content = format!(
             "---\nname: {}\ndescription: {}\n---\n\n{}",
-            name, description, instructions
+            yaml_quote(name),
+            yaml_quote(description),
+            instructions
         );
 
         std::fs::write(&skill_md, content)
@@ -235,7 +241,9 @@ impl SkillManager {
         let instructions = ensure_resource_section(instructions);
         let content = format!(
             "---\nname: {}\ndescription: {}\n---\n\n{}",
-            name, description, instructions
+            yaml_quote(name),
+            yaml_quote(description),
+            instructions
         );
 
         std::fs::write(&skill_md, content)
@@ -313,6 +321,23 @@ Run scripts/run.ps1 via Bash/run_command and set cwd to the skill directory.",
     result
 }
 
+fn yaml_quote(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len() + 2);
+    escaped.push('"');
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped.push('"');
+    escaped
+}
+
 fn ensure_scaffold_files(skill_dir: &Path) -> Result<(), String> {
     let scripts_dir = skill_dir.join("scripts");
     let references_dir = skill_dir.join("references");
@@ -333,6 +358,50 @@ fn ensure_scaffold_files(skill_dir: &Path) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+pub type SkillsWatcher = RecommendedWatcher;
+
+pub fn start_skills_watcher(app_handle: &tauri::AppHandle) -> Result<SkillsWatcher, String> {
+    let skills_dir = SkillManager::new().get_skills_dir().clone();
+    let app_handle = app_handle.clone();
+    let last_emit = Arc::new(Mutex::new(Instant::now().checked_sub(Duration::from_secs(5)).unwrap_or_else(Instant::now)));
+    let last_emit_guard = Arc::clone(&last_emit);
+
+    let mut watcher = notify::recommended_watcher(move |res| {
+        let event: notify::Event = match res {
+            Ok(event) => event,
+            Err(err) => {
+                eprintln!("Skills watcher error: {}", err);
+                return;
+            }
+        };
+        if !matches!(
+            event.kind,
+            EventKind::Create(_)
+                | EventKind::Modify(_)
+                | EventKind::Remove(_)
+                | EventKind::Any
+        ) {
+            return;
+        }
+
+        let now = Instant::now();
+        let mut last_emit_at = last_emit_guard.lock().unwrap();
+        if now.duration_since(*last_emit_at) < Duration::from_millis(250) {
+            return;
+        }
+        *last_emit_at = now;
+
+        let _ = app_handle.emit("skills-changed", ());
+    })
+    .map_err(|e| format!("Create skills watcher failed: {}", e))?;
+
+    watcher
+        .watch(&skills_dir, RecursiveMode::Recursive)
+        .map_err(|e| format!("Watch skills dir failed: {}", e))?;
+
+    Ok(watcher)
 }
 
 impl Default for SkillManager {

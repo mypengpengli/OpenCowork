@@ -20,6 +20,9 @@ export const useSkillsStore = defineStore('skills', () => {
   const availableSkills = ref<SkillMetadata[]>([])
   const isLoading = ref(false)
   const skillsDir = ref<string>('')
+  let isWatching = false
+  let unlisten: (() => void) | null = null
+  let reloadTimer: ReturnType<typeof setTimeout> | null = null
 
   async function loadSkills() {
     isLoading.value = true
@@ -79,6 +82,37 @@ export const useSkillsStore = defineStore('skills', () => {
     }
   }
 
+  async function startSkillsWatcher() {
+    if (isWatching) return
+    isWatching = true
+    try {
+      const { listen } = await import('@tauri-apps/api/event')
+      unlisten = await listen('skills-changed', () => {
+        if (reloadTimer) {
+          clearTimeout(reloadTimer)
+        }
+        reloadTimer = setTimeout(() => {
+          loadSkills()
+        }, 250)
+      })
+    } catch (error) {
+      console.error('Failed to watch skills changes:', error)
+      isWatching = false
+    }
+  }
+
+  function stopSkillsWatcher() {
+    if (unlisten) {
+      unlisten()
+      unlisten = null
+    }
+    if (reloadTimer) {
+      clearTimeout(reloadTimer)
+      reloadTimer = null
+    }
+    isWatching = false
+  }
+
   return {
     availableSkills,
     isLoading,
@@ -88,5 +122,7 @@ export const useSkillsStore = defineStore('skills', () => {
     createSkill,
     deleteSkill,
     getSkillsDir,
+    startSkillsWatcher,
+    stopSkillsWatcher,
   }
 })

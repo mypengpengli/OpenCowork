@@ -1,8 +1,9 @@
 use chrono::{DateTime, Local, Duration, Timelike};
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::PathBuf;
 use std::collections::HashMap;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
 
 // ============ 配置结构 ============
 
@@ -284,9 +285,10 @@ impl StorageManager {
     pub fn new() -> Self {
         let base_dir = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
         let mut data_dir = base_dir.join("opencowork").join("data");
-        if !data_dir.exists() {
-            let legacy_dir = base_dir.join("screen-assistant").join("data");
-            if legacy_dir.exists() {
+        let legacy_dir = base_dir.join("screen-assistant").join("data");
+        if !data_dir.exists() && legacy_dir.exists() {
+            if let Err(err) = migrate_legacy_data_dir(&legacy_dir, &data_dir) {
+                eprintln!("Failed to migrate legacy data dir: {}", err);
                 data_dir = legacy_dir;
             }
         }
@@ -760,6 +762,45 @@ impl StorageManager {
         serde_json::from_str(&content)
             .map_err(|e| format!("解析失败: {}", e))
     }
+}
+
+fn migrate_legacy_data_dir(legacy_dir: &Path, new_dir: &Path) -> Result<(), String> {
+    if new_dir.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = new_dir.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Create data dir parent failed: {}", e))?;
+    }
+
+    match fs::rename(legacy_dir, new_dir) {
+        Ok(()) => return Ok(()),
+        Err(err) => {
+            eprintln!("Rename legacy data dir failed: {}", err);
+        }
+    }
+
+    copy_dir_recursively(legacy_dir, new_dir)
+        .map_err(|e| format!("Copy legacy data dir failed: {}", e))?;
+    Ok(())
+}
+
+fn copy_dir_recursively(src: &Path, dst: &Path) -> io::Result<()> {
+    if !dst.exists() {
+        fs::create_dir_all(dst)?;
+    }
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir_recursively(&from, &to)?;
+        } else if file_type.is_file() {
+            fs::copy(&from, &to)?;
+        }
+    }
+    Ok(())
 }
 
 fn sanitize_profile_name(name: &str) -> Result<String, String> {

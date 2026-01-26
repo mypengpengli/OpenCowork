@@ -7,6 +7,8 @@ mod assistant;
 mod skills;
 
 use crate::storage::StorageManager;
+use crate::skills::start_skills_watcher;
+use tauri::Manager;
 use commands::{
     AppState,
     get_config, save_config, list_profiles, save_profile, load_profile, delete_profile,
@@ -40,6 +42,19 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState::new())
+        .setup(|app| {
+            match start_skills_watcher(&app.handle()) {
+                Ok(watcher) => {
+                    let state = app.state::<AppState>();
+                    let mut guard = state.skills_watcher.lock().unwrap();
+                    *guard = Some(watcher);
+                }
+                Err(err) => {
+                    eprintln!("Skills watcher init failed: {}", err);
+                }
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_config,
             get_system_locale,

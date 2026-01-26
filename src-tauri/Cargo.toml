@@ -1,6 +1,6 @@
 [package]
 name = "opencowork"
-version = "0.2.4"
+version = "0.2.5"
 description = "OpenCowork - AI-powered screen monitoring assistant"
 authors = ["you"]
 edition = "2021"
@@ -38,6 +38,7 @@ sys-locale = "0.3"
 zip = "0.6"
 quick-xml = "0.31"
 urlencoding = "2"
+notify = "6"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.60", features = ["Win32_Globalization"] }
