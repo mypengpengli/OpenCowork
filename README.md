@@ -46,6 +46,11 @@ Forgot what that error was? Just ask:
 
 OpenCowork understands natural language and supports multi-turn conversations, like chatting with a colleague who knows your entire work history.
 
+### ?? Intent Recognition & Proactive Assistance
+
+OpenCowork infers your current intent and scene from on-screen context (coding, browsing, form-filling, etc.). It uses that signal to surface timely hints and suggest the most relevant Skills.
+
+
 ### 🔧 Skills System — Infinitely Extensible
 
 This is OpenCowork's most powerful feature.
@@ -133,6 +138,7 @@ Worried about token consumption? OpenCowork uses perceptual hashing to compare f
 
 - **Tauri 2 + Rust**: Native performance, minimal resource usage
 - **Vue 3 + TypeScript**: Modern frontend, smooth experience
+- **Intent Recognition**: Detects user intent/scene to drive proactive tips and skill suggestions
 - **Dual Model Support**: Cloud API (OpenAI/Claude) or local Ollama
 - **Two-Layer Storage**: Raw records + smart aggregation, balancing detail and efficiency
 - **Privacy First**: All data stored locally; screenshots are saved on disk and governed by retention settings
@@ -245,6 +251,10 @@ OpenCowork 以简单轻便为主，只提供屏幕监控和 Skills 两大核心�
 
 OpenCowork 理解自然语言，支持多轮对话，就像和一个了解你所有操作历史的同事聊天一样。
 
+### 🧭 意图识别与主动帮助
+
+OpenCowork 会基于屏幕内容识别当前意图和场景（如编码、浏览、填表等），并据此主动提示、推荐合适的技能。
+
 ### 🔧 Skills 系统 —— 无限扩展的能力
 
 这是 OpenCowork 最强大的特性。
@@ -332,9 +342,11 @@ OpenCowork 理解自然语言，支持多轮对话，就像和一个了解你所
 
 - **Tauri 2 + Rust**：原生性能，极低资源占用
 - **Vue 3 + TypeScript**：现代化前端，流畅体验
+- **意图识别**：识别用户意图/场景，驱动主动提示与技能推荐
 - **双模型支持**：云端 API (OpenAI/Claude) 或本地 Ollama，灵活选择
 - **两层存储架构**：原始记录 + 智能聚合，平衡详细度与存储效率
-- **隐私优先**：所有数据本地存储，截图不落盘
+- **隐私优先**：所有数据本地存储；截图会保存在本地并受保留策略控制
+- **Skills 热重载**：编辑 `SKILL.md` 后列表自动刷新
 - **Tool Use 支持**：AI 可自主调用工具，实现技能的创建、修改、删除
 - **全局提示词**：保存一次个人信息，自动注入每次对话
 
@@ -432,7 +444,7 @@ Linux:   ~/.local/share/opencowork/data/
 
 **隐私保障**：
 - 所有数据仅存储在本地
-- 截图不保存到磁盘，仅保存 AI 分析后的文字摘要
+- 截图会保存在本地用于分析，可按保留策略清理
 - API 调用时图片会发送到对应的 AI 服务商
 
 ## 常见问题
