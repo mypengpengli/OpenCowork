@@ -20,6 +20,8 @@ use commands::{
     open_release_page,
     // Skills 相关命令
     list_skills, get_skill, invoke_skill, create_skill, delete_skill, get_skills_dir, open_skills_dir,
+    // 通知窗口相关命令
+    show_notification, close_notification, focus_main_window,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -67,6 +69,10 @@ pub fn run() {
             delete_skill,
             get_skills_dir,
             open_skills_dir,
+            // 通知窗口相关命令
+            show_notification,
+            close_notification,
+            focus_main_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

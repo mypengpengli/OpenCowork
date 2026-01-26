@@ -184,3 +184,98 @@ The `skill-creator` skill helps users create new skills. It includes:
   - `manage_skill`: Create/update/delete skills (action: "create" | "update" | "delete")
 - `commands/mod.rs`: `chat_with_assistant()` handles tool calls loop
 - Only works with API providers (OpenAI/Claude), Ollama falls back to text hints
+
+## Intent Recognition System
+
+OpenCowork includes an intelligent intent recognition system that analyzes screen content and proactively provides help.
+
+### How It Works
+
+```
+Screen Capture → AI Analysis → Intent Recognition → Notification (if needed)
+                                    ↓
+                              Scene Classification
+                                    ↓
+                              Skill Matching (future)
+```
+
+### AI Analysis Output
+
+The screen analyzer outputs structured JSON with intent recognition fields:
+
+```json
+{
+  "summary": "操作概述",
+  "detail": "详细描述",
+  "app": "应用名称",
+  "intent": "用户意图（安装软件、写作、出行规划、代码开发等）",
+  "scene": "场景标识（github-install、writing、travel、coding等）",
+  "needs_help": true/false,
+  "help_type": "error | reminder | suggestion | info",
+  "has_issue": true/false,
+  "issue_type": "问题类型",
+  "issue_summary": "问题摘要",
+  "suggestion": "具体建议",
+  "urgency": "high | medium | low",
+  "confidence": 0.0-1.0,
+  "related_skill": "相关技能名称（预留）"
+}
+```
+
+### Supported Scenes
+
+| Scene ID | Description | Example Triggers |
+|----------|-------------|------------------|
+| `github-install` | GitHub project installation | git clone, README instructions |
+| `npm-install` | NPM package installation | npm install errors |
+| `coding` | Code development | IDE with errors, debugging |
+| `writing` | Document writing | Word, text editors |
+| `travel` | Travel planning | Maps, booking sites |
+| `browsing` | General web browsing | Browser navigation |
+| `file-management` | File operations | Explorer, file dialogs |
+| `communication` | Chat/email | Messaging apps |
+
+### Notification Trigger Conditions
+
+A notification is shown when ALL of these are true:
+1. `needs_help` = true OR `has_issue` = true
+2. `confidence` >= threshold (default 0.7)
+3. `urgency` = "high" or "medium"
+4. Not suppressed (e.g., not OpenCowork's own UI)
+5. Cooldown period passed (default 120s for same issue)
+
+## Notification Window
+
+A small popup window appears in the bottom-right corner of the screen when the AI detects something worth notifying.
+
+### Window Properties
+- **Size**: 380x140 pixels
+- **Position**: Bottom-right corner (20px margin)
+- **Style**: Frameless, always-on-top, transparent background
+- **Behavior**: 10-second countdown, auto-close, click to open main window
+
+### Related Commands (Tauri)
+- `show_notification`: Create/show notification window with alert data
+- `close_notification`: Close the notification window
+- `focus_main_window`: Bring main window to front
+
+### Frontend Files
+| File | Purpose |
+|------|---------|
+| `views/NotificationView.vue` | Notification popup UI with countdown |
+| `main.ts` | Alert event listener, triggers notification |
+
+### Event Flow
+```
+Backend (capture/mod.rs)
+    ↓ emit("assistant-alert", AlertData)
+Frontend (main.ts)
+    ↓ listen("assistant-alert")
+    ↓ invoke("show_notification", ...)
+Backend (commands/mod.rs)
+    ↓ create WebviewWindow("notification")
+NotificationView.vue
+    ↓ 10s countdown
+    ↓ click → invoke("focus_main_window") + invoke("close_notification")
+```
+

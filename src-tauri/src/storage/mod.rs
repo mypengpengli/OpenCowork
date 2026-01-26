@@ -238,6 +238,15 @@ pub struct SummaryRecord {
     pub detail: String,
     #[serde(default)]
     pub detail_ref: String,
+    // 意图识别相关字段
+    #[serde(default)]
+    pub intent: String,           // 用户意图（如：安装软件、写作、出行规划、代码开发）
+    #[serde(default)]
+    pub scene: String,            // 场景标识（如：github-install、writing、travel、coding）
+    #[serde(default)]
+    pub urgency: String,          // 紧急程度: high/medium/low
+    #[serde(default)]
+    pub related_skill: String,    // 预留：相关 Skill 名称
 }
 
 /// 聚合记录（5分钟级别）

@@ -219,37 +219,81 @@ async fn capture_and_analyze_with_diff(
         config.capture.recent_detail_limit,
     );
     let prompt = format!(
-        r#"你是屏幕截图分析器。请严格只输出一个可解析的 JSON 对象，不要输出任何解释、Markdown 或代码块。
+        r#"你是屏幕截图分析器和智能助手。请严格只输出一个可解析的 JSON 对象，不要输出任何解释、Markdown 或代码块。
 
 必须包含以下字段：
 {{
   "summary": "30-50字的操作概述，描述用户正在做什么、使用什么工具、处理什么内容",
   "detail": "对画面的详细描述：包含主要窗口/界面区域、可见文本、按钮、输入输出、错误提示等具体细节",
   "app": "主要应用或窗口名称，无法判断写 Unknown",
-  "has_issue": true 或 false（布尔值）,
+  "intent": "用户意图（如：安装软件、写作、出行规划、代码开发、浏览网页、文件管理、通讯聊天、学习研究）",
+  "scene": "场景标识（如：github-install、npm-install、writing、travel、coding、browsing、file-management、communication）",
+  "needs_help": true 或 false（是否需要主动提供帮助或建议）,
+  "help_type": "帮助类型（error=错误提醒、reminder=操作提醒、suggestion=优化建议、info=信息提示），不需要帮助时为空字符串",
+  "has_issue": true 或 false（是否检测到明确的错误或问题）,
   "issue_type": "问题类型（仅在 has_issue 为 true 时填写，否则空字符串）",
   "issue_summary": "问题摘要（仅在 has_issue 为 true 时填写，否则空字符串）",
-  "suggestion": "解决建议（仅在 has_issue 为 true 时填写，否则空字符串）：根据 detail 中的错误信息，指出最可能的原因，并给出具体可操作的解决步骤",
-  "confidence": 对整体分析结果准确性的置信度，0.0-1.0 之间的数值
+  "suggestion": "帮助内容或解决建议（在 needs_help 为 true 时填写具体可操作的建议）",
+  "urgency": "紧急程度：high（需立即处理）、medium（建议关注）、low（仅供参考）",
+  "confidence": 对整体分析结果准确性的置信度，0.0-1.0 之间的数值,
+  "related_skill": "可选的相关技能名称（如 github-helper、travel-assistant 等），没有则为空字符串"
 }}
 
-示例输出：
+意图识别场景示例：
+1. GitHub/代码安装场景：用户在 GitHub 页面、终端执行 git/npm/pip 命令
+   - 检查是否漏了步骤、命令拼写错误、环境未配置
+   - scene: "github-install" 或 "npm-install"
+2. 写作场景：用户在文档编辑器、邮件撰写
+   - 检查明显的拼写错误、格式问题
+   - scene: "writing"
+3. 出行规划场景：用户在地图、机票酒店网站
+   - 可提醒天气、注意事项
+   - scene: "travel"
+4. 代码开发场景：用户在 IDE 中编写代码
+   - 检查编译错误、语法问题
+   - scene: "coding"
+
+判定规则：
+- needs_help 为 true 的情况：检测到错误、发现用户可能遗漏步骤、有优化建议、有相关信息可提供
+- has_issue 仅在出现明确错误/失败/阻塞提示时为 true
+- urgency 判断：错误=high，可能遗漏=medium，一般建议=low
+- suggestion 要具体可操作，不要泛泛而谈
+
+示例输出（安装场景检测到问题）：
 {{
-  "summary": "在 VS Code 中编辑 OpenCowork 项目的 Rust 后端代码，正在修改 capture 模块的截图分析提示词",
-  "detail": "VS Code 编辑器窗口最大化显示。左侧资源管理器展开 src-tauri/src/capture 目录，当前打开文件为 mod.rs。编辑区域显示第 215-260 行的 Rust 代码，包含 format! 宏和 JSON 字符串。光标位于第 238 行。右上角显示 Git 分支为 master。底部状态栏显示 UTF-8 编码、LF 换行符、Rust 语言模式。底部终端面板已折叠。窗口标题为 'mod.rs - OpenCowork - Visual Studio Code'。",
-  "app": "Visual Studio Code",
+  "summary": "在终端执行 npm install 命令安装项目依赖",
+  "detail": "Windows Terminal 窗口显示 npm install 命令输出，出现红色错误提示 'npm ERR! code ENOENT'，提示找不到 package.json 文件",
+  "app": "Windows Terminal",
+  "intent": "安装软件",
+  "scene": "npm-install",
+  "needs_help": true,
+  "help_type": "error",
+  "has_issue": true,
+  "issue_type": "npm安装错误",
+  "issue_summary": "找不到 package.json 文件",
+  "suggestion": "请先确认当前目录是否正确，使用 cd 命令进入项目根目录（包含 package.json 的目录）后再执行 npm install",
+  "urgency": "high",
+  "confidence": 0.95,
+  "related_skill": ""
+}}
+
+示例输出（正常浏览无需帮助）：
+{{
+  "summary": "在 Chrome 浏览器中浏览新闻网站",
+  "detail": "Chrome 浏览器窗口显示某新闻网站首页，页面正常加载，用户正在阅读文章列表",
+  "app": "Google Chrome",
+  "intent": "浏览网页",
+  "scene": "browsing",
+  "needs_help": false,
+  "help_type": "",
   "has_issue": false,
   "issue_type": "",
   "issue_summary": "",
   "suggestion": "",
-  "confidence": 0.95
+  "urgency": "low",
+  "confidence": 0.9,
+  "related_skill": ""
 }}
-
-判定规则：
-- 只有当截图中出现明确错误/失败/阻塞提示时，has_issue 才为 true
-- issue_type 用 2-6 个词概括问题（如 编译错误/网络错误/权限不足/界面卡死）
-- issue_summary 必须具体指出错误内容或提示文本，不要泛泛而谈
-- detail 只描述可见信息，不要猜测未显示的内容
 
 近期记录（仅供参考，可能不完整）：
 {}
@@ -330,21 +374,40 @@ async fn capture_and_analyze_with_diff(
         confidence: parsed.confidence,
         detail: parsed.detail.clone(),
         detail_ref: screenshot_ref.unwrap_or_default(),
+        // 意图识别相关字段
+        intent: parsed.intent.clone(),
+        scene: parsed.scene.clone(),
+        urgency: parsed.urgency.clone(),
+        related_skill: parsed.related_skill.clone(),
     };
 
     storage_manager.save_summary(&summary)?;
 
-    // 8. 如果检测到困难，主动推送提示
-    if parsed.has_issue && should_emit {
+    // 8. 如果需要帮助（包括错误或主动建议），推送提示
+    let should_notify = (parsed.has_issue || parsed.needs_help)
+        && parsed.confidence >= alert_threshold
+        && !should_suppress_alert(&parsed)
+        && (parsed.urgency == "high" || parsed.urgency == "medium");
+
+    if should_notify && should_emit {
         let alert_message = AssistantAlert {
             timestamp: timestamp.clone(),
-            issue_type: parsed.issue_type,
-            message: issue_message,
-            suggestion: parsed.suggestion,
+            issue_type: parsed.issue_type.clone(),
+            message: issue_message.clone(),
+            suggestion: parsed.suggestion.clone(),
+            intent: parsed.intent.clone(),
+            scene: parsed.scene.clone(),
+            help_type: parsed.help_type.clone(),
+            urgency: parsed.urgency.clone(),
+            related_skill: parsed.related_skill.clone(),
         };
 
         let mut alert_log = String::new();
         alert_log.push_str(&format!("time: {}\n", timestamp));
+        alert_log.push_str(&format!("intent: {}\n", alert_message.intent));
+        alert_log.push_str(&format!("scene: {}\n", alert_message.scene));
+        alert_log.push_str(&format!("help_type: {}\n", alert_message.help_type));
+        alert_log.push_str(&format!("urgency: {}\n", alert_message.urgency));
         alert_log.push_str(&format!("issue_type: {}\n", alert_message.issue_type));
         alert_log.push_str(&format!("message: {}\n", alert_message.message));
         if !alert_message.suggestion.is_empty() {
@@ -372,6 +435,12 @@ pub struct AssistantAlert {
     pub issue_type: String,
     pub message: String,
     pub suggestion: String,
+    // 意图识别相关字段
+    pub intent: String,
+    pub scene: String,
+    pub help_type: String,
+    pub urgency: String,
+    pub related_skill: String,
 }
 
 fn should_suppress_alert(parsed: &AnalysisResult) -> bool {
@@ -485,6 +554,13 @@ struct AnalysisResult {
     issue_message: String,
     suggestion: String,
     confidence: f32,
+    // 意图识别相关字段
+    intent: String,           // 用户意图
+    scene: String,            // 场景标识
+    needs_help: bool,         // 是否需要帮助
+    help_type: String,        // 帮助类型: error/reminder/suggestion/info
+    urgency: String,          // 紧急程度: high/medium/low
+    related_skill: String,    // 预留：相关 Skill
 }
 
 fn parse_analysis(analysis: &str) -> AnalysisResult {
@@ -518,6 +594,14 @@ fn parse_analysis(analysis: &str) -> AnalysisResult {
         let suggestion = json.get("suggestion").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let confidence = parse_confidence(&json, has_issue);
 
+        // 解析意图识别相关字段
+        let intent = json.get("intent").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let scene = json.get("scene").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let needs_help = json.get("needs_help").and_then(|v| v.as_bool()).unwrap_or(has_issue);
+        let help_type = json.get("help_type").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let urgency = json.get("urgency").and_then(|v| v.as_str()).unwrap_or("low").to_string();
+        let related_skill = json.get("related_skill").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
         if !has_issue && (!issue_type.is_empty() || !issue_message.is_empty() || !suggestion.is_empty()) {
             has_issue = true;
         }
@@ -531,6 +615,12 @@ fn parse_analysis(analysis: &str) -> AnalysisResult {
             issue_message,
             suggestion,
             confidence,
+            intent,
+            scene,
+            needs_help,
+            help_type,
+            urgency,
+            related_skill,
         };
     }
 
@@ -553,6 +643,12 @@ fn parse_analysis(analysis: &str) -> AnalysisResult {
         issue_message: if has_issue { analysis.to_string() } else { String::new() },
         suggestion: String::new(),
         confidence: if has_issue { 0.4 } else { 0.2 },
+        intent: String::new(),
+        scene: String::new(),
+        needs_help: has_issue,
+        help_type: if has_issue { "error".to_string() } else { String::new() },
+        urgency: if has_issue { "medium".to_string() } else { "low".to_string() },
+        related_skill: String::new(),
     }
 }
 

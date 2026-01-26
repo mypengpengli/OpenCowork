@@ -5,6 +5,7 @@ import App from './App.vue'
 import MainView from './views/MainView.vue'
 import SettingsView from './views/SettingsView.vue'
 import HistoryView from './views/HistoryView.vue'
+import NotificationView from './views/NotificationView.vue'
 import { useChatStore } from './stores/chat'
 import { useLocaleStore } from './stores/locale'
 import { translate } from './i18n'
@@ -15,6 +16,7 @@ const router = createRouter({
     { path: '/', name: 'main', component: MainView },
     { path: '/settings', name: 'settings', component: SettingsView },
     { path: '/history', name: 'history', component: HistoryView },
+    { path: '/notification', name: 'notification', component: NotificationView },
   ],
 })
 
@@ -96,17 +98,24 @@ function formatAlertContent(
 async function setupAlertListener() {
   try {
     const { listen } = await import('@tauri-apps/api/event')
+    const { invoke } = await import('@tauri-apps/api/core')
     await listen<{
       timestamp: string
       issue_type?: string
       error_type?: string
       message: string
       suggestion?: string
-    }>('assistant-alert', (event) => {
+      intent?: string
+      scene?: string
+      help_type?: string
+      urgency?: string
+      related_skill?: string
+    }>('assistant-alert', async (event) => {
       const alert = event.payload
       const alertType = alert.issue_type || alert.error_type || 'unknown'
       const content = formatAlertContent(alertType, alert.message, alert.suggestion)
 
+      // 添加到聊天记录
       chatStore.addAlert({
         role: 'assistant',
         content,
@@ -114,6 +123,20 @@ async function setupAlertListener() {
         alertKey: `${alertType}|${alert.message}|${alert.timestamp}`,
       })
       lastAlertTimestamp = alert.timestamp
+
+      // 显示右下角通知窗口
+      try {
+        await invoke('show_notification', {
+          intent: alert.intent || '',
+          scene: alert.scene || '',
+          helpType: alert.help_type || 'info',
+          summary: alert.message || '',
+          suggestion: alert.suggestion || '',
+          urgency: alert.urgency || 'medium',
+        })
+      } catch (err) {
+        console.error('显示通知窗口失败:', err)
+      }
     })
   } catch (error) {
     console.error('设置提醒监听失败:', error)

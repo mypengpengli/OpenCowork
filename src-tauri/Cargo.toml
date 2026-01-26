@@ -37,6 +37,7 @@ walkdir = "2"
 sys-locale = "0.3"
 zip = "0.6"
 quick-xml = "0.31"
+urlencoding = "2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.60", features = ["Win32_Globalization"] }

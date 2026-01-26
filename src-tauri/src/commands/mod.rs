@@ -1050,6 +1050,12 @@ pub struct AlertRecord {
     pub message: String,
     pub suggestion: String,
     pub confidence: f32,
+    // 意图识别相关字段
+    pub intent: String,
+    pub scene: String,
+    pub help_type: String,
+    pub urgency: String,
+    pub related_skill: String,
 }
 
 #[tauri::command]
@@ -1121,6 +1127,11 @@ pub async fn get_recent_alerts(since: Option<String>) -> Result<Vec<AlertRecord>
             message,
             suggestion: record.suggestion,
             confidence: record.confidence,
+            intent: record.intent,
+            scene: record.scene,
+            help_type: if record.has_issue { "error".to_string() } else { "info".to_string() },
+            urgency: record.urgency,
+            related_skill: record.related_skill,
         });
     }
 
@@ -1233,6 +1244,100 @@ pub async fn open_skills_dir(app_handle: AppHandle) -> Result<(), String> {
         .shell()
         .open(dir_str, None)
         .map_err(|e| e.to_string())
+}
+
+// ==================== 通知窗口相关命令 ====================
+
+/// 显示通知窗口
+#[tauri::command]
+pub async fn show_notification(
+    app_handle: AppHandle,
+    intent: String,
+    scene: String,
+    help_type: String,
+    summary: String,
+    suggestion: String,
+    urgency: String,
+) -> Result<(), String> {
+    use tauri::{WebviewWindowBuilder, WebviewUrl, PhysicalPosition, PhysicalSize};
+
+    // 检查是否已存在通知窗口
+    if let Some(window) = app_handle.get_webview_window("notification") {
+        // 窗口已存在，发送更新事件
+        let _ = window.emit("notification-update", serde_json::json!({
+            "intent": intent,
+            "scene": scene,
+            "help_type": help_type,
+            "summary": summary,
+            "suggestion": suggestion,
+            "urgency": urgency,
+        }));
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+
+    // 获取主显示器信息以定位窗口到右下角
+    let window_width = 380u32;
+    let window_height = 140u32;
+    let margin = 20i32;
+
+    // 创建新的通知窗口
+    let notification_url = format!(
+        "/notification?intent={}&scene={}&help_type={}&summary={}&suggestion={}&urgency={}",
+        urlencoding::encode(&intent),
+        urlencoding::encode(&scene),
+        urlencoding::encode(&help_type),
+        urlencoding::encode(&summary),
+        urlencoding::encode(&suggestion),
+        urlencoding::encode(&urgency),
+    );
+
+    let window = WebviewWindowBuilder::new(
+        &app_handle,
+        "notification",
+        WebviewUrl::App(notification_url.into()),
+    )
+    .title("OpenCowork 提醒")
+    .inner_size(window_width as f64, window_height as f64)
+    .resizable(false)
+    .decorations(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .transparent(true)
+    .build()
+    .map_err(|e| format!("创建通知窗口失败: {}", e))?;
+
+    // 尝试将窗口定位到右下角
+    if let Some(monitor) = window.current_monitor().ok().flatten() {
+        let monitor_size = monitor.size();
+        let monitor_position = monitor.position();
+        let x = monitor_position.x + monitor_size.width as i32 - window_width as i32 - margin;
+        let y = monitor_position.y + monitor_size.height as i32 - window_height as i32 - margin - 40; // 40 for taskbar
+        let _ = window.set_position(PhysicalPosition::new(x, y));
+    }
+
+    Ok(())
+}
+
+/// 关闭通知窗口
+#[tauri::command]
+pub async fn close_notification(app_handle: AppHandle) -> Result<(), String> {
+    if let Some(window) = app_handle.get_webview_window("notification") {
+        window.close().map_err(|e| format!("关闭通知窗口失败: {}", e))?;
+    }
+    Ok(())
+}
+
+/// 聚焦主窗口
+#[tauri::command]
+pub async fn focus_main_window(app_handle: AppHandle) -> Result<(), String> {
+    if let Some(window) = app_handle.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        window.set_focus().map_err(|e| format!("聚焦主窗口失败: {}", e))?;
+    }
+    Ok(())
 }
 
 const MAX_ATTACHMENT_BYTES: u64 = 5 * 1024 * 1024;
