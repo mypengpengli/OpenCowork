@@ -709,7 +709,29 @@ impl ApiClient {
                         "instructions": {
                             "type": "string",
                             "description": "技能的详细指令，Markdown 格式（create/update 时必填）"
-                        }
+                        },
+                        "allowed_tools": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "??????????????????? Read, Grep?"
+                        },
+                        "model": {
+                            "type": "string",
+                            "description": "??????????????"
+                        },
+                        "context": {
+                            "type": "string",
+                            "description": "???????????screen ? none?"
+                        },
+                        "user_invocable": {
+                            "type": "boolean",
+                            "description": "????????????? /skill ??"
+                        },
+                        "metadata": {
+                            "type": "object",
+                            "additionalProperties": { "type": "string" },
+                            "description": "?????????????"
+                        },
                     },
                     "required": ["action", "name"]
                 }),

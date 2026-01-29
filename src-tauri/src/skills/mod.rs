@@ -94,6 +94,15 @@ pub struct SkillMetadata {
     pub metadata: Option<std::collections::HashMap<String, String>>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct SkillFrontmatterOverrides {
+    pub allowed_tools: Option<Vec<String>>,
+    pub model: Option<String>,
+    pub context: Option<String>,
+    pub user_invocable: Option<bool>,
+    pub metadata: Option<std::collections::HashMap<String, String>>,
+}
+
 /// 完整的 Skill（激活时加载）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Skill {
@@ -185,80 +194,95 @@ impl SkillManager {
     }
 
     /// 创建新的 skill
+
     pub fn create_skill(
         &self,
         name: &str,
         description: &str,
         instructions: &str,
     ) -> Result<(), String> {
-        // 验证 name 格式
+        self.create_skill_with_meta(name, description, instructions, SkillFrontmatterOverrides::default())
+    }
+
+    /// ??????? skill
+    pub fn create_skill_with_meta(
+        &self,
+        name: &str,
+        description: &str,
+        instructions: &str,
+        overrides: SkillFrontmatterOverrides,
+    ) -> Result<(), String> {
+        // ?? name ??
         Self::validate_skill_name(name)?;
 
         let skill_dir = self.skills_dir.join(name);
         if skill_dir.exists() {
-            return Err(format!("Skill '{}' 已存在", name));
+            return Err(format!("Skill '{}' ???", name));
         }
 
         std::fs::create_dir_all(&skill_dir)
-            .map_err(|e| format!("创建 skill 目录失败: {}", e))?;
+            .map_err(|e| format!("?? skill ????: {}", e))?;
 
         let skill_md = skill_dir.join("SKILL.md");
         let instructions = ensure_resource_section(instructions);
-        let content = format!(
-            "---\nname: {}\ndescription: {}\n---\n\n{}",
-            yaml_quote(name),
-            yaml_quote(description),
-            instructions
-        );
+        let frontmatter = build_skill_frontmatter(name, description, None, &overrides);
+        let content = format!("---\n{}\n---\n\n{}", frontmatter, instructions);
 
         std::fs::write(&skill_md, content)
-            .map_err(|e| format!("写入 SKILL.md 失败: {}", e))?;
+            .map_err(|e| format!("?? SKILL.md ??: {}", e))?;
 
         for dir in ["scripts", "references", "assets"] {
             std::fs::create_dir_all(skill_dir.join(dir))
-                .map_err(|e| format!("创建 {} 目录失败: {}", dir, e))?;
+                .map_err(|e| format!("?? {} ????: {}", dir, e))?;
         }
         ensure_scaffold_files(&skill_dir)?;
 
         Ok(())
     }
 
-    /// 更新已存在的 skill
+    /// ?????? skill
     pub fn update_skill(
         &self,
         name: &str,
         description: &str,
         instructions: &str,
     ) -> Result<(), String> {
+        self.update_skill_with_meta(name, description, instructions, SkillFrontmatterOverrides::default())
+    }
+
+    /// ??????? skill
+    pub fn update_skill_with_meta(
+        &self,
+        name: &str,
+        description: &str,
+        instructions: &str,
+        overrides: SkillFrontmatterOverrides,
+    ) -> Result<(), String> {
         Self::validate_skill_name(name)?;
 
         let skill_dir = self.skills_dir.join(name);
         if !skill_dir.exists() {
-            return Err(format!("Skill '{}' 不存在", name));
+            return Err(format!("Skill '{}' ???", name));
         }
 
         let skill_md = skill_dir.join("SKILL.md");
+        let existing = SkillParser::parse_metadata(&skill_md).ok();
         let instructions = ensure_resource_section(instructions);
-        let content = format!(
-            "---\nname: {}\ndescription: {}\n---\n\n{}",
-            yaml_quote(name),
-            yaml_quote(description),
-            instructions
-        );
+        let frontmatter = build_skill_frontmatter(name, description, existing.as_ref(), &overrides);
+        let content = format!("---\n{}\n---\n\n{}", frontmatter, instructions);
 
         std::fs::write(&skill_md, content)
-            .map_err(|e| format!("更新 SKILL.md 失败: {}", e))?;
+            .map_err(|e| format!("?? SKILL.md ??: {}", e))?;
 
         for dir in ["scripts", "references", "assets"] {
             std::fs::create_dir_all(skill_dir.join(dir))
-                .map_err(|e| format!("创建 {} 目录失败: {}", dir, e))?;
+                .map_err(|e| format!("?? {} ????: {}", dir, e))?;
         }
         ensure_scaffold_files(&skill_dir)?;
 
         Ok(())
     }
 
-    /// 删除 skill
     pub fn delete_skill(&self, name: &str) -> Result<(), String> {
         Self::validate_skill_name(name)?;
 
@@ -336,6 +360,67 @@ fn yaml_quote(value: &str) -> String {
     }
     escaped.push('"');
     escaped
+}
+
+
+fn build_skill_frontmatter(
+    name: &str,
+    description: &str,
+    existing: Option<&SkillMetadata>,
+    overrides: &SkillFrontmatterOverrides,
+) -> String {
+    let mut lines = Vec::new();
+    lines.push(format!("name: {}", yaml_quote(name)));
+    lines.push(format!("description: {}", yaml_quote(description)));
+
+    let allowed_tools = overrides.allowed_tools.clone().or_else(|| existing.and_then(|m| m.allowed_tools.clone()));
+    if let Some(list) = allowed_tools {
+        let cleaned: Vec<String> = list
+            .into_iter()
+            .map(|item| item.trim().to_string())
+            .filter(|item| !item.is_empty())
+            .collect();
+        if !cleaned.is_empty() {
+            lines.push(format!("allowed-tools: {}", yaml_quote(&cleaned.join(", "))));
+        }
+    }
+
+    let model = overrides.model.clone().or_else(|| existing.and_then(|m| m.model.clone()));
+    if let Some(model) = model {
+        let model = model.trim();
+        if !model.is_empty() {
+            lines.push(format!("model: {}", yaml_quote(model)));
+        }
+    }
+
+    let context = overrides.context.clone().or_else(|| existing.and_then(|m| m.context.clone()));
+    if let Some(context) = context {
+        let context = context.trim();
+        if !context.is_empty() {
+            lines.push(format!("context: {}", yaml_quote(context)));
+        }
+    }
+
+    let user_invocable = overrides.user_invocable.or_else(|| existing.and_then(|m| m.user_invocable));
+    if let Some(value) = user_invocable {
+        lines.push(format!("user-invocable: {}", value));
+    }
+
+    let metadata = overrides.metadata.clone().or_else(|| existing.and_then(|m| m.metadata.clone()));
+    if let Some(meta) = metadata {
+        if !meta.is_empty() {
+            lines.push("metadata:".to_string());
+            let mut keys: Vec<String> = meta.keys().cloned().collect();
+            keys.sort();
+            for key in keys {
+                if let Some(value) = meta.get(&key) {
+                    lines.push(format!("  {}: {}", yaml_quote(&key), yaml_quote(value)));
+                }
+            }
+        }
+    }
+
+    lines.join("\n")
 }
 
 fn ensure_scaffold_files(skill_dir: &Path) -> Result<(), String> {

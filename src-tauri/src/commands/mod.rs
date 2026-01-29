@@ -1,7 +1,7 @@
 use crate::capture::CaptureManager;
 use crate::model::{ModelManager, ChatWithToolsResult, ToolCall};
 use crate::storage::{Config, StorageManager, SummaryRecord, SearchQuery, TimeRange};
-use crate::skills::{SkillManager, SkillMetadata, Skill, SkillsWatcher};
+use crate::skills::{SkillManager, SkillMetadata, Skill, SkillsWatcher, SkillFrontmatterOverrides};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use chrono::{Duration, Local, NaiveDateTime, TimeZone};
 use std::collections::{HashMap, HashSet};
@@ -1880,6 +1880,7 @@ fn tool_allowed_in_skill(tool_name: &str, allowed_tools: &Option<Vec<String>>) -
     if list.is_empty() {
         return false;
     }
+
     let target = normalize_tool_name(tool_name);
     for item in list {
         let trimmed = item.trim();
@@ -1896,6 +1897,67 @@ fn tool_allowed_in_skill(tool_name: &str, allowed_tools: &Option<Vec<String>>) -
         }
     }
     false
+}
+
+fn parse_optional_string(value: Option<&serde_json::Value>) -> Option<String> {
+    value
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+fn parse_string_list(value: Option<&serde_json::Value>) -> Option<Vec<String>> {
+    let value = value?;
+    let mut items = Vec::new();
+    match value {
+        serde_json::Value::Array(values) => {
+            for entry in values {
+                if let Some(s) = entry.as_str() {
+                    let s = s.trim();
+                    if !s.is_empty() {
+                        items.push(s.to_string());
+                    }
+                }
+            }
+        }
+        serde_json::Value::String(text) => {
+            for part in text.split(|c: char| c == ',' || c == '\n' || c == '\t') {
+                for token in part.split_whitespace() {
+                    let token = token.trim();
+                    if !token.is_empty() {
+                        items.push(token.to_string());
+                    }
+                }
+            }
+        }
+        _ => return None,
+    }
+
+    if items.is_empty() {
+        None
+    } else {
+        Some(items)
+    }
+}
+
+fn parse_metadata_map(value: Option<&serde_json::Value>) -> Option<HashMap<String, String>> {
+    let value = value?;
+    let obj = value.as_object()?;
+    let mut map = HashMap::new();
+    for (key, val) in obj {
+        if let Some(s) = val.as_str() {
+            let s = s.trim();
+            if !s.is_empty() {
+                map.insert(key.clone(), s.to_string());
+            }
+        }
+    }
+    if map.is_empty() {
+        None
+    } else {
+        Some(map)
+    }
 }
 
 fn normalize_tool_name(name: &str) -> String {
@@ -2279,17 +2341,27 @@ fn build_tool_system_prompt(context: &str) -> String {
     let shell_hint = build_shell_hint();
     let context = format!("{}\n\n## Environment\n{}", context, shell_hint);
     format!(
-        r#"你是一个屏幕监控助手，帮助用户回顾和理解他们的操作历史。
+        r#"你是一个屏幕监控助手，帮助用户回忆和理解他们的操作历史。
 
 {}
 
-请根据上述操作记录，回答用户的问题。如果记录中没有相关信息，请如实告知。
+请根据上面的操作记录回答用户的问题。如果记录中没有相关信息，请如实说明。
 
-你有以下能力：
-1. 如果用户的请求需要使用某个技能来完成，请调用 invoke_skill 工具。
-2. 如果用户想要创建、修改或删除技能，请调用 manage_skill 工具。
-3. 你可以使用 Read/Write/Edit/Update/Glob/Grep 工具读写和搜索文件。
-4. 你可以使用 Bash/run_command 工具运行命令（受权限限制）。"#,
+## 任务处理方式
+1. 先确认目标和约束；信息不足时先问 1-2 个关键问题。
+2. 判断是否需要技能/工具：
+   - 有合适技能就调用 invoke_skill。
+   - 需要新增/调整能力就用 manage_skill（create/update），并尽量最小化 allowed_tools，选择合适 context（screen/none），必要时设置 user_invocable。
+3. 需要工具时先给简短计划（1-3 步），再调用工具。
+4. 工具返回后先检查错误：有失败就解释原因、换方案或请用户授权/补充信息；不要重复相同工具+参数超过 2 次。
+5. 输出结果：结论 + 关键依据/步骤 + 可选下一步。
+6. 若被中断/取消：给出已完成步骤、当前状态和继续所需信息。
+
+## 你拥有以下能力
+1. 如果需要某个技能完成任务，请调用 invoke_skill。
+2. 如果需要创建/更新/删除技能，请调用 manage_skill。
+3. 可用 Read/Write/Edit/Update/Glob/Grep 读取与搜索文件。
+4. 可用 Bash/run_command 运行命令（受权限限制）。"#,
         context
     )
 }
@@ -2327,7 +2399,7 @@ async fn run_tool_loop(
                         format!("未执行的工具: {}", pending.join(", "))
                     };
                     return Ok(format!(
-                        "提示: 工具调用已达到上限({}次)，本次不再继续调用工具。{}",
+                        "已停止工具调用以避免循环（上限 {} 次）。{}\\n你可以：1) 缩小任务范围 2) 指定下一步要做的操作 3) 检查工具权限/路径。",
                         MAX_TOOL_LOOPS, pending_hint
                     ));
                 }
@@ -2393,10 +2465,10 @@ async fn run_tool_loop(
                     let pending_hint = if pending.is_empty() {
                         String::new()
                     } else {
-                        format!("Repeated tools: {}", pending.join(", "))
+                        format!("重复失败的工具: {}", pending.join(", "))
                     };
                     return Ok(format!(
-                        "Hint: detected repeated tool calls with failures; stopped to avoid a loop. {}",
+                        "检测到工具重复失败，已暂停以避免循环。{}\\n建议：确认参数/权限，或提供替代方案与更多信息。",
                         pending_hint
                     ));
                 }
@@ -2563,6 +2635,14 @@ async fn execute_tool_call(
                 let detail = format!("{} {}", action, name);
                 progress.emit_step("管理技能".to_string(), Some(detail));
             }
+            let overrides = SkillFrontmatterOverrides {
+                allowed_tools: parse_string_list(args_value.get("allowed_tools")),
+                model: parse_optional_string(args_value.get("model")),
+                context: parse_optional_string(args_value.get("context")),
+                user_invocable: args_value.get("user_invocable").and_then(|v| v.as_bool()),
+                metadata: parse_metadata_map(args_value.get("metadata")),
+            };
+
             match action {
                 "create" => {
                     let description = args_value
@@ -2573,7 +2653,7 @@ async fn execute_tool_call(
                         .get("instructions")
                         .and_then(|v| v.as_str())
                         .ok_or_else(|| "创建技能需要 instructions 参数".to_string())?;
-                    match skill_manager.create_skill(name, description, instructions) {
+                    match skill_manager.create_skill_with_meta(name, description, instructions, overrides.clone()) {
                         Ok(_) => Ok(format!("技能 `{}` 创建成功。", name)),
                         Err(e) => Ok(format!("创建技能失败: {}", e)),
                     }
@@ -2587,7 +2667,7 @@ async fn execute_tool_call(
                         .get("instructions")
                         .and_then(|v| v.as_str())
                         .ok_or_else(|| "更新技能需要 instructions 参数".to_string())?;
-                    match skill_manager.update_skill(name, description, instructions) {
+                    match skill_manager.update_skill_with_meta(name, description, instructions, overrides.clone()) {
                         Ok(_) => Ok(format!("技能 `{}` 更新成功。", name)),
                         Err(e) => Ok(format!("更新技能失败: {}", e)),
                     }

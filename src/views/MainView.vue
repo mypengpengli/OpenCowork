@@ -148,6 +148,23 @@ function toggleProcessExpanded() {
   processExpanded.value = !processExpanded.value
 }
 
+function truncateText(value: string, max = 80): string {
+  const trimmed = value.trim()
+  if (trimmed.length <= max) return trimmed
+  return trimmed.slice(0, max).trimEnd() + '...'
+}
+
+function buildCancelledSummary(): string {
+  const steps = processItems.value.filter(item => item.stage === 'step')
+  const recent = steps.slice(-5)
+  const lines = recent.map(item => {
+    const detail = item.detail ? ` (${truncateText(item.detail, 60)})` : ''
+    return `- ${item.message}${detail}`
+  })
+  const summary = lines.length > 0 ? lines.join('\n') : t('main.chat.cancelledNoSteps')
+  return `${t('main.chat.cancelledSummaryTitle')}\n${summary}\n\n${t('main.chat.cancelledResumeHint')}`
+}
+
 async function loadProcessSetting() {
   try {
     const { invoke } = await import('@tauri-apps/api/core')
@@ -367,6 +384,11 @@ async function stopRequest() {
   }
 
   message.info(t('main.chat.cancelled'))
+  chatStore.addMessage({
+    role: 'assistant',
+    content: buildCancelledSummary(),
+    timestamp: new Date().toISOString(),
+  })
 }
 
 async function applyToolModeSelection() {
