@@ -51,6 +51,14 @@ const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'])
 const TOOL_MODE_UNSET_ERROR = 'TOOLS_MODE_UNSET'
 const REQUEST_CANCELLED_ERROR = 'REQUEST_CANCELLED'
 const cancelledRequestIds = new Set<string>()
+const CLIPBOARD_IMAGE_EXT: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'image/bmp': 'bmp',
+}
+
 
 interface PendingRequest {
   message: string
@@ -231,6 +239,70 @@ async function addAttachments() {
     }
   } catch (error) {
     message.error(String(error))
+  }
+}
+
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : ''
+      const base64 = result.split(',')[1] || ''
+      if (!base64) {
+        reject(new Error('empty base64'))
+        return
+      }
+      resolve(base64)
+    }
+    reader.onerror = () => reject(reader.error || new Error('read failed'))
+    reader.readAsDataURL(file)
+  })
+}
+
+function buildClipboardImageName(file: File): string {
+  if (file.name) return file.name
+  const ext = CLIPBOARD_IMAGE_EXT[file.type] || 'png'
+  return `clipboard-${Date.now()}.${ext}`
+}
+
+async function handlePaste(event: ClipboardEvent) {
+  const items = event.clipboardData?.items
+  if (!items || items.length === 0) return
+
+  const imageItems = Array.from(items).filter(
+    item => item.kind === 'file' && item.type.startsWith('image/')
+  )
+  if (imageItems.length === 0) return
+
+  event.preventDefault()
+  for (const item of imageItems) {
+    if (attachments.value.length >= MAX_ATTACHMENTS) {
+      message.warning(t('main.attachments.limit'))
+      break
+    }
+    const file = item.getAsFile()
+    if (!file) continue
+
+    try {
+      const base64 = await readFileAsBase64(file)
+      const { invoke } = await import('@tauri-apps/api/core')
+      const name = buildClipboardImageName(file)
+      const savedPath = await invoke<string>('save_clipboard_image', {
+        base64,
+        name,
+      })
+      attachments.value = attachments.value.concat([
+        {
+          id: `att_${Date.now()}_${attachmentSeq++}`,
+          name,
+          path: savedPath,
+          kind: 'image',
+        },
+      ])
+    } catch (error) {
+      message.error(t('main.attachments.pasteFailed', { error: String(error) }))
+    }
   }
 }
 
@@ -756,6 +828,7 @@ onUnmounted(() => {
             :placeholder="t('main.input.placeholder')"
             :autosize="{ minRows: 1, maxRows: 4 }"
             @keydown="handleKeydown"
+            @paste="handlePaste"
           />
           <NButton
             v-if="isLoading"

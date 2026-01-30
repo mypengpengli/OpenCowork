@@ -35,6 +35,7 @@ const MIN_RECENT_DETAIL_RECORDS: usize = 20;
 const RELEASE_PAGE_URL: &str = "https://github.com/mypengpengli/OpenCowork/releases/latest";
 const TOOL_MODE_UNSET_ERROR: &str = "TOOLS_MODE_UNSET";
 const REQUEST_CANCELLED_ERROR: &str = "REQUEST_CANCELLED";
+const TOOL_ERROR_PREFIX: &str = "TOOL_ERROR:";
 const MAX_TOOL_LOOPS: usize = 999;
 const MAX_REPEAT_TOOL_LOOPS: usize = 3;
 const DEFAULT_MAX_READ_BYTES: usize = 200_000;
@@ -222,6 +223,62 @@ struct AttachmentPayload {
     text: String,
     image_urls: Vec<String>,
     image_base64: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn save_clipboard_image(base64: String, name: Option<String>) -> Result<String, String> {
+    let storage = StorageManager::new();
+    let data_dir = storage.get_data_dir().to_path_buf();
+    let attachments_dir = data_dir.join("attachments");
+    fs::create_dir_all(&attachments_dir)
+        .map_err(|e| format!("创建附件目录失败: {}", e))?;
+
+    let mut filename = sanitize_attachment_name(name.as_deref());
+    if filename.is_empty() {
+        filename = format!("clipboard-{}.png", Local::now().timestamp_millis());
+    } else if Path::new(&filename).extension().is_none() {
+        filename.push_str(".png");
+    }
+
+    let encoded = match base64.find("base64,") {
+        Some(idx) => &base64[(idx + "base64,".len())..],
+        None => base64.as_str(),
+    };
+    let encoded = encoded.trim();
+    if encoded.is_empty() {
+        return Err("剪贴板图片为空".to_string());
+    }
+
+    let bytes = BASE64
+        .decode(encoded.as_bytes())
+        .map_err(|e| format!("解码剪贴板图片失败: {}", e))?;
+    if bytes.len() > MAX_ATTACHMENT_BYTES as usize {
+        return Err("剪贴板图片过大，超过 5MB 限制".to_string());
+    }
+
+    let mut file_path = attachments_dir.join(&filename);
+    if file_path.exists() {
+        let stem = Path::new(&filename)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("clipboard");
+        let ext = Path::new(&filename)
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("png");
+        let mut counter = 1u32;
+        loop {
+            let candidate = attachments_dir.join(format!("{}-{}.{}", stem, counter, ext));
+            if !candidate.exists() {
+                file_path = candidate;
+                break;
+            }
+            counter += 1;
+        }
+    }
+
+    fs::write(&file_path, bytes).map_err(|e| format!("保存剪贴板图片失败: {}", e))?;
+    Ok(file_path.to_string_lossy().to_string())
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -665,6 +722,12 @@ async fn execute_skill_internal(
 
 ## 屏幕活动记录
 {}
+
+## Error recovery and capability expansion
+- Treat tool errors as normal; diagnose (paths/permissions/params) and retry with adjusted inputs.
+- Prefer existing tools/skills first; if capability is missing, use manage_skill to create/update with minimal allowed_tools.
+- If an external tool/project is needed, prefer mature options, ask the user for approval before download/install, then encapsulate it as a skill.
+- If still blocked, report what was tried and ask for the missing info or permission.
 
 请根据技能指令和屏幕活动记录，完成用户的请求。"#,
         skill.metadata.name,
@@ -1498,6 +1561,22 @@ fn build_attachment_payload(attachments: &[AttachmentInput]) -> AttachmentPayloa
         image_urls,
         image_base64,
     }
+}
+
+fn sanitize_attachment_name(name: Option<&str>) -> String {
+    let Some(name) = name else {
+        return String::new();
+    };
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    Path::new(trimmed)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .trim()
+        .to_string()
 }
 
 fn attachment_name(path: &str, name: &str) -> String {
@@ -2334,6 +2413,10 @@ fn parse_exit_code(output: &str) -> Option<i32> {
 }
 
 fn is_tool_failure(output: &str) -> bool {
+    let trimmed = output.trim_start();
+    if trimmed.starts_with(TOOL_ERROR_PREFIX) {
+        return true;
+    }
     parse_exit_code(output).map_or(false, |code| code != 0)
 }
 
@@ -2356,6 +2439,12 @@ fn build_tool_system_prompt(context: &str) -> String {
 4. 工具返回后先检查错误：有失败就解释原因、换方案或请用户授权/补充信息；不要重复相同工具+参数超过 2 次。
 5. 输出结果：结论 + 关键依据/步骤 + 可选下一步。
 6. 若被中断/取消：给出已完成步骤、当前状态和继续所需信息。
+
+## Error recovery and capability expansion
+- Treat tool errors as normal; diagnose (paths/permissions/params) and retry with adjusted inputs.
+- Prefer existing tools/skills first; if capability is missing, use manage_skill to create/update with minimal allowed_tools.
+- If an external tool/project is needed, prefer mature options, ask the user for approval before download/install, then encapsulate it as a skill.
+- If still blocked, report what was tried and ask for the missing info or permission.
 
 ## 你拥有以下能力
 1. 如果需要某个技能完成任务，请调用 invoke_skill。
@@ -2412,7 +2501,7 @@ async fn run_tool_loop(
                 let mut tool_results = Vec::new();
                 for call in &calls {
                     check_cancel(cancel_token)?;
-                    let output = if let Some(token) = cancel_token {
+                    let output_result = if let Some(token) = cancel_token {
                         await_with_cancel(
                             token,
                             execute_tool_call(
@@ -2428,7 +2517,7 @@ async fn run_tool_loop(
                                 progress,
                             ),
                         )
-                        .await?
+                        .await
                     } else {
                         execute_tool_call(
                             &call,
@@ -2442,7 +2531,16 @@ async fn run_tool_loop(
                             None,
                             progress,
                         )
-                        .await?
+                        .await
+                    };
+                    let output = match output_result {
+                        Ok(text) => text,
+                        Err(err) => {
+                            if err == TOOL_MODE_UNSET_ERROR || err == REQUEST_CANCELLED_ERROR {
+                                return Err(err);
+                            }
+                            format!("{} {}", TOOL_ERROR_PREFIX, err)
+                        }
                     };
                     tool_results.push((call.id.clone(), output));
                 }
@@ -2525,7 +2623,7 @@ async fn execute_tool_call(
         "Read" | "Write" | "Edit" | "Update" | "Glob" | "Grep" | "Bash" | "run_command"
     );
     if needs_skill_permission && !tool_allowed_in_skill(tool_name, allowed_tools) {
-        return Ok(format!("工具未被 skill 允许: {}", tool_name));
+        return Err(format!("工具未被 skill 允许: {}", tool_name));
     }
 
     match tool_name {

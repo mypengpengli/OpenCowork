@@ -27,6 +27,7 @@ import {
 import { useSkillsStore } from '../stores/skills'
 import { useLocaleStore } from '../stores/locale'
 import { useI18n } from '../i18n'
+import { open } from '@tauri-apps/plugin-dialog'
 
 interface ProfileEntry {
   name: string
@@ -157,6 +158,24 @@ const drawerTitle = computed(() => {
 function listToText(values?: string[]) {
   if (!values || values.length === 0) return ''
   return values.join('\n')
+}
+
+
+async function selectWorkspaceDir() {
+  try {
+    const selection = await open({
+      directory: true,
+      multiple: false,
+    })
+    if (!selection) return
+
+    const path = Array.isArray(selection) ? selection[0] : selection
+    const existing = textToList(formValue.value.toolAllowedDirs)
+    const next = [path, ...existing.filter(item => item !== path)]
+    formValue.value.toolAllowedDirs = next.join('\n')
+  } catch (error) {
+    message.error(String(error))
+  }
 }
 
 function textToList(value: string) {
@@ -1138,6 +1157,10 @@ async function installUpdate() {
                   :autosize="{ minRows: 2, maxRows: 6 }"
                   :placeholder="t('settings.form.toolsAllowedDirsPlaceholder')"
                 />
+                <NSpace align="center" size="small" class="tools-dir-actions">
+                  <NButton size="small" @click="selectWorkspaceDir">{{ t('settings.form.toolsPickWorkspace') }}</NButton>
+                  <span class="tools-dir-hint">{{ t('settings.form.toolsAllowedDirsHint') }}</span>
+                </NSpace>
               </NFormItem>
             </NCard>
 
@@ -1236,6 +1259,15 @@ async function installUpdate() {
 </template>
 
 <style scoped>
+.tools-dir-actions {
+  margin-top: 6px;
+}
+
+.tools-dir-hint {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
 .settings-layout {
   height: 100%;
 }

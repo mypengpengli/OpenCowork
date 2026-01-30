@@ -20,6 +20,7 @@ use commands::{
     clear_summaries, clear_all_summaries,
     open_screenshots_dir,
     open_release_page,
+    save_clipboard_image,
     // Skills 相关命令
     list_skills, get_skill, invoke_skill, create_skill, delete_skill, get_skills_dir, open_skills_dir,
     // 通知窗口相关命令
@@ -76,6 +77,7 @@ pub fn run() {
             clear_all_summaries,
             open_screenshots_dir,
             open_release_page,
+            save_clipboard_image,
             // Skills 相关命令
             list_skills,
             get_skill,
