@@ -94,11 +94,13 @@ const filteredSkills = computed(() => {
   )
 })
 
-// 鐩戝惉杈撳叆鍙樺寲锛屾锟?/ 瑙﹀彂
+// 监听输入变化，检测 / 触发
 watch(inputMessage, (newVal) => {
-  // 妫�娴嬫槸鍚︿互 / 寮�锟?  if (newVal.startsWith('/')) {
+  // 检测是否以 / 开头
+  if (newVal.startsWith('/')) {
     const afterSlash = newVal.slice(1)
-    // 濡傛灉 / 鍚庨潰娌℃湁绌烘牸锛屾樉绀烘彁锟?    if (!afterSlash.includes(' ')) {
+    // 如果 / 后面没有空格，显示提示
+    if (!afterSlash.includes(' ')) {
       skillFilterText.value = afterSlash
       showSkillHints.value = true
       selectedSkillIndex.value = 0
