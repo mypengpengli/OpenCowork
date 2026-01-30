@@ -16,7 +16,7 @@ import {
 } from 'naive-ui'
 import { Send, PlayCircleOutline, StopCircleOutline, AttachOutline, CloseOutline, DocumentOutline } from '@vicons/ionicons5'
 import { open } from '@tauri-apps/plugin-dialog'
-import { useChatStore, type ChatAttachment, type AttachmentKind } from '../stores/chat'
+import { useChatStore, type ChatAttachment, type AttachmentKind, type ToolStep } from '../stores/chat'
 import { useCaptureStore } from '../stores/capture'
 import { useSkillsStore } from '../stores/skills'
 import MessageItem from '../components/Chat/MessageItem.vue'
@@ -94,13 +94,11 @@ const filteredSkills = computed(() => {
   )
 })
 
-// 监听输入变化，检测 / 触发
+// 监听输入变化，检�?/ 触发
 watch(inputMessage, (newVal) => {
-  // 检测是否以 / 开头
-  if (newVal.startsWith('/')) {
+  // 检测是否以 / 开�?  if (newVal.startsWith('/')) {
     const afterSlash = newVal.slice(1)
-    // 如果 / 后面没有空格，显示提示
-    if (!afterSlash.includes(' ')) {
+    // 如果 / 后面没有空格，显示提�?    if (!afterSlash.includes(' ')) {
       skillFilterText.value = afterSlash
       showSkillHints.value = true
       selectedSkillIndex.value = 0
@@ -164,6 +162,14 @@ function buildCancelledSummary(): string {
   const summary = lines.length > 0 ? lines.join('\n') : t('main.chat.cancelledNoSteps')
   return `${t('main.chat.cancelledSummaryTitle')}\n${summary}\n\n${t('main.chat.cancelledResumeHint')}`
 }
+
+function collectToolSteps(): ToolStep[] {
+  if (!showProcessPanel.value) return []
+  return processItems.value
+    .filter(item => item.stage === 'step')
+    .map(item => ({ title: item.message, detail: item.detail || undefined }))
+}
+
 
 async function loadProcessSetting() {
   try {
@@ -257,6 +263,7 @@ async function executeRequest(payload: PendingRequest, includeUserMessage: boole
 
   activeRequestId.value = payload.requestId
   await loadProcessSetting()
+  processItems.value = []
   if (showProcessPanel.value) {
     startProcessPanel()
   }
@@ -294,7 +301,7 @@ async function executeRequest(payload: PendingRequest, includeUserMessage: boole
       appendProcessItem({
         request_id: payload.requestId,
         stage: 'step',
-        message: '调用技能',
+        message: '调用技�?,
         detail: skillName ? `/${skillName}` : undefined,
         timestamp: new Date().toISOString(),
       })
@@ -324,10 +331,13 @@ async function executeRequest(payload: PendingRequest, includeUserMessage: boole
       return
     }
 
+    const toolStepsSnapshot = collectToolSteps()
+
     chatStore.addMessage({
       role: 'assistant',
       content: response,
       timestamp: new Date().toISOString(),
+      toolSteps: toolStepsSnapshot.length > 0 ? toolStepsSnapshot : undefined,
     })
   } catch (error) {
     const errorText = String(error)
@@ -565,7 +575,7 @@ async function toggleCapture() {
       await captureStore.startCapture()
     }
   } catch (error) {
-    console.error('切换监控状态失败:', error)
+    console.error('切换监控状态失�?', error)
   }
 }
 
@@ -1048,3 +1058,8 @@ onUnmounted(() => {
   flex: 1;
 }
 </style>
+
+
+
+
+

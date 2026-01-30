@@ -1,4 +1,4 @@
-import { computed } from 'vue'
+﻿import { computed } from 'vue'
 import { useLocaleStore, type Locale } from './stores/locale'
 
 type Messages = Record<string, string>
@@ -73,6 +73,10 @@ const messages: Record<Locale, Messages> = {
     'main.chat.cancelledSummaryTitle': '已中断当前请求。已执行步骤：',
     'main.chat.cancelledNoSteps': '暂无已执行步骤记录。',
     'main.chat.cancelledResumeHint': '如需继续，请告诉我"继续"并补充缺失信息。',
+    'main.chat.expandContent': '展开全文',
+    'main.chat.collapseContent': '收起',
+    'main.chat.expandDetail': '展开详情',
+    'main.chat.collapseDetail': '收起详情',
     'main.chat.invokingSkill': '🔧 正在调用技能 `/{skill}`...',
     'alert.detectedTitle': '⚠️ **检测到问题**',
     'alert.typeLine': '**类型**: {{type}}',
@@ -435,6 +439,10 @@ const messages: Record<Locale, Messages> = {
     'main.chat.cancelledSummaryTitle': 'Request cancelled. Completed steps:',
     'main.chat.cancelledNoSteps': 'No recorded steps yet.',
     'main.chat.cancelledResumeHint': 'To continue, say "continue" and provide any missing info.',
+    'main.chat.expandContent': 'Show more',
+    'main.chat.collapseContent': 'Show less',
+    'main.chat.expandDetail': 'Show details',
+    'main.chat.collapseDetail': 'Hide details',
     'main.chat.invokingSkill': '🔧 Calling skill `/{skill}`...',
     'alert.detectedTitle': '⚠️ **Issue detected**',
     'alert.typeLine': '**Type**: {{type}}',

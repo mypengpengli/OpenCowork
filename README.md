@@ -25,6 +25,12 @@ Have you ever experienced this?
 
 ## What Can It Do?
 
+## Recent updates
+
+- Rich chat rendering: Markdown (GFM tables, code blocks, lists) with safe sanitization
+- Tool steps cards: backend progress steps are shown as compact cards in assistant replies
+- Long output folding: lengthy messages auto-collapse with expand/collapse
+
 ### 🎯 Automatically Capture Every Error
 
 From the moment you click "Start Monitoring", OpenCowork works like a tireless assistant, continuously watching your screen. Whether it's compilation errors, runtime exceptions, or console warnings — **every detail is recorded**.
@@ -229,6 +235,12 @@ OpenCowork 以简单轻便为主，只提供屏幕监控和 Skills 两大核心�
 **OpenCowork 就是为解决这些痛点而生的。**
 
 ## 它能做什么？
+
+## 最近更新
+
+- 对话渲染增强：支持 Markdown（表格/代码块/列表）并做安全净化
+- 工具步骤卡片：把后台过程步骤以卡片形式附在回复下
+- 长内容折叠：长消息自动折叠，可展开/收起
 
 ### 🎯 自动捕获每一个错误
 
