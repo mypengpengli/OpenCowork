@@ -303,8 +303,8 @@ async function executeRequest(payload: PendingRequest, includeUserMessage: boole
       appendProcessItem({
         request_id: payload.requestId,
         stage: 'step',
-        message: '调用技�?,
-        detail: skillName ? `/${skillName}` : undefined,
+        message: '\u8c03\u7528\u6280\u80fd',
+        detail: skillName ? '/' + skillName : undefined,
         timestamp: new Date().toISOString(),
       })
 
@@ -315,7 +315,6 @@ async function executeRequest(payload: PendingRequest, includeUserMessage: boole
         attachments: attachmentsPayload.length > 0 ? attachmentsPayload : null,
         request_id: payload.requestId,
       })
-
       chatStore.messages.pop()
       placeholderAdded = false
     } else {
@@ -1060,6 +1059,7 @@ onUnmounted(() => {
   flex: 1;
 }
 </style>
+
 
 
 
