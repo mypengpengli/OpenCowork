@@ -72,7 +72,7 @@ interface PendingRequest {
 
 interface ProgressEventPayload {
   request_id: string
-  stage: 'start' | 'step' | 'done' | 'error'
+  stage: 'start' | 'step' | 'done' | 'error' | 'info'
   message: string
   detail?: string | null
   timestamp: string
@@ -80,7 +80,7 @@ interface ProgressEventPayload {
 
 interface ProgressItem {
   id: string
-  stage: 'start' | 'step' | 'done' | 'error'
+  stage: 'start' | 'step' | 'done' | 'error' | 'info'
   message: string
   detail?: string
   timestamp: string
@@ -1015,6 +1015,7 @@ onUnmounted(() => {
   color: rgba(255, 255, 255, 0.45);
   font-size: 11px;
   word-break: break-word;
+  white-space: pre-wrap;
 }
 
 .attachments-bar {

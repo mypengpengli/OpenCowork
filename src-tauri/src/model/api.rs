@@ -684,6 +684,22 @@ impl ApiClient {
             },
         });
 
+        tools.push(Tool {
+            tool_type: "function".to_string(),
+            function: ToolFunction {
+                name: "progress_update".to_string(),
+                description: "Report a short progress update (plan or milestone) to the background panel. No side effects.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "message": { "type": "string", "description": "Short progress title" },
+                        "detail": { "type": "string", "description": "Optional details or checklist (keep concise)" }
+                    },
+                    "required": ["message"]
+                }),
+            },
+        });
+
         // 1. manage_skill 工具 - 始终可用，用于创建/更新/删除技能
         tools.push(Tool {
             tool_type: "function".to_string(),

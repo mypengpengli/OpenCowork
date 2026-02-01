@@ -330,6 +330,10 @@ impl ProgressEmitter {
         self.emit("start", message.to_string(), None);
     }
 
+    fn emit_info(&self, message: String, detail: Option<String>) {
+        self.emit("info", message, detail);
+    }
+
     fn emit_step(&self, message: String, detail: Option<String>) {
         self.emit("step", message, detail);
     }
@@ -529,6 +533,7 @@ pub async fn chat_with_assistant(
         let system_prompt = build_tool_system_prompt(&context);
         if let Some(ref progress) = progress {
             progress.emit_start("开始处理请求");
+            progress.emit_info("Analyze request & plan".to_string(), None);
         }
         let result = if attachment_payload.image_urls.is_empty()
             && attachment_payload.image_base64.is_empty()
@@ -582,6 +587,10 @@ pub async fn chat_with_assistant(
         }
         response
     } else {
+        if let Some(ref progress) = progress {
+            progress.emit_start("Begin processing request");
+            progress.emit_info("Analyze request & plan".to_string(), None);
+        }
         let skills_hint = if !available_skills.is_empty() {
             let skills_list: Vec<String> = available_skills
                 .iter()
@@ -722,6 +731,11 @@ async fn execute_skill_internal(
 
 ## 屏幕活动记录
 {}
+
+## Execution transparency
+- If the request is ambiguous, ask 1-3 clarifying questions before any tool/file/action. Do not proceed until the user answers.
+- For multi-step tasks, provide a brief plan (1-3 steps) before using tools. If confirmation is needed, ask for it.
+- Use the progress_update tool to report the plan and major milestones so the user can see what is happening.
 
 ## Error recovery and capability expansion
 - Treat tool errors as normal; diagnose (paths/permissions/params) and retry with adjusted inputs.
@@ -1241,6 +1255,7 @@ pub async fn invoke_skill(
     let progress = ProgressEmitter::new(&app_handle, config.ui.show_progress, Some(request_id.clone()));
     if let Some(ref progress) = progress {
         progress.emit_start(&format!("开始执行技能 /{}", name));
+        progress.emit_info("Prepare to run skill".to_string(), None);
         progress.emit_step("调用技能".to_string(), Some(format!("/{}", name)));
     }
     let result = execute_skill_internal(
@@ -2440,6 +2455,11 @@ fn build_tool_system_prompt(context: &str) -> String {
 5. 输出结果：结论 + 关键依据/步骤 + 可选下一步。
 6. 若被中断/取消：给出已完成步骤、当前状态和继续所需信息。
 
+## Execution transparency
+- If the request is ambiguous, ask 1-3 clarifying questions before any tool/file/action. Do not proceed until the user answers.
+- For multi-step tasks, provide a brief plan (1-3 steps) before using tools. If confirmation is needed, ask for it.
+- Use the progress_update tool to report the plan and major milestones so the user can see what is happening.
+
 ## Error recovery and capability expansion
 - Treat tool errors as normal; diagnose (paths/permissions/params) and retry with adjusted inputs.
 - Prefer existing tools/skills first; if capability is missing, use manage_skill to create/update with minimal allowed_tools.
@@ -2776,6 +2796,21 @@ async fn execute_tool_call(
                 },
                 _ => Ok(format!("未知操作: {}", action)),
             }
+        }
+        "progress_update" => {
+            let message = args_value
+                .get("message")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing message parameter".to_string())?;
+            let detail = args_value
+                .get("detail")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            if let Some(progress) = progress {
+                progress.emit_info(message.to_string(), detail);
+            }
+            Ok("ok".to_string())
         }
         _ => Ok(format!("未知工具: {}", tool_name)),
     }

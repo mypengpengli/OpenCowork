@@ -1,9 +1,13 @@
 {
   "identifier": "default",
   "description": "Default capabilities for OpenCowork",
-  "windows": ["main", "notification"],
+  "windows": [
+    "main",
+    "notification"
+  ],
   "permissions": [
     "core:default",
+    "core:event:default",
     "core:window:allow-create",
     "core:window:allow-close",
     "core:window:allow-show",
