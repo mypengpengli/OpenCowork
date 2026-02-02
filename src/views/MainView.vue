@@ -12,6 +12,7 @@ import {
   NModal,
   NRadioGroup,
   NRadio,
+  NSkeleton,
   useMessage,
 } from 'naive-ui'
 import { Send, PlayCircleOutline, StopCircleOutline, AttachOutline, CloseOutline, DocumentOutline } from '@vicons/ionicons5'
@@ -45,6 +46,9 @@ const processStatus = ref<'idle' | 'running' | 'done' | 'error'>('idle')
 const processItems = ref<ProgressItem[]>([])
 const activeRequestId = ref<string | null>(null)
 let progressUnlisten: (() => void) | null = null
+
+// 输入区图片预览
+const attachmentPreviews = ref<Record<string, string>>({})
 
 const MAX_ATTACHMENTS = 6
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'])
@@ -102,12 +106,12 @@ const filteredSkills = computed(() => {
   )
 })
 
-// ��������仯����� / ����
+// ��������仯����� / ����
 watch(inputMessage, (newVal) => {
-  // ����Ƿ��� / ��ͷ
+  // ����Ƿ��� / ��ͷ
   if (newVal.startsWith('/')) {
     const afterSlash = newVal.slice(1)
-    // ��� / ����û�пո���ʾ��ʾ
+    // ��� / ����û�пո���ʾ��ʾ
     if (!afterSlash.includes(' ')) {
       skillFilterText.value = afterSlash
       showSkillHints.value = true
@@ -150,6 +154,10 @@ function finishProcessPanel(status: 'done' | 'error') {
   if (!processVisible.value) return
   processStatus.value = status
   processExpanded.value = false
+  // 如果没有任何步骤，完成后自动隐藏面板
+  if (processItems.value.length === 0) {
+    processVisible.value = false
+  }
 }
 
 function toggleProcessExpanded() {
@@ -236,9 +244,35 @@ async function addAttachments() {
 
     if (next.length > 0) {
       attachments.value = attachments.value.concat(next)
+      // 加载图片预览
+      loadAttachmentPreviews(next)
     }
   } catch (error) {
     message.error(String(error))
+  }
+}
+
+// 加载附件图片预览
+async function loadAttachmentPreviews(items: ChatAttachment[]) {
+  const images = items.filter(a => a.kind === 'image')
+  if (images.length === 0) return
+
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    for (const img of images) {
+      if (attachmentPreviews.value[img.id]) continue
+      try {
+        const base64 = await invoke<string>('read_image_base64', {
+          filePath: img.path,
+          fileType: 'attachment',
+        })
+        attachmentPreviews.value[img.id] = base64
+      } catch (e) {
+        console.error('加载附件预览失败:', img.path, e)
+      }
+    }
+  } catch (e) {
+    console.error('加载附件预览失败:', e)
   }
 }
 
@@ -292,14 +326,15 @@ async function handlePaste(event: ClipboardEvent) {
         base64,
         name,
       })
-      attachments.value = attachments.value.concat([
-        {
-          id: `att_${Date.now()}_${attachmentSeq++}`,
-          name,
-          path: savedPath,
-          kind: 'image',
-        },
-      ])
+      const newAttachment: ChatAttachment = {
+        id: `att_${Date.now()}_${attachmentSeq++}`,
+        name,
+        path: savedPath,
+        kind: 'image',
+      }
+      attachments.value = attachments.value.concat([newAttachment])
+      // 直接使用已有的 base64 作为预览
+      attachmentPreviews.value[newAttachment.id] = `data:${file.type};base64,${base64}`
     } catch (error) {
       message.error(t('main.attachments.pasteFailed', { error: String(error) }))
     }
@@ -308,6 +343,8 @@ async function handlePaste(event: ClipboardEvent) {
 
 function removeAttachment(id: string) {
   attachments.value = attachments.value.filter(item => item.id !== id)
+  // 清理预览缓存
+  delete attachmentPreviews.value[id]
 }
 
 watch(
@@ -587,6 +624,43 @@ function clearChat() {
   chatStore.clearMessages()
 }
 
+// 重新生成消息
+async function handleRegenerate(msg: { role: string; content: string; timestamp: string }) {
+  if (isLoading.value) return
+
+  // 找到这条消息之前的最后一条用户消息
+  const msgIndex = chatStore.messages.findIndex(m => m.timestamp === msg.timestamp)
+  if (msgIndex <= 0) return
+
+  // 找到对应的用户消息
+  let userMsgIndex = msgIndex - 1
+  while (userMsgIndex >= 0 && chatStore.messages[userMsgIndex].role !== 'user') {
+    userMsgIndex--
+  }
+  if (userMsgIndex < 0) return
+
+  const userMsg = chatStore.messages[userMsgIndex]
+
+  // 删除从用户消息之后的所有消息
+  chatStore.messages.splice(userMsgIndex + 1)
+
+  // 构建历史（不包含被删除的消息）
+  const historyForModel = chatStore.chatHistoryForModel
+    .slice(0, -1) // 移除最后一条（刚删除的 AI 回复）
+    .map(m => ({ role: m.role, content: m.content }))
+
+  const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  const payload: PendingRequest = {
+    message: userMsg.content,
+    history: historyForModel,
+    attachments: userMsg.attachments?.map(item => ({ ...item })) || [],
+    isSkill: false,
+    requestId,
+  }
+
+  await executeRequest(payload, false)
+}
+
 function scrollToBottom() {
   if (messagesContainer.value) {
     messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
@@ -648,7 +722,7 @@ async function toggleCapture() {
       await captureStore.startCapture()
     }
   } catch (error) {
-    console.error('切换监控状态失�?', error)
+    console.error('切换监控状态失�?', error)
   }
 }
 
@@ -724,14 +798,30 @@ onUnmounted(() => {
       <!-- 消息列表 -->
       <div class="messages-container" ref="messagesContainer">
         <div v-if="chatStore.messages.length === 0" class="empty-state">
+          <div class="empty-icon">
+            <svg width="80" height="80" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" fill="rgba(99, 226, 183, 0.3)"/>
+              <circle cx="12" cy="12" r="9" stroke="rgba(99, 226, 183, 0.5)" stroke-width="1.5" fill="none"/>
+              <path d="M8 12h8M12 8v8" stroke="rgba(99, 226, 183, 0.6)" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+          </div>
           <h2>{{ t('app.name') }}</h2>
-          <p>{{ t('main.empty.desc') }}</p>
-          <ul>
-            <li>{{ t('main.empty.item1') }}</li>
-            <li>{{ t('main.empty.item2') }}</li>
-            <li>{{ t('main.empty.item3') }}</li>
-          </ul>
-          <p style="margin-top: 20px; color: #63e2b7;">
+          <p class="empty-desc">{{ t('main.empty.desc') }}</p>
+          <div class="empty-examples">
+            <div class="example-item">
+              <span class="example-icon">💬</span>
+              <span>{{ t('main.empty.item1') }}</span>
+            </div>
+            <div class="example-item">
+              <span class="example-icon">🕐</span>
+              <span>{{ t('main.empty.item2') }}</span>
+            </div>
+            <div class="example-item">
+              <span class="example-icon">📄</span>
+              <span>{{ t('main.empty.item3') }}</span>
+            </div>
+          </div>
+          <p class="empty-tip">
             {{ t('main.empty.tip') }}
           </p>
         </div>
@@ -740,11 +830,19 @@ onUnmounted(() => {
           v-for="(msg, index) in chatStore.messages"
           :key="index"
           :message="msg"
+          @regenerate="handleRegenerate"
         />
 
-        <div v-if="isLoading" class="loading-indicator">
-          <NSpin size="small" />
-          <span>{{ t('main.loading') }}</span>
+        <div v-if="isLoading" class="loading-skeleton">
+          <div class="skeleton-message">
+            <NSkeleton circle :width="32" :height="32" />
+            <div class="skeleton-content">
+              <NSkeleton text :width="80" :height="14" style="margin-bottom: 8px" />
+              <NSkeleton text :width="'100%'" :height="16" style="margin-bottom: 6px" />
+              <NSkeleton text :width="'85%'" :height="16" style="margin-bottom: 6px" />
+              <NSkeleton text :width="'60%'" :height="16" />
+            </div>
+          </div>
         </div>
       </div>
 
@@ -801,7 +899,14 @@ onUnmounted(() => {
 
         <div v-if="attachments.length > 0" class="attachments-bar">
           <div v-for="attachment in attachments" :key="attachment.id" class="attachment-chip">
-            <NIcon size="16" class="attachment-icon">
+            <!-- 图片预览 -->
+            <img
+              v-if="attachment.kind === 'image' && attachmentPreviews[attachment.id]"
+              :src="attachmentPreviews[attachment.id]"
+              :alt="attachment.name"
+              class="attachment-thumb"
+            />
+            <NIcon v-else size="16" class="attachment-icon">
               <DocumentOutline />
             </NIcon>
             <span class="attachment-name">{{ attachment.name }}</span>
@@ -904,22 +1009,63 @@ onUnmounted(() => {
 .empty-state {
   text-align: center;
   color: rgba(255, 255, 255, 0.6);
-  padding: 40px;
+  padding: 60px 40px;
+  max-width: 500px;
+  margin: 0 auto;
+}
+
+.empty-icon {
+  margin-bottom: 20px;
 }
 
 .empty-state h2 {
   color: #63e2b7;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
+  font-size: 24px;
+  font-weight: 600;
 }
 
-.empty-state ul {
+.empty-desc {
+  color: rgba(255, 255, 255, 0.7);
+  margin-bottom: 24px;
+  line-height: 1.6;
+}
+
+.empty-examples {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.example-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
   text-align: left;
-  display: inline-block;
-  margin-top: 16px;
+  transition: border-color 0.2s, background 0.2s;
 }
 
-.empty-state li {
-  margin: 8px 0;
+.example-item:hover {
+  background: rgba(99, 226, 183, 0.08);
+  border-color: rgba(99, 226, 183, 0.3);
+}
+
+.example-icon {
+  font-size: 18px;
+}
+
+.empty-tip {
+  color: rgba(99, 226, 183, 0.8);
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 12px 16px;
+  background: rgba(99, 226, 183, 0.08);
+  border-radius: 8px;
 }
 
 .loading-indicator {
@@ -928,6 +1074,21 @@ onUnmounted(() => {
   gap: 8px;
   padding: 16px;
   color: rgba(255, 255, 255, 0.6);
+}
+
+/* 骨架屏加载 */
+.loading-skeleton {
+  padding: 12px 0;
+}
+
+.skeleton-message {
+  display: flex;
+  gap: 12px;
+}
+
+.skeleton-content {
+  flex: 1;
+  max-width: 60%;
 }
 
 .input-area-wrapper {

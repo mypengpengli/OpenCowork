@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { NAvatar, NIcon } from 'naive-ui'
-import { PersonOutline, HardwareChipOutline, WarningOutline, DocumentOutline } from '@vicons/ionicons5'
+import { computed, ref, watch, onMounted, nextTick } from 'vue'
+import { NAvatar, NIcon, NImage, NImageGroup, NTooltip } from 'naive-ui'
+import { PersonOutline, HardwareChipOutline, WarningOutline, DocumentOutline, CopyOutline, RefreshOutline } from '@vicons/ionicons5'
 import { localeToDateLocale, useI18n } from '../../i18n'
 import type { ChatAttachment, ToolStep } from '../../stores/chat'
 import { renderMarkdown } from '../../utils/markdown'
@@ -19,6 +19,10 @@ const props = defineProps<{
   message: Message
 }>()
 
+const emit = defineEmits<{
+  (e: 'regenerate', message: Message): void
+}>()
+
 const isUser = computed(() => props.message.role === 'user')
 const isAlert = computed(() => props.message.isAlert)
 const { t, locale } = useI18n()
@@ -27,6 +31,13 @@ const toolSteps = computed(() => props.message.toolSteps || [])
 const renderedHtml = computed(() => renderMarkdown(props.message.content))
 const expanded = ref(false)
 const expandedSteps = ref<Record<number, boolean>>({})
+const showActions = ref(false)
+const copySuccess = ref(false)
+
+// 图片预览相关
+const imageAttachments = computed(() => attachments.value.filter(a => a.kind === 'image'))
+const docAttachments = computed(() => attachments.value.filter(a => a.kind !== 'image'))
+const imageUrls = ref<Record<string, string>>({})
 
 watch(
   () => props.message,
@@ -35,6 +46,101 @@ watch(
     expandedSteps.value = {}
   }
 )
+
+// 加载图片附件的预览
+async function loadImagePreviews() {
+  const images = imageAttachments.value
+  if (images.length === 0) return
+
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    for (const img of images) {
+      if (imageUrls.value[img.id]) continue
+      try {
+        const base64 = await invoke<string>('read_image_base64', {
+          filePath: img.path,
+          fileType: 'attachment',
+        })
+        imageUrls.value[img.id] = base64
+      } catch (e) {
+        console.error('加载图片预览失败:', img.path, e)
+      }
+    }
+  } catch (e) {
+    console.error('加载图片预览失败:', e)
+  }
+}
+
+watch(imageAttachments, () => {
+  loadImagePreviews()
+}, { immediate: true })
+
+onMounted(() => {
+  loadImagePreviews()
+  // 为代码块添加复制按钮
+  nextTick(() => {
+    addCodeBlockCopyButtons()
+  })
+})
+
+// 监听内容变化，重新添加代码块复制按钮
+watch(renderedHtml, () => {
+  nextTick(() => {
+    addCodeBlockCopyButtons()
+  })
+})
+
+// 复制消息内容
+async function copyMessage() {
+  try {
+    await navigator.clipboard.writeText(props.message.content)
+    copySuccess.value = true
+    setTimeout(() => {
+      copySuccess.value = false
+    }, 2000)
+  } catch (e) {
+    console.error('复制失败:', e)
+  }
+}
+
+// 重新生成
+function regenerate() {
+  emit('regenerate', props.message)
+}
+
+// 为代码块添加复制按钮
+function addCodeBlockCopyButtons() {
+  const messageEl = document.querySelector(`[data-message-id="${props.message.timestamp}"]`)
+  if (!messageEl) return
+
+  const codeBlocks = messageEl.querySelectorAll('pre')
+  codeBlocks.forEach((pre) => {
+    // 避免重复添加
+    if (pre.querySelector('.code-copy-btn')) return
+
+    const btn = document.createElement('button')
+    btn.className = 'code-copy-btn'
+    btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`
+    btn.title = t('message.copyCode')
+    btn.onclick = async (e) => {
+      e.stopPropagation()
+      const code = pre.querySelector('code')?.textContent || pre.textContent || ''
+      try {
+        await navigator.clipboard.writeText(code)
+        btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>`
+        btn.classList.add('copied')
+        setTimeout(() => {
+          btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`
+          btn.classList.remove('copied')
+        }, 2000)
+      } catch (err) {
+        console.error('复制代码失败:', err)
+      }
+    }
+    pre.style.position = 'relative'
+    pre.appendChild(btn)
+  })
+}
 
 const MESSAGE_COLLAPSE_THRESHOLD = 900
 const MESSAGE_LINE_THRESHOLD = 14
@@ -83,7 +189,13 @@ function formatTime(timestamp: string): string {
 </script>
 
 <template>
-  <div class="message-item" :class="{ 'user-message': isUser, 'alert-message': isAlert }">
+  <div
+    class="message-item"
+    :class="{ 'user-message': isUser, 'alert-message': isAlert }"
+    :data-message-id="message.timestamp"
+    @mouseenter="showActions = true"
+    @mouseleave="showActions = false"
+  >
     <NAvatar
       :size="32"
       round
@@ -99,6 +211,26 @@ function formatTime(timestamp: string): string {
           {{ isAlert ? t('message.role.alert') : (isUser ? t('message.role.user') : t('message.role.assistant')) }}
         </span>
         <span class="time">{{ formatTime(message.timestamp) }}</span>
+
+        <!-- 操作按钮 -->
+        <div class="message-actions" :class="{ visible: showActions }">
+          <NTooltip trigger="hover" placement="top">
+            <template #trigger>
+              <button type="button" class="action-btn" @click="copyMessage">
+                <NIcon size="14"><CopyOutline /></NIcon>
+              </button>
+            </template>
+            {{ copySuccess ? t('message.copied') : t('message.copy') }}
+          </NTooltip>
+          <NTooltip v-if="!isUser && !isAlert" trigger="hover" placement="top">
+            <template #trigger>
+              <button type="button" class="action-btn" @click="regenerate">
+                <NIcon size="14"><RefreshOutline /></NIcon>
+              </button>
+            </template>
+            {{ t('message.regenerate') }}
+          </NTooltip>
+        </div>
       </div>
       <div
         v-if="message.content.trim().length > 0"
@@ -143,11 +275,38 @@ function formatTime(timestamp: string): string {
           </div>
         </div>
       </div>
-      <div v-else-if="attachments.length > 0" class="message-text placeholder">
+      <div v-else-if="attachments.length > 0 && !message.content.trim()" class="message-text placeholder">
         {{ t('main.attachmentOnly') }}
       </div>
-      <div v-if="attachments.length > 0" class="attachment-list">
-        <div v-for="attachment in attachments" :key="attachment.id" class="attachment-item">
+
+      <!-- 图片附件预览 -->
+      <div v-if="imageAttachments.length > 0" class="attachment-images">
+        <NImageGroup>
+          <div class="image-grid">
+            <div v-for="img in imageAttachments" :key="img.id" class="image-item">
+              <NImage
+                v-if="imageUrls[img.id]"
+                :src="imageUrls[img.id]"
+                :alt="img.name"
+                object-fit="cover"
+                width="120"
+                height="120"
+                lazy
+                preview-disabled
+                :previewed-img-props="{ style: { maxWidth: '90vw', maxHeight: '90vh' } }"
+              />
+              <div v-else class="image-placeholder">
+                <NIcon size="24"><DocumentOutline /></NIcon>
+              </div>
+              <span class="image-name">{{ img.name }}</span>
+            </div>
+          </div>
+        </NImageGroup>
+      </div>
+
+      <!-- 文档附件列表 -->
+      <div v-if="docAttachments.length > 0" class="attachment-list">
+        <div v-for="attachment in docAttachments" :key="attachment.id" class="attachment-item">
           <div class="attachment-doc">
             <NIcon size="16">
               <DocumentOutline />
@@ -188,6 +347,7 @@ function formatTime(timestamp: string): string {
 
 .message-header {
   display: flex;
+  align-items: center;
   gap: 8px;
   font-size: 12px;
   color: rgba(255, 255, 255, 0.5);
@@ -195,6 +355,43 @@ function formatTime(timestamp: string): string {
 
 .role {
   font-weight: 500;
+}
+
+/* 操作按钮 */
+.message-actions {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.message-actions.visible {
+  opacity: 1;
+}
+
+.user-message .message-actions {
+  margin-left: 0;
+  margin-right: auto;
+}
+
+.action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.action-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .message-text {
@@ -286,11 +483,44 @@ function formatTime(timestamp: string): string {
   border-radius: 8px;
   overflow-x: auto;
   margin: 8px 0;
+  position: relative;
 }
 
 .message-text :deep(pre code) {
   background: transparent;
   padding: 0;
+}
+
+/* 代码块复制按钮 */
+.message-text :deep(.code-copy-btn) {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s, background 0.2s, color 0.2s;
+}
+
+.message-text :deep(pre:hover .code-copy-btn) {
+  opacity: 1;
+}
+
+.message-text :deep(.code-copy-btn:hover) {
+  background: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.message-text :deep(.code-copy-btn.copied) {
+  color: #63e2b7;
 }
 
 .message-text :deep(blockquote) {
@@ -410,5 +640,63 @@ function formatTime(timestamp: string): string {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 图片附件网格 */
+.attachment-images {
+  margin-top: 8px;
+}
+
+.image-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.image-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: border-color 0.2s;
+}
+
+.image-item:hover {
+  border-color: rgba(99, 226, 183, 0.4);
+}
+
+.image-item :deep(.n-image) {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.image-item :deep(.n-image img) {
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.image-placeholder {
+  width: 120px;
+  height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.image-name {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
 }
 </style>

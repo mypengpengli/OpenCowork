@@ -1114,6 +1114,66 @@ pub async fn open_screenshots_dir(app_handle: AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// 读取图片文件并返回 base64 编码
+/// file_type: "attachment" | "screenshot"
+#[tauri::command]
+pub async fn read_image_base64(file_path: String, file_type: Option<String>) -> Result<String, String> {
+    let storage = StorageManager::new();
+    let data_dir = storage.get_data_dir().to_path_buf();
+
+    // 根据类型确定基础目录
+    let base_dir = match file_type.as_deref() {
+        Some("screenshot") => data_dir.join("screenshots"),
+        Some("attachment") => data_dir.join("attachments"),
+        _ => data_dir.clone(),
+    };
+
+    // 构建完整路径
+    let full_path = if Path::new(&file_path).is_absolute() {
+        PathBuf::from(&file_path)
+    } else {
+        base_dir.join(&file_path)
+    };
+
+    // 安全检查：确保路径在数据目录内
+    let canonical = full_path.canonicalize()
+        .map_err(|e| format!("文件不存在: {}", e))?;
+    let data_canonical = data_dir.canonicalize()
+        .map_err(|e| format!("数据目录错误: {}", e))?;
+
+    if !canonical.starts_with(&data_canonical) {
+        return Err("不允许访问数据目录外的文件".to_string());
+    }
+
+    // 检查文件大小
+    let metadata = fs::metadata(&canonical)
+        .map_err(|e| format!("读取文件信息失败: {}", e))?;
+    if metadata.len() > MAX_ATTACHMENT_BYTES {
+        return Err("文件过大".to_string());
+    }
+
+    // 读取文件并编码
+    let bytes = fs::read(&canonical)
+        .map_err(|e| format!("读取文件失败: {}", e))?;
+
+    // 根据扩展名确定 MIME 类型
+    let ext = canonical.extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let mime = match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        _ => "application/octet-stream",
+    };
+
+    let base64_str = BASE64.encode(&bytes);
+    Ok(format!("data:{};base64,{}", mime, base64_str))
+}
+
 #[tauri::command]
 pub async fn open_release_page(app_handle: AppHandle) -> Result<(), String> {
     app_handle

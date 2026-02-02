@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import {
   NLayout, NLayoutContent, NTimeline, NTimelineItem,
   NCard, NEmpty, NDatePicker, NSpace, NButton, NTag,
   NDrawer, NDrawerContent, NDescriptions, NDescriptionsItem, NEllipsis, NDivider,
+  NImage, NSpin,
   useMessage
 } from 'naive-ui'
 import { localeToDateLocale, useI18n } from '../i18n'
@@ -33,8 +34,14 @@ const selectedRecord = ref<SummaryRecord | null>(null)
 const message = useMessage()
 const { t, locale } = useI18n()
 
+// 截图预览相关
+const screenshotUrls = ref<Record<string, string>>({})
+const drawerScreenshotUrl = ref<string>('')
+const drawerScreenshotLoading = ref(false)
+
 async function loadHistory() {
   isLoading.value = true
+  screenshotUrls.value = {}
   try {
     const { invoke } = await import('@tauri-apps/api/core')
     const date = new Date(selectedDate.value)
@@ -42,11 +49,59 @@ async function loadHistory() {
 
     const data = await invoke<SummaryRecord[]>('get_summaries', { date: dateStr })
     records.value = data || []
+
+    // 加载截图缩略图（只加载前20条）
+    loadScreenshotThumbnails(records.value.slice(0, 20))
   } catch (error) {
     console.error('加载历史记录失败:', error)
     records.value = []
   } finally {
     isLoading.value = false
+  }
+}
+
+async function loadScreenshotThumbnails(recordsToLoad: SummaryRecord[]) {
+  const { invoke } = await import('@tauri-apps/api/core')
+  for (const record of recordsToLoad) {
+    if (!record.detail_ref) continue
+    if (screenshotUrls.value[record.detail_ref]) continue
+    try {
+      const base64 = await invoke<string>('read_image_base64', {
+        filePath: record.detail_ref,
+        fileType: 'screenshot',
+      })
+      screenshotUrls.value[record.detail_ref] = base64
+    } catch (e) {
+      // 截图可能已被清理，忽略错误
+    }
+  }
+}
+
+async function loadDrawerScreenshot(detailRef: string) {
+  if (!detailRef) {
+    drawerScreenshotUrl.value = ''
+    return
+  }
+
+  // 如果已经加载过，直接使用
+  if (screenshotUrls.value[detailRef]) {
+    drawerScreenshotUrl.value = screenshotUrls.value[detailRef]
+    return
+  }
+
+  drawerScreenshotLoading.value = true
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const base64 = await invoke<string>('read_image_base64', {
+      filePath: detailRef,
+      fileType: 'screenshot',
+    })
+    drawerScreenshotUrl.value = base64
+    screenshotUrls.value[detailRef] = base64
+  } catch (e) {
+    drawerScreenshotUrl.value = ''
+  } finally {
+    drawerScreenshotLoading.value = false
   }
 }
 
@@ -130,6 +185,10 @@ function formatConfidence(confidence?: number): string {
 function openDetail(record: SummaryRecord) {
   selectedRecord.value = record
   drawerVisible.value = true
+  drawerScreenshotUrl.value = ''
+  if (record.detail_ref) {
+    loadDrawerScreenshot(record.detail_ref)
+  }
 }
 
 function formatAppName(app: string): string {
@@ -186,17 +245,23 @@ onMounted(() => {
             :title="record.summary"
             :time="formatTime(record.timestamp)"
           >
-            <NCard size="small" :bordered="false">
-              <NSpace vertical size="small">
-                <NSpace align="center">
-                  <NTag size="small" type="info">{{ formatAppName(record.app) }}</NTag>
-                  <NTag size="small" :type="hasIssue(record) ? 'error' : 'success'">
-                    {{ hasIssue(record) ? t('history.status.issue') : t('history.status.ok') }}
-                  </NTag>
-                  <NTag v-if="record.issue_type" size="small" type="warning">{{ record.issue_type }}</NTag>
-                  <NTag size="small">{{ t('history.confidence', { value: formatConfidence(record.confidence) }) }}</NTag>
-                  <NButton text size="tiny" @click="openDetail(record)">{{ t('history.detail') }}</NButton>
-                </NSpace>
+            <NCard size="small" :bordered="false" class="record-card">
+              <div class="record-content">
+                <!-- 截图缩略图 -->
+                <div v-if="record.detail_ref && screenshotUrls[record.detail_ref]" class="record-thumbnail" @click="openDetail(record)">
+                  <img :src="screenshotUrls[record.detail_ref]" :alt="record.summary" />
+                </div>
+
+                <NSpace vertical size="small" class="record-info">
+                  <NSpace align="center" wrap>
+                    <NTag size="small" type="info">{{ formatAppName(record.app) }}</NTag>
+                    <NTag size="small" :type="hasIssue(record) ? 'error' : 'success'">
+                      {{ hasIssue(record) ? t('history.status.issue') : t('history.status.ok') }}
+                    </NTag>
+                    <NTag v-if="record.issue_type" size="small" type="warning">{{ record.issue_type }}</NTag>
+                    <NTag size="small">{{ t('history.confidence', { value: formatConfidence(record.confidence) }) }}</NTag>
+                    <NButton text size="tiny" @click="openDetail(record)">{{ t('history.detail') }}</NButton>
+                  </NSpace>
 
                 <NDescriptions
                   v-if="record.issue_summary || record.suggestion"
@@ -212,7 +277,7 @@ onMounted(() => {
                   </NDescriptionsItem>
                 </NDescriptions>
 
-                <NSpace>
+                <NSpace wrap>
                   <NTag
                     v-for="keyword in record.keywords"
                     :key="keyword"
@@ -221,7 +286,8 @@ onMounted(() => {
                     {{ keyword }}
                   </NTag>
                 </NSpace>
-              </NSpace>
+                </NSpace>
+              </div>
             </NCard>
           </NTimelineItem>
         </NTimeline>
@@ -257,6 +323,25 @@ onMounted(() => {
               </NDescriptionsItem>
             </NDescriptions>
 
+            <!-- 截图预览 -->
+            <div v-if="selectedRecord.detail_ref" class="drawer-screenshot">
+              <div class="detail-label">{{ t('history.drawer.screenshotPreview') }}</div>
+              <div v-if="drawerScreenshotLoading" class="screenshot-loading">
+                <NSpin size="small" />
+              </div>
+              <NImage
+                v-else-if="drawerScreenshotUrl"
+                :src="drawerScreenshotUrl"
+                :alt="selectedRecord.summary"
+                object-fit="contain"
+                width="100%"
+                :img-props="{ style: { maxHeight: '400px', borderRadius: '8px' } }"
+              />
+              <div v-else class="screenshot-empty">
+                {{ t('history.drawer.screenshotNotFound') }}
+              </div>
+            </div>
+
             <NDivider />
             <div class="detail-label">{{ t('history.detailLabel') }}</div>
             <div class="detail-text">{{ selectedRecord.detail || t('history.detailEmpty') }}</div>
@@ -282,6 +367,8 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 24px;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .history-header h2 {
@@ -293,6 +380,68 @@ onMounted(() => {
   padding: 16px 0;
 }
 
+/* 记录卡片样式 */
+.record-card {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.record-content {
+  display: flex;
+  gap: 16px;
+}
+
+.record-thumbnail {
+  flex-shrink: 0;
+  width: 100px;
+  height: 70px;
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: border-color 0.2s, transform 0.2s;
+}
+
+.record-thumbnail:hover {
+  border-color: rgba(99, 226, 183, 0.5);
+  transform: scale(1.02);
+}
+
+.record-thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.record-info {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 抽屉截图样式 */
+.drawer-screenshot {
+  margin-top: 8px;
+}
+
+.screenshot-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+}
+
+.screenshot-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 13px;
+}
+
 .detail-content {
   display: flex;
   flex-direction: column;
@@ -302,6 +451,7 @@ onMounted(() => {
 .detail-label {
   color: #9aa4b2;
   font-size: 12px;
+  margin-bottom: 8px;
 }
 
 .detail-text {

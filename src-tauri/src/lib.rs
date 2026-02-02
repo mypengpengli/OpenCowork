@@ -21,6 +21,7 @@ use commands::{
     open_screenshots_dir,
     open_release_page,
     save_clipboard_image,
+    read_image_base64,
     // Skills 相关命令
     list_skills, get_skill, invoke_skill, create_skill, delete_skill, get_skills_dir, open_skills_dir,
     // 通知窗口相关命令
@@ -78,6 +79,7 @@ pub fn run() {
             open_screenshots_dir,
             open_release_page,
             save_clipboard_image,
+            read_image_base64,
             // Skills 相关命令
             list_skills,
             get_skill,
