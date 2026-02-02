@@ -1,5 +1,5 @@
 use crate::capture::CaptureManager;
-use crate::model::{ModelManager, ChatWithToolsResult, ToolCall};
+use crate::model::{ModelManager, ChatWithToolsResult, ToolCall, is_transient_model_error};
 use crate::storage::{Config, StorageManager, SummaryRecord, SearchQuery, TimeRange};
 use crate::skills::{SkillManager, SkillMetadata, Skill, SkillsWatcher, SkillFrontmatterOverrides};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
@@ -15,7 +15,7 @@ use tauri::{AppHandle, State, Emitter, Manager};
 use tauri_plugin_shell::ShellExt;
 use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex as TokioMutex;
-use tokio::time::{timeout, Duration as TokioDuration};
+use tokio::time::{timeout, sleep, Duration as TokioDuration};
 use tokio_util::sync::CancellationToken;
 use quick_xml::Reader;
 use quick_xml::events::Event;
@@ -38,6 +38,9 @@ const REQUEST_CANCELLED_ERROR: &str = "REQUEST_CANCELLED";
 const TOOL_ERROR_PREFIX: &str = "TOOL_ERROR:";
 const MAX_TOOL_LOOPS: usize = 999;
 const MAX_REPEAT_TOOL_LOOPS: usize = 3;
+const MODEL_MAX_RETRIES: usize = 2;
+const MODEL_MAX_CONTINUES: usize = 1;
+
 const DEFAULT_MAX_READ_BYTES: usize = 200_000;
 const DEFAULT_MAX_GLOB_RESULTS: usize = 500;
 const DEFAULT_MAX_GREP_RESULTS: usize = 200;
@@ -381,6 +384,70 @@ where
     }
 }
 
+fn should_retry_model_error(err: &str) -> bool {
+    if err == REQUEST_CANCELLED_ERROR || err == TOOL_MODE_UNSET_ERROR {
+        return false;
+    }
+    is_transient_model_error(err)
+}
+
+async fn retry_with_cancel<T, F, Fut>(
+    token: &CancellationToken,
+    progress: Option<&ProgressEmitter>,
+    label: &str,
+    mut make_fut: F,
+) -> Result<T, String>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, String>>,
+{
+    let mut attempt = 0usize;
+    loop {
+        let result = await_with_cancel(token, make_fut()).await;
+        match result {
+            Ok(value) => return Ok(value),
+            Err(err) => {
+                if err == REQUEST_CANCELLED_ERROR {
+                    return Err(err);
+                }
+                attempt += 1;
+                if attempt > MODEL_MAX_RETRIES || !should_retry_model_error(&err) {
+                    return Err(err);
+                }
+                if let Some(progress) = progress {
+                    progress.emit_info(
+                        format!("Retrying {} ({}/{})", label, attempt, MODEL_MAX_RETRIES),
+                        Some(err.clone()),
+                    );
+                }
+                sleep(TokioDuration::from_millis(400 * attempt as u64)).await;
+            }
+        }
+    }
+}
+
+fn response_looks_incomplete(text: &str) -> bool {
+    let trimmed = text.trim_end();
+    if trimmed.is_empty() {
+        return true;
+    }
+    let short = trimmed.len() < 400;
+    let ends_with_colon = trimmed.ends_with(':') || trimmed.ends_with('?');
+    let ends_with_ellipsis = trimmed.ends_with("...") || trimmed.ends_with('?') || trimmed.ends_with("??");
+    let unbalanced_fence = trimmed.matches("```").count() % 2 == 1;
+    let lower = trimmed.to_lowercase();
+    let engine_hint = lower.contains("??????")
+        || lower.contains("engine error")
+        || lower.contains("internal error")
+        || lower.contains("temporary error")
+        || lower.contains("service error")
+        || lower.contains("????")
+        || lower.contains("try another way");
+
+    (short && (ends_with_colon || ends_with_ellipsis)) || unbalanced_fence || engine_hint
+}
+
+
 #[derive(serde::Deserialize)]
 struct ReadArgs {
     path: String,
@@ -538,9 +605,11 @@ pub async fn chat_with_assistant(
         let result = if attachment_payload.image_urls.is_empty()
             && attachment_payload.image_base64.is_empty()
         {
-            await_with_cancel(
+            retry_with_cancel(
                 &cancel_token,
-                model_manager.chat_with_tools_with_system_prompt(
+                progress.as_ref(),
+                "model",
+                || model_manager.chat_with_tools_with_system_prompt(
                     &config.model,
                     &system_prompt,
                     &user_message,
@@ -550,9 +619,11 @@ pub async fn chat_with_assistant(
             )
             .await?
         } else {
-            await_with_cancel(
+            retry_with_cancel(
                 &cancel_token,
-                model_manager.chat_with_tools_with_system_prompt_with_images(
+                progress.as_ref(),
+                "model",
+                || model_manager.chat_with_tools_with_system_prompt_with_images(
                     &config.model,
                     &system_prompt,
                     &user_message,
@@ -578,7 +649,87 @@ pub async fn chat_with_assistant(
             progress.as_ref(),
         )
         .await;
-        if let Some(ref progress) = progress {
+        let response = if let Ok(text) = response {
+            let mut combined = text;
+            if MODEL_MAX_CONTINUES > 0 && response_looks_incomplete(&combined) {
+                if let Some(ref progress) = progress {
+                    progress.emit_info("Continuing incomplete response".to_string(), None);
+                }
+                let mut extended_history = history.clone().unwrap_or_default();
+                extended_history.push(ChatHistoryMessage {
+                    role: "user".to_string(),
+                    content: user_message.clone(),
+                });
+                extended_history.push(ChatHistoryMessage {
+                    role: "assistant".to_string(),
+                    content: combined.clone(),
+                });
+
+                let followup = if attachment_payload.image_urls.is_empty()
+                    && attachment_payload.image_base64.is_empty()
+                {
+                    retry_with_cancel(
+                        &cancel_token,
+                        progress.as_ref(),
+                        "continue",
+                        || model_manager.chat_with_tools_with_system_prompt(
+                            &config.model,
+                            &system_prompt,
+                            "Continue the previous response.",
+                            Some(extended_history.clone()),
+                            &available_skills,
+                        ),
+                    )
+                    .await
+                } else {
+                    retry_with_cancel(
+                        &cancel_token,
+                        progress.as_ref(),
+                        "continue",
+                        || model_manager.chat_with_tools_with_system_prompt_with_images(
+                            &config.model,
+                            &system_prompt,
+                            "Continue the previous response.",
+                            Some(extended_history.clone()),
+                            &available_skills,
+                            attachment_payload.image_urls.clone(),
+                            attachment_payload.image_base64.clone(),
+                        ),
+                    )
+                    .await
+                };
+
+                if let Ok(followup_result) = followup {
+                    if let Ok(followup_text) = run_tool_loop(
+                        &storage,
+                        &config,
+                        &model_manager,
+                        &skill_manager,
+                        &system_prompt,
+                        followup_result,
+                        &available_skills,
+                        &None,
+                        Some(&cancel_token),
+                        progress.as_ref(),
+                    )
+                    .await
+                    {
+                        if !followup_text.trim().is_empty() {
+                            combined = format!(
+                                "{}
+{}",
+                                combined.trim_end(),
+                                followup_text.trim_start()
+                            );
+                        }
+                    }
+                }
+            }
+            Ok(combined)
+        } else {
+            response
+        };
+if let Some(ref progress) = progress {
             if response.is_ok() {
                 progress.emit_done("处理完成");
             } else {
@@ -614,31 +765,97 @@ pub async fn chat_with_assistant(
         let response = if attachment_payload.image_urls.is_empty()
             && attachment_payload.image_base64.is_empty()
         {
-            await_with_cancel(
+            retry_with_cancel(
                 &cancel_token,
-                model_manager.chat_with_history(
+                progress.as_ref(),
+                "model",
+                || model_manager.chat_with_history(
                     &config.model,
                     &context_with_skills,
                     &user_message,
-                    history,
+                    history.clone(),
                 ),
             )
             .await
         } else {
-            await_with_cancel(
+            retry_with_cancel(
                 &cancel_token,
-                model_manager.chat_with_history_with_images(
+                progress.as_ref(),
+                "model",
+                || model_manager.chat_with_history_with_images(
                     &config.model,
                     &context_with_skills,
                     &user_message,
-                    history,
-                    attachment_payload.image_urls,
-                    attachment_payload.image_base64,
+                    history.clone(),
+                    attachment_payload.image_urls.clone(),
+                    attachment_payload.image_base64.clone(),
                 ),
             )
             .await
         };
-        if let Some(ref progress) = progress {
+        let response = if let Ok(text) = response {
+            let mut combined = text;
+            if MODEL_MAX_CONTINUES > 0 && response_looks_incomplete(&combined) {
+                if let Some(ref progress) = progress {
+                    progress.emit_info("Continuing incomplete response".to_string(), None);
+                }
+                let mut extended_history = history.clone().unwrap_or_default();
+                extended_history.push(ChatHistoryMessage {
+                    role: "user".to_string(),
+                    content: user_message.clone(),
+                });
+                extended_history.push(ChatHistoryMessage {
+                    role: "assistant".to_string(),
+                    content: combined.clone(),
+                });
+                let followup = if attachment_payload.image_urls.is_empty()
+                    && attachment_payload.image_base64.is_empty()
+                {
+                    retry_with_cancel(
+                        &cancel_token,
+                        progress.as_ref(),
+                        "continue",
+                        || model_manager.chat_with_history(
+                            &config.model,
+                            &context_with_skills,
+                            "Continue the previous response.",
+                            Some(extended_history.clone()),
+                        ),
+                    )
+                    .await
+                } else {
+                    retry_with_cancel(
+                        &cancel_token,
+                        progress.as_ref(),
+                        "continue",
+                        || model_manager.chat_with_history_with_images(
+                            &config.model,
+                            &context_with_skills,
+                            "Continue the previous response.",
+                            Some(extended_history.clone()),
+                            attachment_payload.image_urls.clone(),
+                            attachment_payload.image_base64.clone(),
+                        ),
+                    )
+                    .await
+                };
+
+                if let Ok(followup_text) = followup {
+                    if !followup_text.trim().is_empty() {
+                        combined = format!(
+                            "{}
+{}",
+                            combined.trim_end(),
+                            followup_text.trim_start()
+                        );
+                    }
+                }
+            }
+            Ok(combined)
+        } else {
+            response
+        };
+if let Some(ref progress) = progress {
             if response.is_ok() {
                 progress.emit_done("处理完成");
             } else {
@@ -768,9 +985,11 @@ async fn execute_skill_internal(
             && attachment_payload.image_base64.is_empty()
         {
             if let Some(token) = cancel_token {
-                await_with_cancel(
+                retry_with_cancel(
                     token,
-                    model_manager.chat_with_tools_with_system_prompt(
+                    progress,
+                    "model",
+                    || model_manager.chat_with_tools_with_system_prompt(
                         &config.model,
                         &system_prompt,
                         &user_message,
@@ -792,9 +1011,11 @@ async fn execute_skill_internal(
             }
         } else {
             if let Some(token) = cancel_token {
-                await_with_cancel(
+                retry_with_cancel(
                     token,
-                    model_manager.chat_with_tools_with_system_prompt_with_images(
+                    progress,
+                    "model",
+                    || model_manager.chat_with_tools_with_system_prompt_with_images(
                         &config.model,
                         &system_prompt,
                         &user_message,
@@ -837,13 +1058,15 @@ async fn execute_skill_internal(
 
     if attachment_payload.image_urls.is_empty() && attachment_payload.image_base64.is_empty() {
         if let Some(token) = cancel_token {
-            await_with_cancel(
+            retry_with_cancel(
                 token,
-                model_manager.chat_with_system_prompt(
+                progress,
+                "model",
+                || model_manager.chat_with_system_prompt(
                     &config.model,
                     &system_prompt,
                     &user_message,
-                    history,
+                    history.clone(),
                 ),
             )
             .await
@@ -854,15 +1077,17 @@ async fn execute_skill_internal(
         }
     } else {
         if let Some(token) = cancel_token {
-            await_with_cancel(
+            retry_with_cancel(
                 token,
-                model_manager.chat_with_system_prompt_with_images(
+                progress,
+                "model",
+                || model_manager.chat_with_system_prompt_with_images(
                     &config.model,
                     &system_prompt,
                     &user_message,
-                    history,
-                    attachment_payload.image_urls,
-                    attachment_payload.image_base64,
+                    history.clone(),
+                    attachment_payload.image_urls.clone(),
+                    attachment_payload.image_base64.clone(),
                 ),
             )
             .await
@@ -2653,13 +2878,15 @@ async fn run_tool_loop(
                 
 
                 result = if let Some(token) = cancel_token {
-                    await_with_cancel(
+                    retry_with_cancel(
                         token,
-                        model_manager.continue_with_tool_results(
+                        progress,
+                        "model",
+                        || model_manager.continue_with_tool_results(
                             &config.model,
                             system_prompt,
-                            messages,
-                            tool_results,
+                            messages.clone(),
+                            tool_results.clone(),
                             available_skills,
                         ),
                     )

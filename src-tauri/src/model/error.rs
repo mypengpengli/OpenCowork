@@ -128,3 +128,11 @@ fn classify_model_error(detail: &str) -> ModelErrorInfo {
         suggestion: "查看错误详情或日志".to_string(),
     }
 }
+
+pub fn is_transient_model_error(detail: &str) -> bool {
+    matches!(
+        classify_model_error(detail).error_type,
+        "timeout" | "network" | "rate_limit" | "server_error"
+    )
+}
+

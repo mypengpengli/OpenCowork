@@ -44,6 +44,8 @@ const processVisible = ref(false)
 const processExpanded = ref(true)
 const processStatus = ref<'idle' | 'running' | 'done' | 'error'>('idle')
 const processItems = ref<ProgressItem[]>([])
+const backendProgressSeen = ref(false)
+let fallbackTimer: number | null = null
 const activeRequestId = ref<string | null>(null)
 let progressUnlisten: (() => void) | null = null
 
@@ -126,9 +128,44 @@ watch(inputMessage, (newVal) => {
 
 function startProcessPanel() {
   processItems.value = []
+  backendProgressSeen.value = false
+  clearProcessFallback()
   processStatus.value = 'running'
   processExpanded.value = true
   processVisible.value = true
+}
+
+function clearProcessFallback() {
+  if (fallbackTimer !== null) {
+    clearTimeout(fallbackTimer)
+    fallbackTimer = null
+  }
+}
+
+function appendLocalProcessItem(
+  message: string,
+  detail?: string,
+  stage: ProgressEventPayload['stage'] = 'info'
+) {
+  const requestId = activeRequestId.value
+  if (!requestId) return
+  appendProcessItem({
+    request_id: requestId,
+    stage,
+    message,
+    detail: detail || null,
+    timestamp: new Date().toISOString(),
+  })
+}
+
+function scheduleProcessFallback() {
+  clearProcessFallback()
+  fallbackTimer = window.setTimeout(() => {
+    if (!isLoading.value) return
+  clearProcessFallback()
+    if (backendProgressSeen.value) return
+    appendLocalProcessItem(t('main.progress.waiting'))
+  }, 1200)
 }
 
 function appendProcessItem(payload: ProgressEventPayload) {
@@ -154,6 +191,7 @@ function finishProcessPanel(status: 'done' | 'error') {
   if (!processVisible.value) return
   processStatus.value = status
   processExpanded.value = false
+  clearProcessFallback()
   // 如果没有任何步骤，完成后自动隐藏面板
   if (processItems.value.length === 0) {
     processVisible.value = false
@@ -377,6 +415,12 @@ async function executeRequest(payload: PendingRequest, includeUserMessage: boole
   processItems.value = []
   if (showProcessPanel.value) {
     startProcessPanel()
+    appendLocalProcessItem(
+      t('main.progress.requestSent'),
+      payload.isSkill && payload.skillName ? `/${payload.skillName}` : undefined,
+      'start'
+    )
+    scheduleProcessFallback()
   }
 
   if (includeUserMessage) {
@@ -733,6 +777,7 @@ onMounted(async () => {
     const { listen } = await import('@tauri-apps/api/event')
     progressUnlisten = await listen<ProgressEventPayload>('assistant-progress', (event) => {
       const payload = event.payload
+      backendProgressSeen.value = true
       if (!payload || !payload.request_id) return
       if (!activeRequestId.value || payload.request_id !== activeRequestId.value) return
       appendProcessItem(payload)
