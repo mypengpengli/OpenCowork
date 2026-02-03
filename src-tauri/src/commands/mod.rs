@@ -956,7 +956,8 @@ async fn execute_skill_internal(
 
 ## Error recovery and capability expansion
 - Treat tool errors as normal; diagnose (paths/permissions/params) and retry with adjusted inputs.
-- Prefer existing tools/skills first; if capability is missing, use manage_skill to create/update with minimal allowed_tools.
+- Prefer existing tools/skills first; if capability is missing, use /skill-creator or manage_skill to create/update with minimal allowed_tools.
+- For new skills, ask the user which path to take: (A) find an existing skill online, or (B) wrap an open-source GitHub project as a skill. Only proceed with downloads/installs after explicit approval.
 - If an external tool/project is needed, prefer mature options, ask the user for approval before download/install, then encapsulate it as a skill.
 - If still blocked, report what was tried and ask for the missing info or permission.
 
@@ -2747,7 +2748,8 @@ fn build_tool_system_prompt(context: &str) -> String {
 
 ## Error recovery and capability expansion
 - Treat tool errors as normal; diagnose (paths/permissions/params) and retry with adjusted inputs.
-- Prefer existing tools/skills first; if capability is missing, use manage_skill to create/update with minimal allowed_tools.
+- Prefer existing tools/skills first; if capability is missing, use /skill-creator or manage_skill to create/update with minimal allowed_tools.
+- For new skills, ask the user which path to take: (A) find an existing skill online, or (B) wrap an open-source GitHub project as a skill. Only proceed with downloads/installs after explicit approval.
 - If an external tool/project is needed, prefer mature options, ask the user for approval before download/install, then encapsulate it as a skill.
 - If still blocked, report what was tried and ask for the missing info or permission.
 
