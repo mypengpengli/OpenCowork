@@ -148,6 +148,49 @@ async function setupAlertListener() {
 
 setupAlertListener()
 
+async function setupModelErrorListener() {
+  try {
+    const { listen } = await import('@tauri-apps/api/event')
+    const { invoke } = await import('@tauri-apps/api/core')
+    await listen<{
+      timestamp: string
+      error_type: string
+      message: string
+      suggestion: string
+      detail: string
+      source: string
+    }>('model-error', async (event) => {
+      const alert = event.payload
+      const typeLabel = [alert.error_type, alert.source].filter(Boolean).join(' / ') || 'model'
+      const content = formatAlertContent(typeLabel, alert.message, alert.suggestion)
+
+      chatStore.addAlert({
+        role: 'assistant',
+        content,
+        timestamp: alert.timestamp,
+        alertKey: `model-error|${typeLabel}|${alert.message}|${alert.timestamp}`,
+      })
+
+      try {
+        await invoke('show_notification', {
+          intent: 'model-error',
+          scene: alert.source || '',
+          helpType: 'error',
+          summary: alert.message || '',
+          suggestion: alert.suggestion || '',
+          urgency: 'high',
+        })
+      } catch (err) {
+        console.error('显示模型错误通知失败:', err)
+      }
+    })
+  } catch (error) {
+    console.error('设置模型错误监听失败:', error)
+  }
+}
+
+setupModelErrorListener()
+
 async function pollAlerts() {
   try {
     const { invoke } = await import('@tauri-apps/api/core')
