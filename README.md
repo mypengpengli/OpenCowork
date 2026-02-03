@@ -26,7 +26,7 @@ Have you ever experienced this?
 ## What Can It Do?
 
 - **Always-on screen monitoring**: capture errors, warnings, and key on-screen events
-- **Natural recall**: ask questions like "what error just happened" or "what failed in the last 10 minutes"
+- **Natural recall**: ask "help me edit a local file", "generate an automated futures quant script", or "which file did I just edit?"
 - **Skills system**: reusable AI workflows you can create, update, and invoke with `/skill-name`
 - **AI-managed Skills**: describe what you want, let AI generate or refine the Skill
 - **Background progress**: see real-time plans, milestones, and tool steps while AI works
@@ -146,7 +146,7 @@ OpenCowork 保持轻量和实用。它专注于两个核心能力：**屏幕监�
 ## 核心功能
 
 - **常驻监控**：自动捕获错误、警告等关键信息
-- **自然回忆**：问"刚才什么错误"或"最近 10 分钟发生了什么"
+- **自然回忆**：问"帮我修改本地文件"、"帮我生成一个自动跑期货量化的脚本"或"我刚刚编辑了哪个文件？"
 - **Skills 系统**：可复用的 AI 工作流，用 `/skill-name` 快速调用
 - **AI 管理 Skills**：描述需求，AI 自动生成或优化 Skill
 - **后台进度面板**：实时显示计划、里程碑和工具步骤
