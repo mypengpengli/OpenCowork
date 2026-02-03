@@ -131,7 +131,7 @@ function startProcessPanel() {
   backendProgressSeen.value = false
   clearProcessFallback()
   processStatus.value = 'running'
-  processExpanded.value = true
+  processExpanded.value = false  // 默认收起状态
   processVisible.value = true
 }
 
