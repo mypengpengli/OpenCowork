@@ -32,11 +32,6 @@ const localeKey = computed(() => `locale-${locale.value}`)
 const activeRoute = computed(() => route.path)
 
 function handleNewChat() {
-  const hasMessages = chatStore.messages.some(message => !message.isAlert)
-  if (hasMessages) {
-    const confirmed = window.confirm(t('main.chat.newConfirm'))
-    if (!confirmed) return
-  }
   chatStore.newConversation()
   router.push('/')
 }
