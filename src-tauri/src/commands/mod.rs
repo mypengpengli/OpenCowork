@@ -2782,7 +2782,14 @@ async fn run_tool_loop(
     loop {
         check_cancel(cancel_token)?;
         match result {
-            ChatWithToolsResult::Text(text) => return Ok(text),
+            ChatWithToolsResult::Text(text) => {
+                if loops == 0 {
+                    if let Some(progress) = progress {
+                        progress.emit_info("未调用工具，直接给出回答".to_string(), None);
+                    }
+                }
+                return Ok(text);
+            }
             ChatWithToolsResult::ToolCalls { calls, messages } => {
                 if loops >= MAX_TOOL_LOOPS {
                     let pending: Vec<String> = calls

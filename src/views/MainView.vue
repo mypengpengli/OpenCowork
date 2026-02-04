@@ -779,7 +779,16 @@ onMounted(async () => {
       const payload = event.payload
       backendProgressSeen.value = true
       if (!payload || !payload.request_id) return
-      if (!activeRequestId.value || payload.request_id !== activeRequestId.value) return
+      if (!activeRequestId.value) return
+      if (payload.request_id !== activeRequestId.value) {
+        // Some backends may generate a new request id if invoke args are reshaped.
+        // Since UI allows only one active request, bind to the first progress id.
+        if (isLoading.value) {
+          activeRequestId.value = payload.request_id
+        } else {
+          return
+        }
+      }
       appendProcessItem(payload)
       if (payload.stage === 'done') {
         finishProcessPanel('done')
