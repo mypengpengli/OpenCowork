@@ -3,7 +3,7 @@ import { computed, ref, watch, onMounted, nextTick } from 'vue'
 import { NAvatar, NIcon, NImage, NImageGroup, NTooltip } from 'naive-ui'
 import { PersonOutline, HardwareChipOutline, WarningOutline, DocumentOutline, CopyOutline, RefreshOutline } from '@vicons/ionicons5'
 import { localeToDateLocale, useI18n } from '../../i18n'
-import type { ChatAttachment, ToolStep } from '../../stores/chat'
+import type { ChatAttachment } from '../../stores/chat'
 import { renderMarkdown } from '../../utils/markdown'
 
 interface Message {
@@ -12,7 +12,6 @@ interface Message {
   timestamp: string
   isAlert?: boolean
   attachments?: ChatAttachment[]
-  toolSteps?: ToolStep[]
 }
 
 const props = defineProps<{
@@ -27,10 +26,8 @@ const isUser = computed(() => props.message.role === 'user')
 const isAlert = computed(() => props.message.isAlert)
 const { t, locale } = useI18n()
 const attachments = computed(() => props.message.attachments || [])
-const toolSteps = computed(() => props.message.toolSteps || [])
 const renderedHtml = computed(() => renderMarkdown(props.message.content))
 const expanded = ref(false)
-const expandedSteps = ref<Record<number, boolean>>({})
 const showActions = ref(false)
 const copySuccess = ref(false)
 
@@ -43,7 +40,6 @@ watch(
   () => props.message,
   () => {
     expanded.value = false
-    expandedSteps.value = {}
   }
 )
 
@@ -144,8 +140,6 @@ function addCodeBlockCopyButtons() {
 
 const MESSAGE_COLLAPSE_THRESHOLD = 900
 const MESSAGE_LINE_THRESHOLD = 14
-const TOOL_DETAIL_LIMIT = 180
-
 const canCollapseMessage = computed(() => {
   const content = props.message.content
   if (!content) return false
@@ -156,24 +150,6 @@ const canCollapseMessage = computed(() => {
 
 function toggleExpanded() {
   expanded.value = !expanded.value
-}
-
-function isToolDetailLong(detail?: string) {
-  return Boolean(detail && detail.length > TOOL_DETAIL_LIMIT)
-}
-
-function toggleToolDetail(index: number) {
-  expandedSteps.value = {
-    ...expandedSteps.value,
-    [index]: !expandedSteps.value[index],
-  }
-}
-
-function toolDetailText(detail?: string, index?: number) {
-  if (!detail) return ''
-  if (index === undefined) return detail
-  if (expandedSteps.value[index] || detail.length <= TOOL_DETAIL_LIMIT) return detail
-  return `${detail.slice(0, TOOL_DETAIL_LIMIT).trimEnd()}...`
 }
 
 function formatTime(timestamp: string): string {
@@ -252,30 +228,7 @@ function formatTime(timestamp: string): string {
         {{ expanded ? t('main.chat.collapseContent') : t('main.chat.expandContent') }}
       </button>
 
-      <div v-if="toolSteps.length > 0" class="tool-cards">
-        <div v-for="(step, index) in toolSteps" :key="index" class="tool-card">
-          <div class="tool-card-header">
-            <div class="tool-card-title">
-              <NIcon size="14">
-                <HardwareChipOutline />
-              </NIcon>
-              <span>{{ step.title }}</span>
-            </div>
-            <button
-              v-if="isToolDetailLong(step.detail)"
-              type="button"
-              class="tool-card-toggle"
-              @click="toggleToolDetail(index)"
-            >
-              {{ expandedSteps[index] ? t('main.chat.collapseDetail') : t('main.chat.expandDetail') }}
-            </button>
-          </div>
-          <div v-if="step.detail" class="tool-card-detail">
-            {{ toolDetailText(step.detail, index) }}
-          </div>
-        </div>
-      </div>
-      <div v-else-if="attachments.length > 0 && !message.content.trim()" class="message-text placeholder">
+      <div v-if="attachments.length > 0 && !message.content.trim()" class="message-text placeholder">
         {{ t('main.attachmentOnly') }}
       </div>
 
