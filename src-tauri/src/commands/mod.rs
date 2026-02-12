@@ -930,10 +930,12 @@ async fn execute_skill_internal(
         _ => String::new(),
     };
     let shell_hint = build_shell_hint();
+    let skill_files_hint = build_skill_file_manifest(skill_dir, 200);
     let extra_hint = format!(
-        "\n## Environment\n{}\n- App skills directory: {}\n- Do not assume ~/.kiro/skills or ~/.codex/skills. Use the app skills directory above for skill files.\n\n## Execution Hint\nYou are running /{}. Do not invoke the same skill again.\n",
+        "\n## Environment\n{}\n- App skills directory: {}\n- Do not assume ~/.kiro/skills or ~/.codex/skills. Use the app skills directory above for skill files.\n\n## Skill Files (authoritative, relative to skill directory)\n{}\n\n## Skill Path Rules\n- When using skill resources, only use files from the list above.\n- Do not invent absolute paths outside the skill directory unless user explicitly provides that path.\n- If a required file is missing, report it and stop guessing paths.\n\n## Execution Hint\nYou are running /{}. Do not invoke the same skill again.\n",
         shell_hint,
         skill_manager.get_skills_dir().to_string_lossy(),
+        skill_files_hint,
         skill.metadata.name
     );
     let allowed_tools_hint = format!("{}{}", allowed_tools_hint, extra_hint);
@@ -982,12 +984,9 @@ async fn execute_skill_internal(
     }
 
     if config.model.provider == "api" {
-        let available_skills = skill_manager
-            .discover_skills()
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|entry| entry.name != skill.metadata.name)
-            .collect::<Vec<_>>();
+        // Inside a running skill, disable nested skill invocation to avoid
+        // "skill not available" confusion and recursive skill chaining.
+        let available_skills: Vec<SkillMetadata> = Vec::new();
         let result = if attachment_payload.image_urls.is_empty()
             && attachment_payload.image_base64.is_empty()
         {
@@ -2722,6 +2721,38 @@ fn build_shell_hint() -> &'static str {
     {
         "Unix-like systems use sh -c for Bash/run_command."
     }
+}
+
+fn build_skill_file_manifest(skill_dir: &Path, max_entries: usize) -> String {
+    let mut files = Vec::new();
+    for entry in WalkDir::new(skill_dir).follow_links(false).into_iter().flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Ok(relative) = path.strip_prefix(skill_dir) else {
+            continue;
+        };
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        if relative.is_empty() {
+            continue;
+        }
+        files.push(relative);
+        if files.len() >= max_entries {
+            break;
+        }
+    }
+
+    if files.is_empty() {
+        return "(no files found)".to_string();
+    }
+
+    files.sort();
+    files
+        .into_iter()
+        .map(|item| format!("- {}", item))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn parse_exit_code(output: &str) -> Option<i32> {
