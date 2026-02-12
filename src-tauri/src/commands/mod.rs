@@ -645,6 +645,7 @@ pub async fn chat_with_assistant(
             result,
             &available_skills,
             &None,
+            None,
             Some(&cancel_token),
             progress.as_ref(),
         )
@@ -709,6 +710,7 @@ pub async fn chat_with_assistant(
                         followup_result,
                         &available_skills,
                         &None,
+                        None,
                         Some(&cancel_token),
                         progress.as_ref(),
                     )
@@ -887,6 +889,9 @@ async fn execute_skill_internal(
     // 加载 skill
     let skill = skill_manager.load_skill(skill_name)?;
     check_cancel(cancel_token)?;
+    if let Some(progress) = progress {
+        progress.emit_info("Loaded skill file".to_string(), Some(skill.path.clone()));
+    }
 
     // 构建用户消息（包含参数）
     let base_message = if let Some(ref args_str) = args {
@@ -1052,6 +1057,7 @@ async fn execute_skill_internal(
             result,
             &available_skills,
             &skill.metadata.allowed_tools,
+            Some(skill_dir),
             cancel_token,
             progress,
         ))
@@ -2173,7 +2179,11 @@ fn normalize_tool_mode(mode: &str) -> String {
     }
 }
 
-fn build_tool_access(config: &Config, storage: &StorageManager) -> ToolAccess {
+fn build_tool_access(
+    config: &Config,
+    storage: &StorageManager,
+    preferred_base_dir: Option<&Path>,
+) -> ToolAccess {
     let mode = normalize_tool_mode(&config.tools.mode);
     let data_dir = storage.get_data_dir().to_path_buf();
     let mut allowed_dirs = Vec::new();
@@ -2196,10 +2206,20 @@ fn build_tool_access(config: &Config, storage: &StorageManager) -> ToolAccess {
         allowed_dirs.push(normalize_path(&data_dir));
     }
 
-    let base_dir = allowed_dirs
+    let default_base_dir = allowed_dirs
         .get(0)
         .cloned()
         .unwrap_or_else(|| normalize_path(&data_dir));
+    let base_dir = if let Some(dir) = preferred_base_dir {
+        let preferred = normalize_path(dir);
+        if mode == "allow_all" || allowed_dirs.iter().any(|allowed| preferred.starts_with(allowed)) {
+            preferred
+        } else {
+            default_base_dir
+        }
+    } else {
+        default_base_dir
+    };
 
     ToolAccess {
         mode,
@@ -2777,10 +2797,11 @@ async fn run_tool_loop(
     mut result: ChatWithToolsResult,
     available_skills: &[SkillMetadata],
     allowed_tools: &Option<Vec<String>>,
+    preferred_base_dir: Option<&Path>,
     cancel_token: Option<&CancellationToken>,
     progress: Option<&ProgressEmitter>,
 ) -> Result<String, String> {
-    let access = build_tool_access(config, storage);
+    let access = build_tool_access(config, storage, preferred_base_dir);
     let mut loops = 0usize;
     let mut last_tool_calls: Option<Vec<(String, String)>> = None;
     let mut repeat_loops = 0usize;
