@@ -31,6 +31,7 @@ const { t } = useI18n()
 
 const inputMessage = ref('')
 const messagesContainer = ref<HTMLElement | null>(null)
+const processListContainer = ref<HTMLElement | null>(null)
 const isLoading = ref(false)
 const isHistoryLoading = ref(false)
 const attachments = ref<ChatAttachment[]>([])
@@ -184,6 +185,7 @@ function appendProcessItem(payload: ProgressEventPayload) {
     processItems.value.shift()
   }
   processVisible.value = true
+  scrollProcessListToBottom()
 }
 
 function finishProcessPanel(status: 'done' | 'error') {
@@ -200,6 +202,9 @@ function finishProcessPanel(status: 'done' | 'error') {
 
 function toggleProcessExpanded() {
   processExpanded.value = !processExpanded.value
+  if (processExpanded.value) {
+    scrollProcessListToBottom()
+  }
 }
 
 function truncateText(value: string, max = 80): string {
@@ -711,6 +716,15 @@ function scrollToBottom() {
   }
 }
 
+function scrollProcessListToBottom() {
+  if (!processExpanded.value) return
+  nextTick(() => {
+    const list = processListContainer.value
+    if (!list) return
+    list.scrollTop = list.scrollHeight
+  })
+}
+
 function handleKeydown(e: KeyboardEvent) {
   // 如果 Skill 提示列表显示中，处理上下键和回车
   if (showSkillHints.value && filteredSkills.value.length > 0) {
@@ -924,7 +938,7 @@ onUnmounted(() => {
             <div v-if="processItems.length === 0" class="process-empty">
               {{ t('main.progress.empty') }}
             </div>
-            <div v-else class="process-list">
+            <div v-else ref="processListContainer" class="process-list">
               <div v-for="item in processItems" :key="item.id" class="process-item">
                 <span class="process-message">{{ item.message }}</span>
                 <span v-if="item.detail" class="process-detail">{{ item.detail }}</span>

@@ -597,7 +597,7 @@ pub async fn chat_with_assistant(
 
     let response = (async {
         let response = if config.model.provider == "api" {
-        let system_prompt = build_tool_system_prompt(&context);
+        let system_prompt = build_tool_system_prompt(&context, skill_manager.get_skills_dir());
         if let Some(ref progress) = progress {
             progress.emit_start("开始处理请求");
             progress.emit_info("Analyze request & plan".to_string(), None);
@@ -926,8 +926,9 @@ async fn execute_skill_internal(
     };
     let shell_hint = build_shell_hint();
     let extra_hint = format!(
-        "\n## Environment\n{}\n\n## Execution Hint\nYou are running /{}. Do not invoke the same skill again.\n",
+        "\n## Environment\n{}\n- App skills directory: {}\n- Do not assume ~/.kiro/skills or ~/.codex/skills. Use the app skills directory above for skill files.\n\n## Execution Hint\nYou are running /{}. Do not invoke the same skill again.\n",
         shell_hint,
+        skill_manager.get_skills_dir().to_string_lossy(),
         skill.metadata.name
     );
     let allowed_tools_hint = format!("{}{}", allowed_tools_hint, extra_hint);
@@ -2721,9 +2722,14 @@ fn is_tool_failure(output: &str) -> bool {
     parse_exit_code(output).map_or(false, |code| code != 0)
 }
 
-fn build_tool_system_prompt(context: &str) -> String {
+fn build_tool_system_prompt(context: &str, skills_dir: &Path) -> String {
     let shell_hint = build_shell_hint();
-    let context = format!("{}\n\n## Environment\n{}", context, shell_hint);
+    let context = format!(
+        "{}\n\n## Environment\n{}\n- App skills directory: {}\n- Do not assume ~/.kiro/skills or ~/.codex/skills. Use the app skills directory above for skill files.",
+        context,
+        shell_hint,
+        skills_dir.to_string_lossy()
+    );
     format!(
         r#"你是一个屏幕监控助手，帮助用户回忆和理解他们的操作历史。
 

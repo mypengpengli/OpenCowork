@@ -30,6 +30,8 @@ Add domain-specific notes, APIs, examples, and constraints here.
 const DEFAULT_ASSET_TEMPLATE_MD: &str = r#"# Template
 Replace this file with the real template or data needed by the skill.
 "#;
+const DEFAULT_SKILL_MD_FILE: &str = "SKILL.md";
+const LOWERCASE_SKILL_MD_FILE: &str = "skill.md";
 
 struct BuiltinFile {
     rel_path: &'static str,
@@ -150,8 +152,7 @@ impl SkillManager {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                let skill_md = path.join("SKILL.md");
-                if skill_md.exists() {
+                if let Some(skill_md) = Self::resolve_skill_md_path(&path) {
                     match SkillParser::parse_metadata(&skill_md) {
                         Ok(metadata) => {
                             // 验证 name 与目录名匹配
@@ -184,7 +185,8 @@ impl SkillManager {
         Self::validate_skill_name(name)?;
 
         let skill_dir = self.skills_dir.join(name);
-        let skill_md = skill_dir.join("SKILL.md");
+        let skill_md = Self::resolve_skill_md_path(&skill_dir)
+            .ok_or_else(|| format!("Skill '{}' not found (missing SKILL.md or skill.md)", name))?;
 
         if !skill_md.exists() {
             return Err(format!("Skill '{}' 不存在", name));
@@ -223,7 +225,7 @@ impl SkillManager {
         std::fs::create_dir_all(&skill_dir)
             .map_err(|e| format!("?? skill ????: {}", e))?;
 
-        let skill_md = skill_dir.join("SKILL.md");
+        let skill_md = skill_dir.join(DEFAULT_SKILL_MD_FILE);
         let instructions = ensure_resource_section(instructions);
         let frontmatter = build_skill_frontmatter(name, description, None, &overrides);
         let content = format!("---\n{}\n---\n\n{}", frontmatter, instructions);
@@ -265,7 +267,7 @@ impl SkillManager {
             return Err(format!("Skill '{}' ???", name));
         }
 
-        let skill_md = skill_dir.join("SKILL.md");
+        let skill_md = Self::skill_md_path_for_write(&skill_dir);
         let existing = SkillParser::parse_metadata(&skill_md).ok();
         let instructions = ensure_resource_section(instructions);
         let frontmatter = build_skill_frontmatter(name, description, existing.as_ref(), &overrides);
@@ -298,6 +300,25 @@ impl SkillManager {
     }
 
     /// 验证 skill name 格式
+    fn resolve_skill_md_path(skill_dir: &Path) -> Option<PathBuf> {
+        let default_path = skill_dir.join(DEFAULT_SKILL_MD_FILE);
+        if default_path.exists() {
+            return Some(default_path);
+        }
+
+        let lowercase_path = skill_dir.join(LOWERCASE_SKILL_MD_FILE);
+        if lowercase_path.exists() {
+            return Some(lowercase_path);
+        }
+
+        None
+    }
+
+    fn skill_md_path_for_write(skill_dir: &Path) -> PathBuf {
+        Self::resolve_skill_md_path(skill_dir)
+            .unwrap_or_else(|| skill_dir.join(DEFAULT_SKILL_MD_FILE))
+    }
+
     fn validate_skill_name(name: &str) -> Result<(), String> {
         if name.is_empty() || name.len() > 64 {
             return Err("Skill name 必须在 1-64 字符之间".to_string());
