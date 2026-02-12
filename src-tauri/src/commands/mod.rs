@@ -1,6 +1,6 @@
 use crate::capture::CaptureManager;
 use crate::model::{ModelManager, ChatWithToolsResult, ToolCall, is_transient_model_error};
-use crate::storage::{Config, StorageManager, SummaryRecord, SearchQuery, TimeRange};
+use crate::storage::{Config, StorageConfig, StorageManager, SummaryRecord, SearchQuery, TimeRange};
 use crate::skills::{SkillManager, SkillMetadata, Skill, SkillsWatcher, SkillFrontmatterOverrides};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use chrono::{Duration, Local, NaiveDateTime, TimeZone};
@@ -447,6 +447,158 @@ fn response_looks_incomplete(text: &str) -> bool {
     (short && (ends_with_colon || ends_with_ellipsis)) || unbalanced_fence || engine_hint
 }
 
+fn estimate_text_tokens(text: &str) -> usize {
+    let mut ascii_chars = 0usize;
+    let mut non_ascii_chars = 0usize;
+    for ch in text.chars() {
+        if ch.is_ascii() {
+            ascii_chars += 1;
+        } else {
+            non_ascii_chars += 1;
+        }
+    }
+    (ascii_chars + 3) / 4 + non_ascii_chars + 1
+}
+
+fn estimate_history_tokens(
+    system_prompt: &str,
+    user_message: &str,
+    history: &[ChatHistoryMessage],
+) -> usize {
+    let mut total = estimate_text_tokens(system_prompt) + estimate_text_tokens(user_message) + 24;
+    for msg in history {
+        total += estimate_text_tokens(&msg.content) + 8;
+    }
+    total
+}
+
+fn build_history_compression_summary(history: &[ChatHistoryMessage], max_chars: usize) -> String {
+    let mut summary = String::from(
+        "Context compression summary of earlier conversation:\n",
+    );
+    let mut used = summary.chars().count();
+
+    for (idx, msg) in history.iter().enumerate() {
+        if idx >= 80 {
+            summary.push_str("- ...(more omitted)\n");
+            break;
+        }
+        let role = if msg.role.eq_ignore_ascii_case("assistant") {
+            "assistant"
+        } else if msg.role.eq_ignore_ascii_case("system") {
+            "system"
+        } else {
+            "user"
+        };
+        let compact = msg.content.split_whitespace().collect::<Vec<_>>().join(" ");
+        let (snippet, truncated) = truncate_string(&compact, 220);
+        let mut line = format!("- {}: {}", role, snippet);
+        if truncated {
+            line.push_str(" ...");
+        }
+        line.push('\n');
+
+        let line_chars = line.chars().count();
+        if used + line_chars > max_chars {
+            summary.push_str("- ...(more omitted)\n");
+            break;
+        }
+        summary.push_str(&line);
+        used += line_chars;
+    }
+
+    summary
+}
+
+fn compress_history_if_needed(
+    history: Option<Vec<ChatHistoryMessage>>,
+    system_prompt: &str,
+    user_message: &str,
+    storage: &StorageConfig,
+    progress: Option<&ProgressEmitter>,
+) -> Option<Vec<ChatHistoryMessage>> {
+    let history = history?;
+    if history.len() <= 2 {
+        return Some(history);
+    }
+
+    let max_context_tokens = storage.max_context_tokens.max(4096);
+    let trigger_ratio = storage.context_compress_trigger_ratio.clamp(0.70, 0.99);
+    let trigger_tokens = ((max_context_tokens as f32) * trigger_ratio).floor() as usize;
+
+    let before_tokens = estimate_history_tokens(system_prompt, user_message, &history);
+    if before_tokens <= trigger_tokens {
+        return Some(history);
+    }
+
+    let keep_recent = history.len().min(12);
+    let split_idx = history.len().saturating_sub(keep_recent);
+    let older = &history[..split_idx];
+    let recent = &history[split_idx..];
+    let mut compressed = Vec::new();
+    let has_summary = !older.is_empty();
+    if has_summary {
+        compressed.push(ChatHistoryMessage {
+            role: "assistant".to_string(),
+            content: build_history_compression_summary(older, 6000),
+        });
+    }
+    compressed.extend(recent.iter().cloned());
+
+    let target_ratio = (trigger_ratio - 0.08).max(0.70);
+    let target_tokens = ((max_context_tokens as f32) * target_ratio).floor() as usize;
+
+    let mut loops = 0usize;
+    while estimate_history_tokens(system_prompt, user_message, &compressed) > target_tokens
+        && compressed.len() > 4
+        && loops < 128
+    {
+        let remove_idx = if has_summary && compressed.len() > 1 { 1 } else { 0 };
+        compressed.remove(remove_idx);
+        loops += 1;
+    }
+
+    if has_summary && !compressed.is_empty() {
+        let mut summary_limit = 3000usize;
+        while estimate_history_tokens(system_prompt, user_message, &compressed) > target_tokens
+            && summary_limit > 600
+        {
+            let (shortened, truncated) = truncate_string(&compressed[0].content, summary_limit);
+            compressed[0].content = if truncated {
+                format!("{}\n...(summary truncated)", shortened)
+            } else {
+                shortened
+            };
+            summary_limit = ((summary_limit as f32) * 0.75) as usize;
+        }
+    }
+
+    while estimate_history_tokens(system_prompt, user_message, &compressed) > trigger_tokens
+        && compressed.len() > 2
+    {
+        let remove_idx = if has_summary && compressed.len() > 1 { 1 } else { 0 };
+        compressed.remove(remove_idx);
+    }
+
+    let after_tokens = estimate_history_tokens(system_prompt, user_message, &compressed);
+    if let Some(progress) = progress {
+        progress.emit_info(
+            "Context compression activated".to_string(),
+            Some(format!(
+                "history {} -> {} messages, est tokens {} -> {} (limit {}, trigger {}%)",
+                history.len(),
+                compressed.len(),
+                before_tokens,
+                after_tokens,
+                max_context_tokens,
+                (trigger_ratio * 100.0).round() as u32
+            )),
+        );
+    }
+
+    Some(compressed)
+}
+
 
 #[derive(serde::Deserialize)]
 struct ReadArgs {
@@ -598,6 +750,13 @@ pub async fn chat_with_assistant(
     let response = (async {
         let response = if config.model.provider == "api" {
         let system_prompt = build_tool_system_prompt(&context, skill_manager.get_skills_dir());
+        let model_history = compress_history_if_needed(
+            history.clone(),
+            &system_prompt,
+            &user_message,
+            &config.storage,
+            progress.as_ref(),
+        );
         if let Some(ref progress) = progress {
             progress.emit_start("开始处理请求");
             progress.emit_info("Analyze request & plan".to_string(), None);
@@ -613,7 +772,7 @@ pub async fn chat_with_assistant(
                     &config.model,
                     &system_prompt,
                     &user_message,
-                    history.clone(),
+                    model_history.clone(),
                     &available_skills,
                 ),
             )
@@ -627,7 +786,7 @@ pub async fn chat_with_assistant(
                     &config.model,
                     &system_prompt,
                     &user_message,
-                    history.clone(),
+                    model_history.clone(),
                     &available_skills,
                     attachment_payload.image_urls.clone(),
                     attachment_payload.image_base64.clone(),
@@ -656,7 +815,7 @@ pub async fn chat_with_assistant(
                 if let Some(ref progress) = progress {
                     progress.emit_info("Continuing incomplete response".to_string(), None);
                 }
-                let mut extended_history = history.clone().unwrap_or_default();
+                let mut extended_history = model_history.clone().unwrap_or_default();
                 extended_history.push(ChatHistoryMessage {
                     role: "user".to_string(),
                     content: user_message.clone(),
@@ -764,6 +923,13 @@ if let Some(ref progress) = progress {
         };
 
         let context_with_skills = format!("{}{}", context, skills_hint);
+        let model_history = compress_history_if_needed(
+            history.clone(),
+            &context_with_skills,
+            &user_message,
+            &config.storage,
+            progress.as_ref(),
+        );
         let response = if attachment_payload.image_urls.is_empty()
             && attachment_payload.image_base64.is_empty()
         {
@@ -775,7 +941,7 @@ if let Some(ref progress) = progress {
                     &config.model,
                     &context_with_skills,
                     &user_message,
-                    history.clone(),
+                    model_history.clone(),
                 ),
             )
             .await
@@ -788,7 +954,7 @@ if let Some(ref progress) = progress {
                     &config.model,
                     &context_with_skills,
                     &user_message,
-                    history.clone(),
+                    model_history.clone(),
                     attachment_payload.image_urls.clone(),
                     attachment_payload.image_base64.clone(),
                 ),
@@ -801,7 +967,7 @@ if let Some(ref progress) = progress {
                 if let Some(ref progress) = progress {
                     progress.emit_info("Continuing incomplete response".to_string(), None);
                 }
-                let mut extended_history = history.clone().unwrap_or_default();
+                let mut extended_history = model_history.clone().unwrap_or_default();
                 extended_history.push(ChatHistoryMessage {
                     role: "user".to_string(),
                     content: user_message.clone(),
@@ -983,6 +1149,14 @@ async fn execute_skill_internal(
         progress.emit_step("请求模型执行技能".to_string(), Some(format!("/{}", skill.metadata.name)));
     }
 
+    let model_history = compress_history_if_needed(
+        history.clone(),
+        &system_prompt,
+        &user_message,
+        &config.storage,
+        progress,
+    );
+
     if config.model.provider == "api" {
         // Inside a running skill, disable nested skill invocation to avoid
         // "skill not available" confusion and recursive skill chaining.
@@ -999,7 +1173,7 @@ async fn execute_skill_internal(
                         &config.model,
                         &system_prompt,
                         &user_message,
-                        history.clone(),
+                        model_history.clone(),
                         &available_skills,
                     ),
                 )
@@ -1010,7 +1184,7 @@ async fn execute_skill_internal(
                         &config.model,
                         &system_prompt,
                         &user_message,
-                        history.clone(),
+                        model_history.clone(),
                         &available_skills,
                     )
                     .await?
@@ -1025,7 +1199,7 @@ async fn execute_skill_internal(
                         &config.model,
                         &system_prompt,
                         &user_message,
-                        history.clone(),
+                        model_history.clone(),
                         &available_skills,
                         attachment_payload.image_urls.clone(),
                         attachment_payload.image_base64.clone(),
@@ -1038,7 +1212,7 @@ async fn execute_skill_internal(
                         &config.model,
                         &system_prompt,
                         &user_message,
-                        history.clone(),
+                        model_history.clone(),
                         &available_skills,
                         attachment_payload.image_urls.clone(),
                         attachment_payload.image_base64.clone(),
@@ -1073,13 +1247,13 @@ async fn execute_skill_internal(
                     &config.model,
                     &system_prompt,
                     &user_message,
-                    history.clone(),
+                    model_history.clone(),
                 ),
             )
             .await
         } else {
             model_manager
-                .chat_with_system_prompt(&config.model, &system_prompt, &user_message, history)
+                .chat_with_system_prompt(&config.model, &system_prompt, &user_message, model_history)
                 .await
         }
     } else {
@@ -1092,7 +1266,7 @@ async fn execute_skill_internal(
                     &config.model,
                     &system_prompt,
                     &user_message,
-                    history.clone(),
+                    model_history.clone(),
                     attachment_payload.image_urls.clone(),
                     attachment_payload.image_base64.clone(),
                 ),

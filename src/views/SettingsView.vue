@@ -107,7 +107,9 @@ const formValue = ref({
   // 存储配置
   retentionDays: 7,
   maxScreenshots: 10000,
-  maxContextChars: 10000,
+  maxContextChars: 1000000,
+  maxContextTokens: 128000,
+  contextCompressTriggerRatio: 0.92,
   autoClearOnStart: false,
   contextMode: 'auto',
   contextDetailHours: 24,
@@ -214,7 +216,9 @@ function normalizeConfig(raw: any) {
     storage: {
       retention_days: raw?.storage?.retention_days || 7,
       max_screenshots: raw?.storage?.max_screenshots || 10000,
-      max_context_chars: raw?.storage?.max_context_chars || 10000,
+      max_context_chars: raw?.storage?.max_context_chars || 1000000,
+      max_context_tokens: raw?.storage?.max_context_tokens || 128000,
+      context_compress_trigger_ratio: raw?.storage?.context_compress_trigger_ratio ?? 0.92,
       auto_clear_on_start: raw?.storage?.auto_clear_on_start ?? false,
       context_mode: raw?.storage?.context_mode || 'auto',
       context_detail_hours: raw?.storage?.context_detail_hours ?? 24,
@@ -256,6 +260,8 @@ function applyConfigToForm(config: any) {
     retentionDays: normalized.storage.retention_days,
     maxScreenshots: normalized.storage.max_screenshots,
     maxContextChars: normalized.storage.max_context_chars,
+    maxContextTokens: normalized.storage.max_context_tokens ?? 128000,
+    contextCompressTriggerRatio: normalized.storage.context_compress_trigger_ratio ?? 0.92,
     autoClearOnStart: normalized.storage.auto_clear_on_start ?? false,
     contextMode: normalized.storage.context_mode ?? 'auto',
     contextDetailHours: normalized.storage.context_detail_hours ?? 24,
@@ -296,6 +302,8 @@ function buildConfigFromForm() {
       retention_days: formValue.value.retentionDays,
       max_screenshots: formValue.value.maxScreenshots,
       max_context_chars: formValue.value.maxContextChars,
+      max_context_tokens: formValue.value.maxContextTokens,
+      context_compress_trigger_ratio: formValue.value.contextCompressTriggerRatio,
       auto_clear_on_start: formValue.value.autoClearOnStart,
       context_mode: formValue.value.contextMode,
       context_detail_hours: formValue.value.contextDetailHours,
@@ -1093,13 +1101,42 @@ async function installUpdate() {
                     <NInputNumber
                       v-model:value="formValue.maxContextChars"
                       :min="1000"
-                      :max="100000"
                       :step="1000"
                     >
                       <template #suffix>{{ t('settings.form.charsUnit') }}</template>
                     </NInputNumber>
                   </template>
                   {{ t('settings.form.contextSizeTip') }}
+                </NTooltip>
+              </NFormItem>
+              <NFormItem :label="t('settings.form.maxContextTokens')">
+                <NTooltip trigger="hover">
+                  <template #trigger>
+                    <NInputNumber
+                      v-model:value="formValue.maxContextTokens"
+                      :min="4096"
+                      :step="1024"
+                    >
+                      <template #suffix>{{ t('settings.form.tokensUnit') }}</template>
+                    </NInputNumber>
+                  </template>
+                  {{ t('settings.form.maxContextTokensTip') }}
+                </NTooltip>
+              </NFormItem>
+              <NFormItem :label="t('settings.form.compressTriggerRatio')">
+                <NTooltip trigger="hover">
+                  <template #trigger>
+                    <NInputNumber
+                      v-model:value="formValue.contextCompressTriggerRatio"
+                      :min="0.7"
+                      :max="0.99"
+                      :step="0.01"
+                      :precision="2"
+                    >
+                      <template #suffix>{{ t('settings.form.ratioUnit') }}</template>
+                    </NInputNumber>
+                  </template>
+                  {{ t('settings.form.compressTriggerRatioTip') }}
                 </NTooltip>
               </NFormItem>
               <NFormItem :label="t('settings.form.contextMode')">

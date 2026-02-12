@@ -39,7 +39,7 @@ export interface SavedConversation {
 
 const STORAGE_KEY = 'opencowork-conversations'
 const LEGACY_STORAGE_KEY = 'screen-assistant-conversations'
-const MAX_HISTORY_FOR_CONTEXT = 10  // 发送给模型的最大对话轮�?
+const MAX_HISTORY_FOR_CONTEXT = 50  // 发送给模型的最大对话轮�?
 
 export const useChatStore = defineStore('chat', () => {
   const messages = ref<ChatMessage[]>([])

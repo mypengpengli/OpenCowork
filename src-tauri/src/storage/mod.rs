@@ -106,7 +106,11 @@ pub struct StorageConfig {
     pub retention_days: u32,
     pub max_screenshots: u32,
     #[serde(default = "default_max_context_chars")]
-    pub max_context_chars: usize,  // 上下文最大字符数，用户可调整
+    pub max_context_chars: usize,
+    #[serde(default = "default_max_context_tokens")]
+    pub max_context_tokens: usize,
+    #[serde(default = "default_context_compress_trigger_ratio")]
+    pub context_compress_trigger_ratio: f32,
     #[serde(default)]
     pub auto_clear_on_start: bool,  // 启动时自动清空历史
     #[serde(default = "default_context_mode")]
@@ -116,7 +120,15 @@ pub struct StorageConfig {
 }
 
 fn default_max_context_chars() -> usize {
-    10000  // 默认10000字符
+    1_000_000
+}
+
+fn default_max_context_tokens() -> usize {
+    128_000
+}
+
+fn default_context_compress_trigger_ratio() -> f32 {
+    0.92
 }
 
 fn default_context_mode() -> String {
@@ -199,7 +211,9 @@ impl Default for Config {
             storage: StorageConfig {
                 retention_days: 7,
                 max_screenshots: 10000,
-                max_context_chars: 10000,  // 默认10000字符
+                max_context_chars: 1_000_000,
+                max_context_tokens: default_max_context_tokens(),
+                context_compress_trigger_ratio: default_context_compress_trigger_ratio(),
                 auto_clear_on_start: false,
                 context_mode: default_context_mode(),
                 context_detail_hours: default_context_detail_hours(),

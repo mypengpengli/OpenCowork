@@ -30,6 +30,8 @@ export interface AppConfig {
     retention_days: number
     max_screenshots: number
     max_context_chars: number
+    max_context_tokens: number
+    context_compress_trigger_ratio: number
     auto_clear_on_start: boolean
     context_mode: 'auto' | 'always' | 'off'
     context_detail_hours: number
@@ -73,7 +75,9 @@ export const useSettingsStore = defineStore('settings', () => {
     storage: {
       retention_days: 7,
       max_screenshots: 10000,
-      max_context_chars: 10000,
+      max_context_chars: 1000000,
+      max_context_tokens: 128000,
+      context_compress_trigger_ratio: 0.92,
       auto_clear_on_start: false,
       context_mode: 'auto',
       context_detail_hours: 24,

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 pub struct ApiClient {
     config: ApiConfig,
     client: Client,
+    direct_client: Client,
 }
 
 #[derive(Serialize)]
@@ -138,7 +139,8 @@ impl ApiClient {
     pub fn new(config: &ApiConfig) -> Self {
         Self {
             config: config.clone(),
-            client: Client::new(),
+            client: build_default_api_client(),
+            direct_client: build_direct_api_client(),
         }
     }
 
@@ -146,10 +148,11 @@ impl ApiClient {
         let url = format!("{}/models", self.config.endpoint);
 
         let response = self
-            .client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .send()
+            .send_with_proxy_fallback(|client| {
+                client
+                    .get(&url)
+                    .header("Authorization", format!("Bearer {}", self.config.api_key))
+            })
             .await
             .map_err(|e| {
                 write_exchange_log("api-test", &url, "(none)", None, None, Some(&e.to_string()));
@@ -194,12 +197,13 @@ impl ApiClient {
             .unwrap_or_else(|e| format!("无法序列化请求: {}", e));
 
         let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .header("Content-Type", "application/json")
-            .json(&request)
-            .send()
+            .send_with_proxy_fallback(|client| {
+                client
+                    .post(&url)
+                    .header("Authorization", format!("Bearer {}", self.config.api_key))
+                    .header("Content-Type", "application/json")
+                    .json(&request)
+            })
             .await
             .map_err(|e| {
                 write_exchange_log("api-chat", &url, &request_json, None, None, Some(&e.to_string()));
@@ -271,12 +275,13 @@ impl ApiClient {
             .unwrap_or_else(|e| format!("无法序列化请求: {}", e));
 
         let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .header("Content-Type", "application/json")
-            .json(&request)
-            .send()
+            .send_with_proxy_fallback(|client| {
+                client
+                    .post(&url)
+                    .header("Authorization", format!("Bearer {}", self.config.api_key))
+                    .header("Content-Type", "application/json")
+                    .json(&request)
+            })
             .await
             .map_err(|e| {
                 write_exchange_log("api-chat-history", &url, &request_json, None, None, Some(&e.to_string()));
@@ -346,12 +351,13 @@ impl ApiClient {
             .unwrap_or_else(|e| format!("无法序列化请求: {}", e));
 
         let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .header("Content-Type", "application/json")
-            .json(&request)
-            .send()
+            .send_with_proxy_fallback(|client| {
+                client
+                    .post(&url)
+                    .header("Authorization", format!("Bearer {}", self.config.api_key))
+                    .header("Content-Type", "application/json")
+                    .json(&request)
+            })
             .await
             .map_err(|e| {
                 write_exchange_log("api-chat-history", &url, &request_json, None, None, Some(&e.to_string()));
@@ -462,12 +468,13 @@ impl ApiClient {
             .unwrap_or_else(|e| format!("无法序列化请求: {}", e));
 
         let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .header("Content-Type", "application/json")
-            .json(&request)
-            .send()
+            .send_with_proxy_fallback(|client| {
+                client
+                    .post(&url)
+                    .header("Authorization", format!("Bearer {}", self.config.api_key))
+                    .header("Content-Type", "application/json")
+                    .json(&request)
+            })
             .await
             .map_err(|e| {
                 write_exchange_log("api-image", &url, &request_json, None, None, Some(&e.to_string()));
@@ -518,12 +525,13 @@ impl ApiClient {
             .unwrap_or_else(|e| format!("Unable to serialize request: {}", e));
 
         let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .header("Content-Type", "application/json")
-            .json(&request)
-            .send()
+            .send_with_proxy_fallback(|client| {
+                client
+                    .post(&url)
+                    .header("Authorization", format!("Bearer {}", self.config.api_key))
+                    .header("Content-Type", "application/json")
+                    .json(&request)
+            })
             .await
             .map_err(|e| {
                 write_exchange_log("api-test-chat", &url, &request_json, None, None, Some(&e.to_string()));
@@ -853,12 +861,13 @@ impl ApiClient {
             .unwrap_or_else(|e| format!("无法序列化请求: {}", e));
 
         let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .header("Content-Type", "application/json")
-            .json(&request)
-            .send()
+            .send_with_proxy_fallback(|client| {
+                client
+                    .post(&url)
+                    .header("Authorization", format!("Bearer {}", self.config.api_key))
+                    .header("Content-Type", "application/json")
+                    .json(&request)
+            })
             .await
             .map_err(|e| {
                 write_exchange_log("api-chat-tools", &url, &request_json, None, None, Some(&e.to_string()));
@@ -956,12 +965,13 @@ impl ApiClient {
             .unwrap_or_else(|e| format!("无法序列化请求: {}", e));
 
         let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .header("Content-Type", "application/json")
-            .json(&request)
-            .send()
+            .send_with_proxy_fallback(|client| {
+                client
+                    .post(&url)
+                    .header("Authorization", format!("Bearer {}", self.config.api_key))
+                    .header("Content-Type", "application/json")
+                    .json(&request)
+            })
             .await
             .map_err(|e| {
                 write_exchange_log("api-chat-tools", &url, &request_json, None, None, Some(&e.to_string()));
@@ -1049,12 +1059,13 @@ impl ApiClient {
             .unwrap_or_else(|e| format!("无法序列化请求: {}", e));
 
         let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .header("Content-Type", "application/json")
-            .json(&request)
-            .send()
+            .send_with_proxy_fallback(|client| {
+                client
+                    .post(&url)
+                    .header("Authorization", format!("Bearer {}", self.config.api_key))
+                    .header("Content-Type", "application/json")
+                    .json(&request)
+            })
             .await
             .map_err(|e| {
                 write_exchange_log("api-chat-tool-result", &url, &request_json, None, None, Some(&e.to_string()));
@@ -1098,6 +1109,42 @@ impl ApiClient {
 
         Ok(ChatWithToolsResult::Text(content))
     }
+
+    async fn send_with_proxy_fallback<F>(&self, make_request: F) -> Result<reqwest::Response, reqwest::Error>
+    where
+        F: Fn(&Client) -> reqwest::RequestBuilder,
+    {
+        match make_request(&self.client).send().await {
+            Ok(response) => Ok(response),
+            Err(primary_error) => {
+                if should_retry_without_proxy(&primary_error) {
+                    make_request(&self.direct_client).send().await
+                } else {
+                    Err(primary_error)
+                }
+            }
+        }
+    }
+}
+
+fn build_default_api_client() -> Client {
+    Client::builder().build().unwrap_or_else(|_| Client::new())
+}
+
+fn build_direct_api_client() -> Client {
+    Client::builder()
+        .no_proxy()
+        .build()
+        .unwrap_or_else(|_| Client::new())
+}
+
+fn should_retry_without_proxy(error: &reqwest::Error) -> bool {
+    let message = error.to_string().to_lowercase();
+    error.is_connect()
+        || message.contains("proxy")
+        || message.contains("tunnel")
+        || message.contains("connection refused")
+        || message.contains("10061")
 }
 
 fn write_exchange_log(
