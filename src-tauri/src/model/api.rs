@@ -247,8 +247,11 @@ impl ApiClient {
         // Add conversation history if provided
         if let Some(hist) = history {
             for msg in hist {
+                let Some(role) = normalize_history_role(&msg.role) else {
+                    continue;
+                };
                 messages.push(Message {
-                    role: msg.role,
+                    role,
                     content: Some(MessageContent::Text(msg.content)),
                     tool_calls: None,
                     tool_call_id: None,
@@ -323,8 +326,11 @@ impl ApiClient {
 
         if let Some(hist) = history {
             for msg in hist {
+                let Some(role) = normalize_history_role(&msg.role) else {
+                    continue;
+                };
                 messages.push(Message {
-                    role: msg.role,
+                    role,
                     content: Some(MessageContent::Text(msg.content)),
                     tool_calls: None,
                     tool_call_id: None,
@@ -729,82 +735,88 @@ impl ApiClient {
             });
         }
 
-        // progress_update 始终可用（无副作用）
-        tools.push(Tool {
-            tool_type: "function".to_string(),
-            function: ToolFunction {
-                name: "progress_update".to_string(),
-                description: "Report a short progress update (plan or milestone) to the background panel. No side effects.".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "message": { "type": "string", "description": "Short progress title" },
-                        "detail": { "type": "string", "description": "Optional details or checklist (keep concise)" }
-                    },
-                    "required": ["message"]
-                }),
-            },
-        });
+        if is_tool_allowed("progress_update") {
+            tools.push(Tool {
+                tool_type: "function".to_string(),
+                function: ToolFunction {
+                    name: "progress_update".to_string(),
+                    description: "Report a short progress update (plan or milestone) to the background panel. No side effects.".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "message": { "type": "string", "description": "Short progress title" },
+                            "detail": { "type": "string", "description": "Optional details or checklist (keep concise)" }
+                        },
+                        "required": ["message"]
+                    }),
+                },
+            });
+        }
 
-        // 1. manage_skill 工具 - 始终可用，用于创建/更新/删除技能
-        tools.push(Tool {
-            tool_type: "function".to_string(),
-            function: ToolFunction {
-                name: "manage_skill".to_string(),
-                description: "管理技能：创建新技能、更新现有技能或删除技能。当用户想要创建、修改或删除技能时使用此工具。".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "action": {
-                            "type": "string",
-                            "enum": ["create", "update", "delete"],
-                            "description": "操作类型：create=创建新技能，update=更新现有技能，delete=删除技能"
+        if is_tool_allowed("manage_skill") {
+            tools.push(Tool {
+                tool_type: "function".to_string(),
+                function: ToolFunction {
+                    name: "manage_skill".to_string(),
+                    description: "管理技能：创建新技能、更新现有技能或删除技能。当用户想要创建、修改或删除技能时使用此工具。".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "action": {
+                                "type": "string",
+                                "enum": ["create", "update", "delete"],
+                                "description": "操作类型：create=创建新技能，update=更新现有技能，delete=删除技能"
+                            },
+                            "name": {
+                                "type": "string",
+                                "description": "技能名称，只能包含小写字母、数字和连字符，1-64字符，不能以连字符开头或结尾"
+                            },
+                            "description": {
+                                "type": "string",
+                                "description": "技能描述，说明这个技能做什么、什么时候使用（create/update 时必填）"
+                            },
+                            "instructions": {
+                                "type": "string",
+                                "description": "技能的详细指令，Markdown 格式（create/update 时必填）"
+                            },
+                            "allowed_tools": {
+                                "type": "array",
+                                "items": { "type": "string" },
+                                "description": "允许技能使用的工具列表，如 Read, Grep 等"
+                            },
+                            "model": {
+                                "type": "string",
+                                "description": "可选，覆盖默认模型"
+                            },
+                            "context": {
+                                "type": "string",
+                                "description": "上下文模式：screen 或 none"
+                            },
+                            "user_invocable": {
+                                "type": "boolean",
+                                "description": "是否允许用户通过 /skill 调用"
+                            },
+                            "disable_model_invocation": {
+                                "type": "boolean",
+                                "description": "Disable model-side auto invocation; only manual /skill is allowed."
+                            },
+                            "metadata": {
+                                "type": "object",
+                                "additionalProperties": { "type": "string" },
+                                "description": "可选的元数据键值对"
+                            },
                         },
-                        "name": {
-                            "type": "string",
-                            "description": "技能名称，只能包含小写字母、数字和连字符，1-64字符，不能以连字符开头或结尾"
-                        },
-                        "description": {
-                            "type": "string",
-                            "description": "技能描述，说明这个技能做什么、什么时候使用（create/update 时必填）"
-                        },
-                        "instructions": {
-                            "type": "string",
-                            "description": "技能的详细指令，Markdown 格式（create/update 时必填）"
-                        },
-                        "allowed_tools": {
-                            "type": "array",
-                            "items": { "type": "string" },
-                            "description": "允许技能使用的工具列表，如 Read, Grep 等"
-                        },
-                        "model": {
-                            "type": "string",
-                            "description": "可选，覆盖默认模型"
-                        },
-                        "context": {
-                            "type": "string",
-                            "description": "上下文模式：screen 或 none"
-                        },
-                        "user_invocable": {
-                            "type": "boolean",
-                            "description": "是否允许用户通过 /skill 调用"
-                        },
-                        "metadata": {
-                            "type": "object",
-                            "additionalProperties": { "type": "string" },
-                            "description": "可选的元数据键值对"
-                        },
-                    },
-                    "required": ["action", "name"]
-                }),
-            },
-        });
+                        "required": ["action", "name"]
+                    }),
+                },
+            });
+        }
 
-        // 2. invoke_skill 工具 - 仅当有可用技能时添加
-        if !skills.is_empty() {
+        if is_tool_allowed("invoke_skill") && !skills.is_empty() {
             let skill_names: Vec<String> = skills
                 .iter()
                 .filter(|s| s.user_invocable.unwrap_or(true))
+                .filter(|s| !s.disable_model_invocation.unwrap_or(false))
                 .map(|s| s.name.clone())
                 .collect();
 
@@ -812,6 +824,7 @@ impl ApiClient {
                 let skill_descriptions: Vec<String> = skills
                     .iter()
                     .filter(|s| s.user_invocable.unwrap_or(true))
+                    .filter(|s| !s.disable_model_invocation.unwrap_or(false))
                     .map(|s| format!("- {}: {}", s.name, s.description))
                     .collect();
 
@@ -867,8 +880,11 @@ impl ApiClient {
         // Add conversation history if provided
         if let Some(hist) = history {
             for msg in hist {
+                let Some(role) = normalize_history_role(&msg.role) else {
+                    continue;
+                };
                 let message = Message {
-                    role: msg.role,
+                    role,
                     content: Some(MessageContent::Text(msg.content)),
                     tool_calls: None,
                     tool_call_id: None,
@@ -971,8 +987,11 @@ impl ApiClient {
 
         if let Some(hist) = history {
             for msg in hist {
+                let Some(role) = normalize_history_role(&msg.role) else {
+                    continue;
+                };
                 let message = Message {
-                    role: msg.role,
+                    role,
                     content: Some(MessageContent::Text(msg.content)),
                     tool_calls: None,
                     tool_call_id: None,
@@ -1162,6 +1181,14 @@ impl ApiClient {
                 }
             }
         }
+    }
+}
+
+fn normalize_history_role(role: &str) -> Option<String> {
+    let normalized = role.trim().to_lowercase();
+    match normalized.as_str() {
+        "system" | "user" | "assistant" => Some(normalized),
+        _ => None,
     }
 }
 

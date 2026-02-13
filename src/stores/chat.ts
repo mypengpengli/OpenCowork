@@ -60,6 +60,7 @@ export const useChatStore = defineStore('chat', () => {
   const messages = ref<ChatMessage[]>([])
   const activeConversationId = ref<string | null>(null)
   const savedConversations = ref<SavedConversation[]>([])
+  const conversationVersion = ref(0)
   const seenAlerts = new Set<string>()
   const localeStore = useLocaleStore()
   const t = (key: string, params?: Record<string, string | number>) =>
@@ -94,6 +95,7 @@ export const useChatStore = defineStore('chat', () => {
     messages.value = []
     seenAlerts.clear()
     activeConversationId.value = null
+    conversationVersion.value += 1
   }
 
   // 新建对话（清空当前对话）
@@ -114,6 +116,7 @@ export const useChatStore = defineStore('chat', () => {
       messages.value = [...conversation.messages]
       seenAlerts.clear()
       activeConversationId.value = conversation.id
+      conversationVersion.value += 1
       return true
     }
     return false
@@ -202,6 +205,7 @@ export const useChatStore = defineStore('chat', () => {
   return {
     messages,
     activeConversationId,
+    conversationVersion,
     savedConversations,
     chatHistoryForModel,
     addMessage,

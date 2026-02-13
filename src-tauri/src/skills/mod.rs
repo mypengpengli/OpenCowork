@@ -93,6 +93,8 @@ pub struct SkillMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_invocable: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub disable_model_invocation: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<std::collections::HashMap<String, String>>,
 }
 
@@ -102,6 +104,7 @@ pub struct SkillFrontmatterOverrides {
     pub model: Option<String>,
     pub context: Option<String>,
     pub user_invocable: Option<bool>,
+    pub disable_model_invocation: Option<bool>,
     pub metadata: Option<std::collections::HashMap<String, String>>,
 }
 
@@ -154,19 +157,18 @@ impl SkillManager {
             if path.is_dir() {
                 if let Some(skill_md) = Self::resolve_skill_md_path(&path) {
                     match SkillParser::parse_metadata(&skill_md) {
-                        Ok(metadata) => {
-                            // 验证 name 与目录名匹配
+                        Ok(mut metadata) => {
                             let dir_name = path.file_name()
                                 .and_then(|n| n.to_str())
                                 .unwrap_or("");
-                            if metadata.name == dir_name {
-                                skills.push(metadata);
-                            } else {
+                            if !dir_name.is_empty() && metadata.name != dir_name {
                                 eprintln!(
-                                    "Skill name '{}' 与目录名 '{}' 不匹配，跳过",
+                                    "Skill name '{}' differs from directory '{}', normalized",
                                     metadata.name, dir_name
                                 );
+                                metadata.name = dir_name.to_string();
                             }
+                            skills.push(metadata);
                         }
                         Err(e) => {
                             eprintln!("解析 skill {:?} 失败: {}", path, e);
@@ -425,6 +427,13 @@ fn build_skill_frontmatter(
     let user_invocable = overrides.user_invocable.or_else(|| existing.and_then(|m| m.user_invocable));
     if let Some(value) = user_invocable {
         lines.push(format!("user-invocable: {}", value));
+    }
+
+    let disable_model_invocation = overrides
+        .disable_model_invocation
+        .or_else(|| existing.and_then(|m| m.disable_model_invocation));
+    if let Some(value) = disable_model_invocation {
+        lines.push(format!("disable-model-invocation: {}", value));
     }
 
     let metadata = overrides.metadata.clone().or_else(|| existing.and_then(|m| m.metadata.clone()));

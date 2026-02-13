@@ -23,6 +23,8 @@ Thumbs.db
 # Tauri build
 src-tauri/WixTools/
 tmpclaude-*
+.tmp/
+nul
 src-tauri/*.key
 .tauri-keys/
 

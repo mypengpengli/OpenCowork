@@ -21,7 +21,7 @@ use quick_xml::Reader;
 use quick_xml::events::Event;
 use zip::ZipArchive;
 use glob::glob;
-use regex::RegexBuilder;
+use regex::{Regex, RegexBuilder};
 use walkdir::WalkDir;
 
 pub struct AppState {
@@ -693,6 +693,14 @@ struct ToolAccess {
     allowed_commands: Vec<String>,
     allowed_dirs: Vec<PathBuf>,
     base_dir: PathBuf,
+    strict_skill_mode: bool,
+    skill_evidence: Option<SkillExecutionEvidence>,
+}
+
+#[derive(Clone)]
+struct SkillExecutionEvidence {
+    instruction_hosts: HashSet<String>,
+    command_snippets: Vec<String>,
 }
 
 #[tauri::command]
@@ -837,6 +845,8 @@ pub async fn chat_with_assistant(
             &available_skills,
             &None,
             None,
+            false,
+            None,
             Some(&cancel_token),
             progress.as_ref(),
         )
@@ -907,6 +917,8 @@ pub async fn chat_with_assistant(
                         &available_skills,
                         &None,
                         None,
+                        false,
+                        None,
                         Some(&cancel_token),
                         progress.as_ref(),
                     )
@@ -955,7 +967,7 @@ if let Some(ref progress) = progress {
         let skills_hint = if !available_skills.is_empty() {
             let skills_list: Vec<String> = available_skills
                 .iter()
-                .filter(|s| s.user_invocable.unwrap_or(true))
+                .filter(|s| is_model_invocable_skill(s))
                 .map(|s| format!("- /{}: {}", s.name, s.description))
                 .collect();
 
@@ -1107,16 +1119,20 @@ async fn execute_skill_internal(
 ) -> Result<String, String> {
     // 加载 skill
     let skill = skill_manager.load_skill(skill_name)?;
+    let rendered_instructions = inject_skill_arguments(&skill.instructions, args.as_deref());
     check_cancel(cancel_token)?;
     if let Some(progress) = progress {
         progress.emit_info("Loaded skill file".to_string(), Some(skill.path.clone()));
         // 调试：输出 instructions 内容
         progress.emit_info(
-            format!("Skill instructions loaded: {} chars", skill.instructions.len()),
-            Some(if skill.instructions.len() > 300 {
-                format!("{}...", skill.instructions.chars().take(300).collect::<String>())
+            format!("Skill instructions loaded: {} chars", rendered_instructions.len()),
+            Some(if rendered_instructions.len() > 300 {
+                format!(
+                    "{}...",
+                    rendered_instructions.chars().take(300).collect::<String>()
+                )
             } else {
-                skill.instructions.clone()
+                rendered_instructions.clone()
             }),
         );
     }
@@ -1136,7 +1152,7 @@ async fn execute_skill_internal(
     let user_message = merge_user_message(&base_message, &attachment_payload.text, has_attachments);
 
     // 根据 skill 的 context 设置决定是否包含屏幕记录
-    let include_screen_context = skill.metadata.context.as_deref() != Some("none");
+    let include_screen_context = skill.metadata.context.as_deref() == Some("screen");
     let screen_context = if include_screen_context {
         // 获取屏幕记录上下文
         let query = parse_user_query(args.as_deref().unwrap_or_default());
@@ -1159,7 +1175,24 @@ async fn execute_skill_internal(
         .parent()
         .unwrap_or_else(|| Path::new(&skill.path));
     let skill_dir_display = skill_dir.to_string_lossy();
-    let allowed_tools_hint = match &skill.metadata.allowed_tools {
+    let skill_evidence = SkillExecutionEvidence {
+        instruction_hosts: extract_url_hosts(&rendered_instructions),
+        command_snippets: extract_skill_command_snippets(&rendered_instructions),
+    };
+    let effective_allowed_tools = skill.metadata.allowed_tools.clone().or_else(|| {
+        Some(vec![
+            "Read".to_string(),
+            "Write".to_string(),
+            "Edit".to_string(),
+            "Update".to_string(),
+            "Glob".to_string(),
+            "Grep".to_string(),
+            "Bash".to_string(),
+            "run_command".to_string(),
+            "progress_update".to_string(),
+        ])
+    });
+    let allowed_tools_hint = match &effective_allowed_tools {
         Some(list) if !list.is_empty() => format!("\n## 允许的工具\n{}\n", list.join(", ")),
         _ => String::new(),
     };
@@ -1199,7 +1232,9 @@ async fn execute_skill_internal(
 - Use the progress_update tool to report the plan and major milestones so the user can see what is happening.
 
 ## Strict skill compliance (CRITICAL)
+- 全局提示词仅作补充；与技能指令冲突时，始终以技能指令为准。
 - 技能指令中的命令和 URL 是权威的，必须原样使用。
+- 每次工具调用都必须能在技能指令中找到依据（命令片段、URL、脚本路径或步骤说明）。
 - 如果技能指令提供了具体命令，必须先执行该命令，不要用通用命令替代。
 - 不要替换域名/主机/IP（尤其是内网地址），除非用户明确要求。
 - 如果命令失败，报告错误并尝试最小化调整，但保持目标 URL/主机不变。
@@ -1216,7 +1251,7 @@ async fn execute_skill_internal(
         skill.metadata.name,
         global_prompts_section,
         skill.metadata.description,
-        skill.instructions,
+        rendered_instructions,
         skill_dir_display,
         allowed_tools_hint,
         screen_context
@@ -1226,19 +1261,15 @@ async fn execute_skill_internal(
         progress.emit_step("请求模型执行技能".to_string(), Some(format!("/{}", skill.metadata.name)));
     }
 
-    let model_history = compress_history_if_needed(
-        history.clone(),
-        &system_prompt,
-        &user_message,
-        &config.storage,
-        progress,
-    );
+    // Claude Code 机制：skill 执行时不使用之前的聊天历史，避免上下文混乱
+    // skill 是独立执行的任务，只在 tool loop 内部保持上下文
+    let model_history: Option<Vec<ChatHistoryMessage>> = None;
 
     if config.model.provider == "api" {
         // Inside a running skill, disable nested skill invocation to avoid
         // "skill not available" confusion and recursive skill chaining.
         let available_skills: Vec<SkillMetadata> = Vec::new();
-        let allowed_tools = &skill.metadata.allowed_tools;
+        let allowed_tools = &effective_allowed_tools;
         let result = if attachment_payload.image_urls.is_empty()
             && attachment_payload.image_base64.is_empty()
         {
@@ -1311,8 +1342,10 @@ async fn execute_skill_internal(
             &system_prompt,
             result,
             &available_skills,
-            &skill.metadata.allowed_tools,
+            allowed_tools,
             Some(skill_dir),
+            true,
+            Some(skill_evidence.clone()),
             cancel_token,
             progress,
         ))
@@ -2578,6 +2611,8 @@ fn build_tool_access(
     config: &Config,
     storage: &StorageManager,
     preferred_base_dir: Option<&Path>,
+    strict_skill_mode: bool,
+    skill_evidence: Option<SkillExecutionEvidence>,
 ) -> ToolAccess {
     let mode = normalize_tool_mode(&config.tools.mode);
     let data_dir = storage.get_data_dir().to_path_buf();
@@ -2621,6 +2656,8 @@ fn build_tool_access(
         allowed_commands: config.tools.allowed_commands.clone(),
         allowed_dirs,
         base_dir,
+        strict_skill_mode,
+        skill_evidence,
     }
 }
 
@@ -2762,6 +2799,96 @@ fn normalize_tool_name(name: &str) -> String {
         "run_command" => "bash".to_string(),
         other => other.to_string(),
     }
+}
+
+fn is_model_invocable_skill(skill: &SkillMetadata) -> bool {
+    skill.user_invocable.unwrap_or(true) && !skill.disable_model_invocation.unwrap_or(false)
+}
+
+fn tokenize_skill_args(args: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut chars = args.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        match quote {
+            Some(q) => {
+                if ch == q {
+                    quote = None;
+                } else if ch == '\\' {
+                    if let Some(next) = chars.next() {
+                        current.push(next);
+                    } else {
+                        current.push(ch);
+                    }
+                } else {
+                    current.push(ch);
+                }
+            }
+            None => match ch {
+                '"' | '\'' => {
+                    quote = Some(ch);
+                }
+                '\\' => {
+                    if let Some(next) = chars.next() {
+                        current.push(next);
+                    } else {
+                        current.push(ch);
+                    }
+                }
+                c if c.is_whitespace() => {
+                    if !current.is_empty() {
+                        tokens.push(std::mem::take(&mut current));
+                    }
+                }
+                _ => current.push(ch),
+            },
+        }
+    }
+
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
+fn inject_skill_arguments(instructions: &str, args: Option<&str>) -> String {
+    let raw = args.unwrap_or("").trim();
+    let tokens = if raw.is_empty() {
+        Vec::new()
+    } else {
+        tokenize_skill_args(raw)
+    };
+
+    let mut rendered = instructions.replace("$ARGUMENTS", raw);
+    let args_indexed = Regex::new(r"\$ARGUMENTS\[(\d+)\]").unwrap();
+    rendered = args_indexed
+        .replace_all(&rendered, |caps: &regex::Captures<'_>| {
+            let idx = caps
+                .get(1)
+                .and_then(|m| m.as_str().parse::<usize>().ok())
+                .unwrap_or(0);
+            tokens.get(idx).cloned().unwrap_or_default()
+        })
+        .into_owned();
+
+    let numeric = Regex::new(r"\$(\d+)").unwrap();
+    numeric
+        .replace_all(&rendered, |caps: &regex::Captures<'_>| {
+            let idx = caps
+                .get(1)
+                .and_then(|m| m.as_str().parse::<usize>().ok())
+                .unwrap_or(0);
+            if idx == 0 {
+                return raw.to_string();
+            }
+            tokens
+                .get(idx.saturating_sub(1))
+                .cloned()
+                .unwrap_or_default()
+        })
+        .into_owned()
 }
 
 fn extract_command_token(command: &str) -> String {
@@ -3052,6 +3179,17 @@ async fn run_command_tool(access: &ToolAccess, args: BashArgs) -> Result<String,
         return Ok(format!("工作目录不在允许范围内: {}", cwd.display()));
     }
 
+    if access.strict_skill_mode {
+        if let Some(evidence) = &access.skill_evidence {
+            if !command_has_skill_basis(&args.command, evidence) {
+                return Ok(format!(
+                    "{} 当前命令缺少 SKILL.md 依据。请先按技能指令中的原始命令执行，再进行最小必要调整。",
+                    TOOL_ERROR_PREFIX
+                ));
+            }
+        }
+    }
+
     let timeout_ms = args.timeout_ms.unwrap_or(DEFAULT_COMMAND_TIMEOUT_MS);
 
     let mut cmd = build_shell_command(&args.command);
@@ -3093,6 +3231,155 @@ async fn run_command_tool(access: &ToolAccess, args: BashArgs) -> Result<String,
     Ok(response.trim_end().to_string())
 }
 
+fn url_host_regex() -> &'static Regex {
+    static URL_HOST_REGEX: OnceLock<Regex> = OnceLock::new();
+    URL_HOST_REGEX.get_or_init(|| {
+        Regex::new(r#"(?i)https?://([^/\s"'`]+)"#).expect("valid URL host regex")
+    })
+}
+
+fn normalize_host(raw_host: &str) -> Option<String> {
+    let trimmed = raw_host
+        .trim()
+        .trim_matches(|c: char| matches!(c, ')' | ']' | '}' | ',' | ';' | '.'));
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let without_auth = trimmed.rsplit('@').next().unwrap_or(trimmed);
+    let host = if without_auth.starts_with('[') {
+        without_auth
+            .trim_start_matches('[')
+            .split(']')
+            .next()
+            .unwrap_or(without_auth)
+            .to_string()
+    } else {
+        without_auth.split(':').next().unwrap_or(without_auth).to_string()
+    };
+    let normalized = host.trim().to_lowercase();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+fn extract_url_hosts(text: &str) -> HashSet<String> {
+    let mut hosts = HashSet::new();
+    for caps in url_host_regex().captures_iter(text) {
+        let Some(raw) = caps.get(1).map(|m| m.as_str()) else {
+            continue;
+        };
+        if let Some(host) = normalize_host(raw) {
+            hosts.insert(host);
+        }
+    }
+    hosts
+}
+
+fn is_local_host(host: &str) -> bool {
+    if host == "localhost" || host == "0.0.0.0" || host == "::1" {
+        return true;
+    }
+    host.starts_with("127.")
+}
+
+fn fenced_code_regex() -> &'static Regex {
+    static FENCED_CODE_REGEX: OnceLock<Regex> = OnceLock::new();
+    FENCED_CODE_REGEX.get_or_init(|| {
+        Regex::new(r"(?s)```(?:[a-zA-Z0-9_-]+)?\s*\n(.*?)```")
+            .expect("valid fenced code regex")
+    })
+}
+
+fn inline_code_regex() -> &'static Regex {
+    static INLINE_CODE_REGEX: OnceLock<Regex> = OnceLock::new();
+    INLINE_CODE_REGEX.get_or_init(|| {
+        Regex::new(r"`([^`\n]{2,})`").expect("valid inline code regex")
+    })
+}
+
+fn normalize_spaces(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
+fn extract_skill_command_snippets(instructions: &str) -> Vec<String> {
+    let mut snippets = Vec::new();
+
+    for caps in fenced_code_regex().captures_iter(instructions) {
+        let Some(body) = caps.get(1).map(|m| m.as_str().trim()) else {
+            continue;
+        };
+        if body.is_empty() {
+            continue;
+        }
+        snippets.push(body.to_string());
+    }
+
+    for caps in inline_code_regex().captures_iter(instructions) {
+        let Some(body) = caps.get(1).map(|m| m.as_str().trim()) else {
+            continue;
+        };
+        if body.is_empty() {
+            continue;
+        }
+        snippets.push(body.to_string());
+    }
+
+    snippets
+}
+
+fn command_has_skill_basis(command: &str, evidence: &SkillExecutionEvidence) -> bool {
+    let command_trimmed = command.trim();
+    if command_trimmed.is_empty() {
+        return true;
+    }
+
+    if evidence.command_snippets.is_empty() && evidence.instruction_hosts.is_empty() {
+        return true;
+    }
+
+    let command_norm = normalize_spaces(command_trimmed);
+    for snippet in &evidence.command_snippets {
+        let snippet_norm = normalize_spaces(snippet);
+        if snippet_norm.is_empty() {
+            continue;
+        }
+        if snippet_norm.contains(&command_norm) || command_norm.contains(&snippet_norm) {
+            return true;
+        }
+    }
+
+    let command_exec = normalize_tool_name(&extract_command_token(command_trimmed));
+    if !command_exec.is_empty() {
+        for snippet in &evidence.command_snippets {
+            for line in snippet.lines() {
+                let line_exec = normalize_tool_name(&extract_command_token(line));
+                if !line_exec.is_empty() && line_exec == command_exec {
+                    return true;
+                }
+            }
+        }
+    }
+
+    let command_hosts = extract_url_hosts(command_trimmed);
+    if !command_hosts.is_empty() {
+        return command_hosts
+            .into_iter()
+            .all(|host| is_local_host(&host) || evidence.instruction_hosts.contains(&host));
+    }
+
+    for snippet in &evidence.command_snippets {
+        let snippet_norm = normalize_spaces(snippet);
+        if !snippet_norm.is_empty() && command_norm.contains(&snippet_norm) {
+            return true;
+        }
+    }
+
+    false
+}
+
 #[cfg(target_os = "windows")]
 fn build_shell_command(command: &str) -> TokioCommand {
     if let Some(bash_path) = find_windows_bash_path() {
@@ -3119,11 +3406,11 @@ fn build_shell_hint() -> String {
     {
         if let Some(bash_path) = find_windows_bash_path() {
             format!(
-                "Windows Bash/run_command uses bash -lc ({}). Prefer Bash syntax first.",
+                "Current OS is Windows. Bash/run_command uses bash -lc ({}). Prefer Windows-safe Bash commands and Windows paths; do not use macOS/Linux-only commands (open/apt/brew) unless the user explicitly asks.",
                 bash_path.display()
             )
         } else {
-            "Windows Bash/run_command falls back to cmd /C because bash was not found. Prefer dir or powershell -Command Get-ChildItem; avoid find/ls/head/grep unless bash is installed.".to_string()
+            "Current OS is Windows. Bash/run_command falls back to cmd /C because bash was not found. Prefer dir or powershell -Command Get-ChildItem; avoid macOS/Linux-only commands (open/apt/brew/find/ls/head/grep) unless bash is installed and the user explicitly asks.".to_string()
         }
     }
     #[cfg(not(target_os = "windows"))]
@@ -3256,7 +3543,7 @@ fn build_tool_system_prompt(context: &str, skills_dir: &Path, available_skills: 
     } else {
         let skills_list: Vec<String> = available_skills
             .iter()
-            .filter(|s| s.user_invocable.unwrap_or(true))
+            .filter(|s| is_model_invocable_skill(s))
             .map(|s| format!("- {}: {}", s.name, s.description))
             .collect();
         if skills_list.is_empty() {
@@ -3330,10 +3617,18 @@ async fn run_tool_loop(
     available_skills: &[SkillMetadata],
     allowed_tools: &Option<Vec<String>>,
     preferred_base_dir: Option<&Path>,
+    strict_skill_mode: bool,
+    skill_evidence: Option<SkillExecutionEvidence>,
     cancel_token: Option<&CancellationToken>,
     progress: Option<&ProgressEmitter>,
 ) -> Result<ToolLoopResult, String> {
-    let access = build_tool_access(config, storage, preferred_base_dir);
+    let access = build_tool_access(
+        config,
+        storage,
+        preferred_base_dir,
+        strict_skill_mode,
+        skill_evidence,
+    );
     let mut loops = 0usize;
     let mut last_tool_calls: Option<Vec<(String, String)>> = None;
     let mut repeat_loops = 0usize;
@@ -3649,6 +3944,9 @@ async fn execute_tool_call(
                 model: parse_optional_string(args_value.get("model")),
                 context: parse_optional_string(args_value.get("context")),
                 user_invocable: args_value.get("user_invocable").and_then(|v| v.as_bool()),
+                disable_model_invocation: args_value
+                    .get("disable_model_invocation")
+                    .and_then(|v| v.as_bool()),
                 metadata: parse_metadata_map(args_value.get("metadata")),
             };
 

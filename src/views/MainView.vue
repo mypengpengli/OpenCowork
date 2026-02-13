@@ -69,7 +69,7 @@ const CLIPBOARD_IMAGE_EXT: Record<string, string> = {
 
 interface PendingRequest {
   message: string
-  history: { role: string; content: string; tool_call_id?: string; tool_calls?: { id: string; name: string; arguments: string }[] }[]
+  history: { role: string; content: string }[]
   attachments: ChatAttachment[]
   isSkill: boolean
   skillName?: string
@@ -197,6 +197,34 @@ function finishProcessPanel(status: 'done' | 'error') {
   // 如果没有任何步骤，完成后自动隐藏面板
   if (processItems.value.length === 0) {
     processVisible.value = false
+  }
+}
+
+function resetProcessPanelState() {
+  clearProcessFallback()
+  backendProgressSeen.value = false
+  processItems.value = []
+  processVisible.value = false
+  processExpanded.value = false
+  processStatus.value = 'idle'
+}
+
+async function cancelActiveRequestSilently() {
+  const requestId = activeRequestId.value
+  if (!requestId) return
+
+  cancelledRequestIds.add(requestId)
+  isLoading.value = false
+  activeRequestId.value = null
+  pendingRequest.value = null
+  toolModeModalVisible.value = false
+  clearProcessFallback()
+
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('cancel_request', { request_id: requestId })
+  } catch (error) {
+    console.error('Failed to cancel request silently:', error)
   }
 }
 
@@ -412,6 +440,22 @@ watch(
   }
 )
 
+watch(
+  () => chatStore.conversationVersion,
+  async () => {
+    showSkillHints.value = false
+    pendingRequest.value = null
+    toolModeModalVisible.value = false
+    attachments.value = []
+    attachmentPreviews.value = {}
+    inputMessage.value = ''
+    if (isLoading.value) {
+      await cancelActiveRequestSilently()
+    }
+    resetProcessPanelState()
+  }
+)
+
 async function executeRequest(payload: PendingRequest, includeUserMessage: boolean) {
   if (isLoading.value) return
 
@@ -623,16 +667,6 @@ async function sendMessage() {
       content: m.content,
     })
     // 如果有 tool_context，展开添加到历史中
-    if (m.toolContext && m.toolContext.length > 0) {
-      for (const tc of m.toolContext) {
-        historyForModel.push({
-          role: tc.role,
-          content: tc.content || '',
-          tool_call_id: tc.tool_call_id,
-          tool_calls: tc.tool_calls,
-        })
-      }
-    }
   }
 
   inputMessage.value = ''
@@ -707,6 +741,8 @@ function clearChat() {
   const confirmed = window.confirm(t('main.chat.clearConfirm'))
   if (!confirmed) return
   chatStore.clearMessages()
+  // 清空进度面板
+  resetProcessPanelState()
 }
 
 // 重新生成消息
@@ -737,16 +773,6 @@ async function handleRegenerate(msg: { role: string; content: string; timestamp:
       role: m.role,
       content: m.content,
     })
-    if (m.toolContext && m.toolContext.length > 0) {
-      for (const tc of m.toolContext) {
-        historyForModel.push({
-          role: tc.role,
-          content: tc.content || '',
-          tool_call_id: tc.tool_call_id,
-          tool_calls: tc.tool_calls,
-        })
-      }
-    }
   }
 
   const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
