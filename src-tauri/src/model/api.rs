@@ -247,15 +247,10 @@ impl ApiClient {
         // Add conversation history if provided
         if let Some(hist) = history {
             for msg in hist {
-                let Some(role) = normalize_history_role(&msg.role) else {
+                let Some(message) = history_message_to_message(msg) else {
                     continue;
                 };
-                messages.push(Message {
-                    role,
-                    content: Some(MessageContent::Text(msg.content)),
-                    tool_calls: None,
-                    tool_call_id: None,
-                });
+                messages.push(message);
             }
         }
 
@@ -326,15 +321,10 @@ impl ApiClient {
 
         if let Some(hist) = history {
             for msg in hist {
-                let Some(role) = normalize_history_role(&msg.role) else {
+                let Some(message) = history_message_to_message(msg) else {
                     continue;
                 };
-                messages.push(Message {
-                    role,
-                    content: Some(MessageContent::Text(msg.content)),
-                    tool_calls: None,
-                    tool_call_id: None,
-                });
+                messages.push(message);
             }
         }
 
@@ -880,14 +870,8 @@ impl ApiClient {
         // Add conversation history if provided
         if let Some(hist) = history {
             for msg in hist {
-                let Some(role) = normalize_history_role(&msg.role) else {
+                let Some(message) = history_message_to_message(msg) else {
                     continue;
-                };
-                let message = Message {
-                    role,
-                    content: Some(MessageContent::Text(msg.content)),
-                    tool_calls: None,
-                    tool_call_id: None,
                 };
                 messages.push(message.clone());
                 messages_for_return.push(message);
@@ -987,14 +971,8 @@ impl ApiClient {
 
         if let Some(hist) = history {
             for msg in hist {
-                let Some(role) = normalize_history_role(&msg.role) else {
+                let Some(message) = history_message_to_message(msg) else {
                     continue;
-                };
-                let message = Message {
-                    role,
-                    content: Some(MessageContent::Text(msg.content)),
-                    tool_calls: None,
-                    tool_call_id: None,
                 };
                 messages.push(message.clone());
                 messages_for_return.push(message);
@@ -1187,9 +1165,41 @@ impl ApiClient {
 fn normalize_history_role(role: &str) -> Option<String> {
     let normalized = role.trim().to_lowercase();
     match normalized.as_str() {
-        "system" | "user" | "assistant" => Some(normalized),
+        "system" | "user" | "assistant" | "tool" => Some(normalized),
         _ => None,
     }
+}
+
+fn history_message_to_message(msg: ChatHistoryMessage) -> Option<Message> {
+    let role = normalize_history_role(&msg.role)?;
+    let tool_calls = msg.tool_calls.map(|calls| {
+        calls
+            .into_iter()
+            .map(|call| ToolCall {
+                id: call.id,
+                call_type: "function".to_string(),
+                function: ToolCallFunction {
+                    name: call.name,
+                    arguments: call.arguments,
+                },
+            })
+            .collect::<Vec<_>>()
+    });
+    let has_tool_calls = tool_calls
+        .as_ref()
+        .map(|calls| !calls.is_empty())
+        .unwrap_or(false);
+    let content = if has_tool_calls && msg.content.trim().is_empty() {
+        None
+    } else {
+        Some(MessageContent::Text(msg.content))
+    };
+    Some(Message {
+        role,
+        content,
+        tool_calls,
+        tool_call_id: msg.tool_call_id,
+    })
 }
 
 fn build_default_api_client() -> Client {

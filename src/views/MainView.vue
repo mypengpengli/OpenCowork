@@ -69,7 +69,12 @@ const CLIPBOARD_IMAGE_EXT: Record<string, string> = {
 
 interface PendingRequest {
   message: string
-  history: { role: string; content: string }[]
+  history: {
+    role: string
+    content: string
+    tool_call_id?: string
+    tool_calls?: { id: string; name: string; arguments: string }[]
+  }[]
   attachments: ChatAttachment[]
   isSkill: boolean
   skillName?: string
@@ -91,6 +96,11 @@ interface ProgressItem {
   message: string
   detail?: string
   timestamp: string
+}
+
+interface ParsedSkillCommand {
+  name: string
+  args: string | null
 }
 
 // Skill 提示相关
@@ -200,6 +210,67 @@ function finishProcessPanel(status: 'done' | 'error') {
   }
 }
 
+function parseExplicitSkillCommand(messageText: string): ParsedSkillCommand | null {
+  const match = messageText.match(/^\/([a-z0-9-]+)(?:\s+(.*))?$/i)
+  if (!match) {
+    return null
+  }
+  return {
+    name: match[1].toLowerCase(),
+    args: match[2] || null,
+  }
+}
+
+function findLastActiveSkill(messages = chatStore.messages): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const messageItem = messages[i]
+    if (messageItem.role !== 'assistant' || messageItem.isAlert) {
+      continue
+    }
+    if (messageItem.activeSkill && messageItem.activeSkill.trim().length > 0) {
+      return messageItem.activeSkill.trim().toLowerCase()
+    }
+  }
+  return undefined
+}
+
+function buildHistoryForModel(
+  messages: typeof chatStore.chatHistoryForModel.value,
+): PendingRequest['history'] {
+  const history: PendingRequest['history'] = []
+  for (const messageItem of messages) {
+    // Reconstruct assistant tool traces before the final assistant text.
+    if (
+      messageItem.role === 'assistant'
+      && messageItem.toolContext
+      && messageItem.toolContext.length > 0
+    ) {
+      for (const ctx of messageItem.toolContext) {
+        const role = (ctx.role || '').trim().toLowerCase()
+        if (!role || !['system', 'user', 'assistant', 'tool'].includes(role)) {
+          continue
+        }
+        history.push({
+          role,
+          content: ctx.content || '',
+          tool_call_id: ctx.tool_call_id,
+          tool_calls: ctx.tool_calls?.map(call => ({
+            id: call.id,
+            name: call.name,
+            arguments: call.arguments,
+          })),
+        })
+      }
+    }
+
+    history.push({
+      role: messageItem.role,
+      content: messageItem.content,
+    })
+  }
+  return history
+}
+
 function resetProcessPanelState() {
   clearProcessFallback()
   backendProgressSeen.value = false
@@ -222,7 +293,7 @@ async function cancelActiveRequestSilently() {
 
   try {
     const { invoke } = await import('@tauri-apps/api/core')
-    await invoke('cancel_request', { request_id: requestId })
+    await invoke('cancel_request', { requestId })
   } catch (error) {
     console.error('Failed to cancel request silently:', error)
   }
@@ -515,7 +586,7 @@ async function executeRequest(payload: PendingRequest, includeUserMessage: boole
         args: payload.skillArgs || null,
         history: payload.history.length > 0 ? payload.history : null,
         attachments: attachmentsPayload.length > 0 ? attachmentsPayload : null,
-        request_id: payload.requestId,
+        requestId: payload.requestId,
       })
       chatStore.messages.pop()
       placeholderAdded = false
@@ -524,7 +595,7 @@ async function executeRequest(payload: PendingRequest, includeUserMessage: boole
         message: payload.message,
         history: payload.history.length > 0 ? payload.history : null,
         attachments: attachmentsPayload.length > 0 ? attachmentsPayload : null,
-        request_id: payload.requestId,
+        requestId: payload.requestId,
       })
     }
 
@@ -539,7 +610,7 @@ async function executeRequest(payload: PendingRequest, includeUserMessage: boole
     // 解析 JSON 响应，提取 tool_context
     let responseText = response
     let toolContext: import('../stores/chat').ToolContextMessage[] | undefined
-    let activeSkill: string | undefined
+    let activeSkill: string | undefined = payload.isSkill ? payload.skillName?.toLowerCase() : undefined
     try {
       const parsed = JSON.parse(response)
       if (parsed && typeof parsed.response === 'string') {
@@ -608,7 +679,7 @@ async function stopRequest() {
 
   try {
     const { invoke } = await import('@tauri-apps/api/core')
-    await invoke('cancel_request', { request_id: requestId })
+    await invoke('cancel_request', { requestId })
   } catch (error) {
     console.error('Failed to cancel request:', error)
   }
@@ -658,29 +729,27 @@ async function sendMessage() {
 
   const messageAttachments = attachments.value.map(item => ({ ...item }))
 
-  // 构建包含 tool_context 的完整历史
-  const historyForModel: PendingRequest['history'] = []
-  for (const m of chatStore.chatHistoryForModel) {
-    // 添加主消息
-    historyForModel.push({
-      role: m.role,
-      content: m.content,
-    })
-    // 如果有 tool_context，展开添加到历史中
-  }
+  const historyForModel = buildHistoryForModel(chatStore.chatHistoryForModel)
 
   inputMessage.value = ''
   attachments.value = []
 
-  const skillMatch = userMessage.match(/^\/([a-z0-9-]+)(?:\s+(.*))?$/i)
+  const explicitSkill = parseExplicitSkillCommand(userMessage)
+  const inheritedSkill = explicitSkill ? undefined : findLastActiveSkill()
+  const requestSkillName = explicitSkill?.name || inheritedSkill
+  const requestSkillArgs = explicitSkill
+    ? explicitSkill.args
+    : inheritedSkill
+      ? (userMessage || null)
+      : null
   const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
   const payload: PendingRequest = {
     message: userMessage,
     history: historyForModel,
     attachments: messageAttachments,
-    isSkill: Boolean(skillMatch),
-    skillName: skillMatch?.[1],
-    skillArgs: skillMatch?.[2] || null,
+    isSkill: Boolean(requestSkillName),
+    skillName: requestSkillName,
+    skillArgs: requestSkillArgs,
     requestId,
   }
 
@@ -766,21 +835,25 @@ async function handleRegenerate(msg: { role: string; content: string; timestamp:
   chatStore.messages.splice(userMsgIndex + 1)
 
   // 构建历史（不包含被删除的消息），包含 tool_context
-  const historyForModel: PendingRequest['history'] = []
   const remainingMessages = chatStore.chatHistoryForModel.slice(0, -1) // 移除最后一条
-  for (const m of remainingMessages) {
-    historyForModel.push({
-      role: m.role,
-      content: m.content,
-    })
-  }
+  const historyForModel = buildHistoryForModel(remainingMessages)
 
   const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  const explicitSkill = parseExplicitSkillCommand(userMsg.content)
+  const inheritedSkill = explicitSkill ? undefined : findLastActiveSkill(chatStore.messages)
+  const requestSkillName = explicitSkill?.name || inheritedSkill
+  const requestSkillArgs = explicitSkill
+    ? explicitSkill.args
+    : inheritedSkill
+      ? (userMsg.content || null)
+      : null
   const payload: PendingRequest = {
     message: userMsg.content,
     history: historyForModel,
     attachments: userMsg.attachments?.map(item => ({ ...item })) || [],
-    isSkill: false,
+    isSkill: Boolean(requestSkillName),
+    skillName: requestSkillName,
+    skillArgs: requestSkillArgs,
     requestId,
   }
 
@@ -868,18 +941,10 @@ onMounted(async () => {
     const { listen } = await import('@tauri-apps/api/event')
     progressUnlisten = await listen<ProgressEventPayload>('assistant-progress', (event) => {
       const payload = event.payload
-      backendProgressSeen.value = true
       if (!payload || !payload.request_id) return
       if (!activeRequestId.value) return
-      if (payload.request_id !== activeRequestId.value) {
-        // Some backends may generate a new request id if invoke args are reshaped.
-        // Since UI allows only one active request, bind to the first progress id.
-        if (isLoading.value) {
-          activeRequestId.value = payload.request_id
-        } else {
-          return
-        }
-      }
+      if (payload.request_id !== activeRequestId.value) return
+      backendProgressSeen.value = true
       appendProcessItem(payload)
       if (payload.stage === 'done') {
         finishProcessPanel('done')

@@ -1,34 +1,46 @@
 use crate::capture::CaptureManager;
-use crate::model::{ModelManager, ChatWithToolsResult, ToolCall, is_transient_model_error};
-use crate::storage::{Config, StorageConfig, StorageManager, SummaryRecord, SearchQuery, TimeRange};
-use crate::skills::{SkillManager, SkillMetadata, Skill, SkillsWatcher, SkillFrontmatterOverrides};
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use crate::model::{is_transient_model_error, ChatWithToolsResult, ModelManager, ToolCall};
+use crate::skills::{Skill, SkillFrontmatterOverrides, SkillManager, SkillMetadata, SkillsWatcher};
+use crate::storage::{
+    Config, SearchQuery, StorageConfig, StorageManager, SummaryRecord, TimeRange,
+};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chrono::{Duration, Local, NaiveDateTime, TimeZone};
+use glob::glob;
+use quick_xml::events::Event;
+use quick_xml::Reader;
+use regex::{Regex, RegexBuilder};
 use std::collections::{HashMap, HashSet};
-use std::future::Future;
 use std::fs;
+use std::future::Future;
 use std::io::{self, BufRead, BufReader};
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use tauri::{AppHandle, State, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_shell::ShellExt;
 use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex as TokioMutex;
-use tokio::time::{timeout, sleep, Duration as TokioDuration};
+use tokio::time::{sleep, timeout, Duration as TokioDuration};
 use tokio_util::sync::CancellationToken;
-use quick_xml::Reader;
-use quick_xml::events::Event;
-use zip::ZipArchive;
-use glob::glob;
-use regex::{Regex, RegexBuilder};
 use walkdir::WalkDir;
+use zip::ZipArchive;
 
 pub struct AppState {
     pub capture_manager: Arc<TokioMutex<CaptureManager>>,
     pub storage_manager: Arc<StorageManager>,
     pub request_cancellations: Arc<TokioMutex<HashMap<String, CancellationToken>>>,
     pub skills_watcher: Mutex<Option<SkillsWatcher>>,
+    pub skills_version: Arc<AtomicU64>,
+    pub skills_cache: Arc<TokioMutex<SkillsSnapshotCache>>,
+}
+
+#[derive(Default)]
+pub struct SkillsSnapshotCache {
+    pub initialized: bool,
+    pub loaded_version: u64,
+    pub skills: Vec<SkillMetadata>,
 }
 
 const MIN_RECENT_DETAIL_RECORDS: usize = 20;
@@ -55,7 +67,13 @@ impl AppState {
             storage_manager: Arc::new(StorageManager::new()),
             request_cancellations: Arc::new(TokioMutex::new(HashMap::new())),
             skills_watcher: Mutex::new(None),
+            skills_version: Arc::new(AtomicU64::new(1)),
+            skills_cache: Arc::new(TokioMutex::new(SkillsSnapshotCache::default())),
         }
+    }
+
+    pub fn bump_skills_version(&self) -> u64 {
+        self.skills_version.fetch_add(1, Ordering::SeqCst) + 1
     }
 }
 
@@ -81,8 +99,15 @@ pub async fn get_system_locale(
     {
         match windows_ui_is_zh() {
             Some(is_zh) => {
-                let resolved = if is_zh { "zh".to_string() } else { "en".to_string() };
-                println!("[locale] get_system_locale windows_ui_is_zh={} -> {}", is_zh, resolved);
+                let resolved = if is_zh {
+                    "zh".to_string()
+                } else {
+                    "en".to_string()
+                };
+                println!(
+                    "[locale] get_system_locale windows_ui_is_zh={} -> {}",
+                    is_zh, resolved
+                );
                 return Ok(resolved);
             }
             None => {
@@ -136,7 +161,9 @@ pub async fn list_profiles() -> Result<Vec<String>, String> {
 #[tauri::command]
 pub async fn save_profile(name: String, config: Config) -> Result<(), String> {
     let storage = StorageManager::new();
-    storage.save_profile(&name, &config).map_err(|e| e.to_string())
+    storage
+        .save_profile(&name, &config)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -263,8 +290,7 @@ pub async fn save_clipboard_image(base64: String, name: Option<String>) -> Resul
     let storage = StorageManager::new();
     let data_dir = storage.get_data_dir().to_path_buf();
     let attachments_dir = data_dir.join("attachments");
-    fs::create_dir_all(&attachments_dir)
-        .map_err(|e| format!("创建附件目录失败: {}", e))?;
+    fs::create_dir_all(&attachments_dir).map_err(|e| format!("创建附件目录失败: {}", e))?;
 
     let mut filename = sanitize_attachment_name(name.as_deref());
     if filename.is_empty() {
@@ -335,9 +361,8 @@ impl ProgressEmitter {
         if !enabled {
             return None;
         }
-        let request_id = request_id.unwrap_or_else(|| {
-            format!("req-{}", Local::now().timestamp_millis())
-        });
+        let request_id =
+            request_id.unwrap_or_else(|| format!("req-{}", Local::now().timestamp_millis()));
         Some(Self {
             app_handle: app_handle.clone(),
             request_id,
@@ -380,10 +405,7 @@ impl ProgressEmitter {
     }
 }
 
-async fn register_cancel_token(
-    state: &State<'_, AppState>,
-    request_id: &str,
-) -> CancellationToken {
+async fn register_cancel_token(state: &State<'_, AppState>, request_id: &str) -> CancellationToken {
     let mut map = state.request_cancellations.lock().await;
     map.entry(request_id.to_string())
         .or_insert_with(CancellationToken::new)
@@ -393,6 +415,26 @@ async fn register_cancel_token(
 async fn clear_cancel_token(state: &State<'_, AppState>, request_id: &str) {
     let mut map = state.request_cancellations.lock().await;
     map.remove(request_id);
+}
+
+async fn get_available_skills_cached(
+    state: &State<'_, AppState>,
+    skill_manager: &SkillManager,
+) -> Vec<SkillMetadata> {
+    let version = state.skills_version.load(Ordering::SeqCst);
+    {
+        let cache = state.skills_cache.lock().await;
+        if cache.initialized && cache.loaded_version == version {
+            return cache.skills.clone();
+        }
+    }
+
+    let discovered = skill_manager.discover_skills().unwrap_or_default();
+    let mut cache = state.skills_cache.lock().await;
+    cache.initialized = true;
+    cache.loaded_version = version;
+    cache.skills = discovered.clone();
+    discovered
 }
 
 fn check_cancel(cancel_token: Option<&CancellationToken>) -> Result<(), String> {
@@ -463,7 +505,8 @@ fn response_looks_incomplete(text: &str) -> bool {
     }
     let short = trimmed.len() < 400;
     let ends_with_colon = trimmed.ends_with(':') || trimmed.ends_with('?');
-    let ends_with_ellipsis = trimmed.ends_with("...") || trimmed.ends_with('?') || trimmed.ends_with("??");
+    let ends_with_ellipsis =
+        trimmed.ends_with("...") || trimmed.ends_with('?') || trimmed.ends_with("??");
     let unbalanced_fence = trimmed.matches("```").count() % 2 == 1;
     let lower = trimmed.to_lowercase();
     let engine_hint = lower.contains("??????")
@@ -503,9 +546,7 @@ fn estimate_history_tokens(
 }
 
 fn build_history_compression_summary(history: &[ChatHistoryMessage], max_chars: usize) -> String {
-    let mut summary = String::from(
-        "Context compression summary of earlier conversation:\n",
-    );
+    let mut summary = String::from("Context compression summary of earlier conversation:\n");
     let mut used = summary.chars().count();
 
     for (idx, msg) in history.iter().enumerate() {
@@ -585,7 +626,11 @@ fn compress_history_if_needed(
         && compressed.len() > 4
         && loops < 128
     {
-        let remove_idx = if has_summary && compressed.len() > 1 { 1 } else { 0 };
+        let remove_idx = if has_summary && compressed.len() > 1 {
+            1
+        } else {
+            0
+        };
         compressed.remove(remove_idx);
         loops += 1;
     }
@@ -608,7 +653,11 @@ fn compress_history_if_needed(
     while estimate_history_tokens(system_prompt, user_message, &compressed) > trigger_tokens
         && compressed.len() > 2
     {
-        let remove_idx = if has_summary && compressed.len() > 1 { 1 } else { 0 };
+        let remove_idx = if has_summary && compressed.len() > 1 {
+            1
+        } else {
+            0
+        };
         compressed.remove(remove_idx);
     }
 
@@ -631,6 +680,93 @@ fn compress_history_if_needed(
     Some(compressed)
 }
 
+fn is_context_overflow_error(err: &str) -> bool {
+    let lower = err.to_lowercase();
+    lower.contains("context_length_exceeded")
+        || lower.contains("context length")
+        || lower.contains("context window")
+        || lower.contains("maximum context")
+        || lower.contains("too many tokens")
+        || lower.contains("token limit")
+        || lower.contains("prompt is too long")
+        || lower.contains("input is too long")
+        || lower.contains("improperly formed request")
+        || lower.contains("bad request")
+}
+
+fn squeeze_history_keep_recent(
+    history: &Option<Vec<ChatHistoryMessage>>,
+    keep_recent: usize,
+    summary_chars: Option<usize>,
+    truncate_each_to: Option<usize>,
+) -> Option<Vec<ChatHistoryMessage>> {
+    let history = history.as_ref()?.clone();
+    if history.len() <= keep_recent {
+        return Some(history);
+    }
+    let split_idx = history.len().saturating_sub(keep_recent);
+    let older = &history[..split_idx];
+    let recent = &history[split_idx..];
+    let mut squeezed = Vec::new();
+    if let Some(max_chars) = summary_chars {
+        if !older.is_empty() {
+            squeezed.push(ChatHistoryMessage {
+                role: "assistant".to_string(),
+                content: build_history_compression_summary(older, max_chars),
+                tool_call_id: None,
+                tool_calls: None,
+            });
+        }
+    }
+    for msg in recent {
+        let mut cloned = msg.clone();
+        if let Some(max_chars) = truncate_each_to {
+            let (shortened, truncated) = truncate_string(&cloned.content, max_chars);
+            cloned.content = if truncated {
+                format!("{}\n...(message truncated)", shortened)
+            } else {
+                shortened
+            };
+        }
+        squeezed.push(cloned);
+    }
+    Some(squeezed)
+}
+
+fn build_overflow_recovery_histories(
+    history: &Option<Vec<ChatHistoryMessage>>,
+    system_prompt: &str,
+    user_message: &str,
+    storage: &StorageConfig,
+) -> Vec<Option<Vec<ChatHistoryMessage>>> {
+    let mut candidates = Vec::new();
+    candidates.push(history.clone());
+    if history.is_none() {
+        return candidates;
+    }
+
+    let mut aggressive_storage = storage.clone();
+    aggressive_storage.context_compress_trigger_ratio = storage
+        .context_compress_trigger_ratio
+        .clamp(0.70, 0.99)
+        .min(0.82);
+    aggressive_storage.max_context_tokens = storage.max_context_tokens.max(4096);
+    let aggressive = compress_history_if_needed(
+        history.clone(),
+        system_prompt,
+        user_message,
+        &aggressive_storage,
+        None,
+    );
+    candidates.push(squeeze_history_keep_recent(
+        &aggressive,
+        8,
+        Some(1800),
+        Some(2800),
+    ));
+    candidates.push(squeeze_history_keep_recent(history, 4, None, Some(1500)));
+    candidates
+}
 
 #[derive(serde::Deserialize)]
 struct ReadArgs {
@@ -718,7 +854,7 @@ pub async fn chat_with_assistant(
     let skill_manager = SkillManager::new();
 
     // 获取可用 skills 列表（用于自动发现和 Tool Use）
-    let available_skills = skill_manager.discover_skills().unwrap_or_default();
+    let available_skills = get_available_skills_cached(&state, &skill_manager).await;
 
     // 分析用户问题，提取时间范围和关键词
     let use_context = should_use_screen_context(&config.storage.context_mode, &message);
@@ -743,10 +879,8 @@ pub async fn chat_with_assistant(
         if matches!(query.time_range, TimeRange::Recent(_))
             && search_result.records.len() < MIN_RECENT_DETAIL_RECORDS
         {
-            let mut fallback = storage.get_recent_records(
-                MIN_RECENT_DETAIL_RECORDS,
-                config.storage.retention_days,
-            );
+            let mut fallback = storage
+                .get_recent_records(MIN_RECENT_DETAIL_RECORDS, config.storage.retention_days);
             if let Some(ref cutoff) = detail_cutoff {
                 fallback.retain(|record| record.timestamp >= *cutoff);
             }
@@ -778,19 +912,24 @@ pub async fn chat_with_assistant(
         .as_deref()
         .map(build_attachment_payload)
         .unwrap_or_default();
-    let has_attachments = attachments.as_ref().map_or(false, |items| !items.is_empty());
+    let has_attachments = attachments
+        .as_ref()
+        .map_or(false, |items| !items.is_empty());
     let user_message = merge_user_message(&message, &attachment_payload.text, has_attachments);
 
-    let request_id = request_id.unwrap_or_else(|| {
-        format!("req-{}", Local::now().timestamp_millis())
-    });
+    let request_id =
+        request_id.unwrap_or_else(|| format!("req-{}", Local::now().timestamp_millis()));
     let cancel_token = register_cancel_token(&state, &request_id).await;
-    let progress = ProgressEmitter::new(&app_handle, config.ui.show_progress, Some(request_id.clone()));
+    let progress = ProgressEmitter::new(
+        &app_handle,
+        config.ui.show_progress,
+        Some(request_id.clone()),
+    );
 
     let response = (async {
         let response = if config.model.provider == "api" {
         let system_prompt = build_tool_system_prompt(&context, skill_manager.get_skills_dir(), &available_skills);
-        let model_history = compress_history_if_needed(
+        let mut model_history = compress_history_if_needed(
             history.clone(),
             &system_prompt,
             &user_message,
@@ -801,38 +940,77 @@ pub async fn chat_with_assistant(
             progress.emit_start("开始处理请求");
             progress.emit_info("Analyze request & plan".to_string(), None);
         }
-        let result = if attachment_payload.image_urls.is_empty()
-            && attachment_payload.image_base64.is_empty()
-        {
-            retry_with_cancel(
-                &cancel_token,
-                progress.as_ref(),
-                "model",
-                || model_manager.chat_with_tools_with_system_prompt(
-                    &config.model,
-                    &system_prompt,
-                    &user_message,
-                    model_history.clone(),
-                    &available_skills,
-                ),
-            )
-            .await?
+        let history_candidates = build_overflow_recovery_histories(
+            &model_history,
+            &system_prompt,
+            &user_message,
+            &config.storage,
+        );
+        let total_candidates = history_candidates.len();
+        let mut result: Option<ChatWithToolsResult> = None;
+        let mut last_error: Option<String> = None;
+        for (idx, candidate_history) in history_candidates.into_iter().enumerate() {
+            let attempt = if attachment_payload.image_urls.is_empty()
+                && attachment_payload.image_base64.is_empty()
+            {
+                let history_for_call = candidate_history.clone();
+                retry_with_cancel(
+                    &cancel_token,
+                    progress.as_ref(),
+                    "model",
+                    || model_manager.chat_with_tools_with_system_prompt(
+                        &config.model,
+                        &system_prompt,
+                        &user_message,
+                        history_for_call.clone(),
+                        &available_skills,
+                    ),
+                )
+                .await
+            } else {
+                let history_for_call = candidate_history.clone();
+                retry_with_cancel(
+                    &cancel_token,
+                    progress.as_ref(),
+                    "model",
+                    || model_manager.chat_with_tools_with_system_prompt_with_images(
+                        &config.model,
+                        &system_prompt,
+                        &user_message,
+                        history_for_call.clone(),
+                        &available_skills,
+                        attachment_payload.image_urls.clone(),
+                        attachment_payload.image_base64.clone(),
+                    ),
+                )
+                .await
+            };
+
+            match attempt {
+                Ok(value) => {
+                    result = Some(value);
+                    break;
+                }
+                Err(err) => {
+                    let can_retry = idx + 1 < total_candidates && is_context_overflow_error(&err);
+                    if can_retry {
+                        if let Some(ref progress) = progress {
+                            progress.emit_info(
+                                "Context overflow detected; retrying with tighter history".to_string(),
+                                Some(format!("attempt {}/{}", idx + 2, total_candidates)),
+                            );
+                        }
+                        last_error = Some(err);
+                        continue;
+                    }
+                    return Err(err);
+                }
+            }
+        }
+        let result = if let Some(value) = result {
+            value
         } else {
-            retry_with_cancel(
-                &cancel_token,
-                progress.as_ref(),
-                "model",
-                || model_manager.chat_with_tools_with_system_prompt_with_images(
-                    &config.model,
-                    &system_prompt,
-                    &user_message,
-                    model_history.clone(),
-                    &available_skills,
-                    attachment_payload.image_urls.clone(),
-                    attachment_payload.image_base64.clone(),
-                ),
-            )
-            .await?
+            return Err(last_error.unwrap_or_else(|| "model request failed".to_string()));
         };
 
         let tool_loop_result = run_tool_loop(
@@ -1125,7 +1303,10 @@ async fn execute_skill_internal(
         progress.emit_info("Loaded skill file".to_string(), Some(skill.path.clone()));
         // 调试：输出 instructions 内容
         progress.emit_info(
-            format!("Skill instructions loaded: {} chars", rendered_instructions.len()),
+            format!(
+                "Skill instructions loaded: {} chars",
+                rendered_instructions.len()
+            ),
             Some(if rendered_instructions.len() > 300 {
                 format!(
                     "{}...",
@@ -1148,7 +1329,9 @@ async fn execute_skill_internal(
         .as_deref()
         .map(build_attachment_payload)
         .unwrap_or_default();
-    let has_attachments = attachments.as_ref().map_or(false, |items| !items.is_empty());
+    let has_attachments = attachments
+        .as_ref()
+        .map_or(false, |items| !items.is_empty());
     let user_message = merge_user_message(&base_message, &attachment_payload.text, has_attachments);
 
     // 根据 skill 的 context 设置决定是否包含屏幕记录
@@ -1258,80 +1441,131 @@ async fn execute_skill_internal(
     );
 
     if let Some(progress) = progress {
-        progress.emit_step("请求模型执行技能".to_string(), Some(format!("/{}", skill.metadata.name)));
+        progress.emit_step(
+            "请求模型执行技能".to_string(),
+            Some(format!("/{}", skill.metadata.name)),
+        );
     }
 
-    // Claude Code 机制：skill 执行时不使用之前的聊天历史，避免上下文混乱
-    // skill 是独立执行的任务，只在 tool loop 内部保持上下文
-    let model_history: Option<Vec<ChatHistoryMessage>> = None;
+    // Keep same-conversation memory for /skill calls.
+    // History is compressed when approaching context limits.
+    let mut model_history = compress_history_if_needed(
+        history,
+        &system_prompt,
+        &user_message,
+        &config.storage,
+        progress,
+    );
+    if let Some(progress) = progress {
+        if let Some(ref hist) = model_history {
+            progress.emit_info(
+                "Skill session memory enabled".to_string(),
+                Some(format!("history messages: {}", hist.len())),
+            );
+        }
+    }
 
     if config.model.provider == "api" {
         // Inside a running skill, disable nested skill invocation to avoid
         // "skill not available" confusion and recursive skill chaining.
         let available_skills: Vec<SkillMetadata> = Vec::new();
         let allowed_tools = &effective_allowed_tools;
-        let result = if attachment_payload.image_urls.is_empty()
-            && attachment_payload.image_base64.is_empty()
-        {
-            if let Some(token) = cancel_token {
-                retry_with_cancel(
-                    token,
-                    progress,
-                    "model",
-                    || model_manager.chat_with_tools_with_system_prompt_filtered(
-                        &config.model,
-                        &system_prompt,
-                        &user_message,
-                        model_history.clone(),
-                        &available_skills,
-                        allowed_tools,
-                    ),
-                )
-                .await?
+        let history_candidates = build_overflow_recovery_histories(
+            &model_history,
+            &system_prompt,
+            &user_message,
+            &config.storage,
+        );
+        let total_candidates = history_candidates.len();
+        let mut result: Option<ChatWithToolsResult> = None;
+        let mut last_error: Option<String> = None;
+        for (idx, candidate_history) in history_candidates.into_iter().enumerate() {
+            let attempt = if attachment_payload.image_urls.is_empty()
+                && attachment_payload.image_base64.is_empty()
+            {
+                let history_for_call = candidate_history.clone();
+                if let Some(token) = cancel_token {
+                    retry_with_cancel(token, progress, "model", || {
+                        model_manager.chat_with_tools_with_system_prompt_filtered(
+                            &config.model,
+                            &system_prompt,
+                            &user_message,
+                            history_for_call.clone(),
+                            &available_skills,
+                            allowed_tools,
+                        )
+                    })
+                    .await
+                } else {
+                    model_manager
+                        .chat_with_tools_with_system_prompt_filtered(
+                            &config.model,
+                            &system_prompt,
+                            &user_message,
+                            history_for_call,
+                            &available_skills,
+                            allowed_tools,
+                        )
+                        .await
+                }
             } else {
-                model_manager
-                    .chat_with_tools_with_system_prompt_filtered(
-                        &config.model,
-                        &system_prompt,
-                        &user_message,
-                        model_history.clone(),
-                        &available_skills,
-                        allowed_tools,
-                    )
-                    .await?
+                let history_for_call = candidate_history.clone();
+                if let Some(token) = cancel_token {
+                    retry_with_cancel(token, progress, "model", || {
+                        model_manager.chat_with_tools_with_system_prompt_with_images_filtered(
+                            &config.model,
+                            &system_prompt,
+                            &user_message,
+                            history_for_call.clone(),
+                            &available_skills,
+                            attachment_payload.image_urls.clone(),
+                            attachment_payload.image_base64.clone(),
+                            allowed_tools,
+                        )
+                    })
+                    .await
+                } else {
+                    model_manager
+                        .chat_with_tools_with_system_prompt_with_images_filtered(
+                            &config.model,
+                            &system_prompt,
+                            &user_message,
+                            history_for_call,
+                            &available_skills,
+                            attachment_payload.image_urls.clone(),
+                            attachment_payload.image_base64.clone(),
+                            allowed_tools,
+                        )
+                        .await
+                }
+            };
+
+            match attempt {
+                Ok(value) => {
+                    result = Some(value);
+                    break;
+                }
+                Err(err) => {
+                    let can_retry = idx + 1 < total_candidates && is_context_overflow_error(&err);
+                    if can_retry {
+                        if let Some(progress) = progress {
+                            progress.emit_info(
+                                "Context overflow detected; retrying skill with tighter history"
+                                    .to_string(),
+                                Some(format!("attempt {}/{}", idx + 2, total_candidates)),
+                            );
+                        }
+                        last_error = Some(err);
+                        continue;
+                    }
+                    return Err(err);
+                }
             }
+        }
+        let result = if let Some(value) = result {
+            value
         } else {
-            if let Some(token) = cancel_token {
-                retry_with_cancel(
-                    token,
-                    progress,
-                    "model",
-                    || model_manager.chat_with_tools_with_system_prompt_with_images_filtered(
-                        &config.model,
-                        &system_prompt,
-                        &user_message,
-                        model_history.clone(),
-                        &available_skills,
-                        attachment_payload.image_urls.clone(),
-                        attachment_payload.image_base64.clone(),
-                        allowed_tools,
-                    ),
-                )
-                .await?
-            } else {
-                model_manager
-                    .chat_with_tools_with_system_prompt_with_images_filtered(
-                        &config.model,
-                        &system_prompt,
-                        &user_message,
-                        model_history.clone(),
-                        &available_skills,
-                        attachment_payload.image_urls.clone(),
-                        attachment_payload.image_base64.clone(),
-                        allowed_tools,
-                    )
-                    .await?
-            }
+            return Err(last_error.unwrap_or_else(|| "model request failed".to_string()));
         };
 
         return match Box::pin(run_tool_loop(
@@ -1349,14 +1583,18 @@ async fn execute_skill_internal(
             cancel_token,
             progress,
         ))
-        .await {
+        .await
+        {
             Ok(result) => {
                 let chat_response = ChatResponse {
                     response: result.response,
                     tool_context: result.tool_context,
                     active_skill: Some(skill_name.to_string()),
                 };
-                Ok(serde_json::to_string(&chat_response).unwrap_or_else(|_| chat_response.response))
+                Ok(
+                    serde_json::to_string(&chat_response)
+                        .unwrap_or_else(|_| chat_response.response),
+                )
             }
             Err(e) => Err(e),
         };
@@ -1364,38 +1602,37 @@ async fn execute_skill_internal(
 
     if attachment_payload.image_urls.is_empty() && attachment_payload.image_base64.is_empty() {
         if let Some(token) = cancel_token {
-            retry_with_cancel(
-                token,
-                progress,
-                "model",
-                || model_manager.chat_with_system_prompt(
+            retry_with_cancel(token, progress, "model", || {
+                model_manager.chat_with_system_prompt(
                     &config.model,
                     &system_prompt,
                     &user_message,
                     model_history.clone(),
-                ),
-            )
+                )
+            })
             .await
         } else {
             model_manager
-                .chat_with_system_prompt(&config.model, &system_prompt, &user_message, model_history)
+                .chat_with_system_prompt(
+                    &config.model,
+                    &system_prompt,
+                    &user_message,
+                    model_history,
+                )
                 .await
         }
     } else {
         if let Some(token) = cancel_token {
-            retry_with_cancel(
-                token,
-                progress,
-                "model",
-                || model_manager.chat_with_system_prompt_with_images(
+            retry_with_cancel(token, progress, "model", || {
+                model_manager.chat_with_system_prompt_with_images(
                     &config.model,
                     &system_prompt,
                     &user_message,
                     model_history.clone(),
                     attachment_payload.image_urls.clone(),
                     attachment_payload.image_base64.clone(),
-                ),
-            )
+                )
+            })
             .await
         } else {
             model_manager
@@ -1403,7 +1640,7 @@ async fn execute_skill_internal(
                     &config.model,
                     &system_prompt,
                     &user_message,
-                    history,
+                    model_history,
                     attachment_payload.image_urls,
                     attachment_payload.image_base64,
                 )
@@ -1418,12 +1655,13 @@ fn parse_user_query(message: &str) -> SearchQuery {
 
     // 提取时间范围
     let time_range = if msg_lower.contains("刚才") || msg_lower.contains("刚刚") {
-        TimeRange::Recent(5)  // 最近5分钟
+        TimeRange::Recent(5) // 最近5分钟
     } else if msg_lower.contains("最近") && msg_lower.contains("分钟") {
         // 尝试提取分钟数
         let minutes = extract_number(&msg_lower).unwrap_or(10);
         TimeRange::Recent(minutes)
-    } else if msg_lower.contains("今天") || msg_lower.contains("上午") || msg_lower.contains("下午") {
+    } else if msg_lower.contains("今天") || msg_lower.contains("上午") || msg_lower.contains("下午")
+    {
         TimeRange::Today
     } else if msg_lower.contains("昨天") {
         TimeRange::Days(2)
@@ -1448,9 +1686,19 @@ fn parse_user_query(message: &str) -> SearchQuery {
 fn extract_number(text: &str) -> Option<u32> {
     // 中文数字映射
     let cn_nums = [
-        ("一", 1), ("二", 2), ("三", 3), ("四", 4), ("五", 5),
-        ("六", 6), ("七", 7), ("八", 8), ("九", 9), ("十", 10),
-        ("十五", 15), ("二十", 20), ("三十", 30),
+        ("一", 1),
+        ("二", 2),
+        ("三", 3),
+        ("四", 4),
+        ("五", 5),
+        ("六", 6),
+        ("七", 7),
+        ("八", 8),
+        ("九", 9),
+        ("十", 10),
+        ("十五", 15),
+        ("二十", 20),
+        ("三十", 30),
     ];
 
     for (cn, num) in cn_nums {
@@ -1461,8 +1709,7 @@ fn extract_number(text: &str) -> Option<u32> {
 
     // 阿拉伯数字
     let re = regex::Regex::new(r"\d+").ok()?;
-    re.find(text)
-        .and_then(|m| m.as_str().parse().ok())
+    re.find(text).and_then(|m| m.as_str().parse().ok())
 }
 
 fn extract_keywords(message: &str) -> Vec<String> {
@@ -1484,10 +1731,8 @@ fn extract_keywords(message: &str) -> Vec<String> {
 
     // 提取技术关键词
     let tech_keywords = [
-        "error", "错误", "报错", "bug", "异常",
-        "代码", "文件", "函数", "编辑", "修改",
-        ".rs", ".ts", ".js", ".py", ".vue", ".tsx",
-        "Chrome", "VS Code", "Terminal",
+        "error", "错误", "报错", "bug", "异常", "代码", "文件", "函数", "编辑", "修改", ".rs",
+        ".ts", ".js", ".py", ".vue", ".tsx", "Chrome", "VS Code", "Terminal",
     ];
 
     for kw in tech_keywords {
@@ -1502,10 +1747,42 @@ fn extract_keywords(message: &str) -> Vec<String> {
 fn wants_detail(message: &str) -> bool {
     let msg = message.to_lowercase();
     let triggers = [
-        "详细", "细节", "具体", "截图", "画面", "界面", "内容", "显示", "文本", "按钮", "输入", "输出",
-        "哪一页", "哪个页面", "哪一个文件", "哪行", "哪一行", "日志", "报错内容",
-        "报错", "错误", "失败", "异常", "无法", "连不上", "连接不上", "原因", "为什么", "提示", "配置",
-        "detail", "details", "screenshot", "screen", "page", "error log",
+        "详细",
+        "细节",
+        "具体",
+        "截图",
+        "画面",
+        "界面",
+        "内容",
+        "显示",
+        "文本",
+        "按钮",
+        "输入",
+        "输出",
+        "哪一页",
+        "哪个页面",
+        "哪一个文件",
+        "哪行",
+        "哪一行",
+        "日志",
+        "报错内容",
+        "报错",
+        "错误",
+        "失败",
+        "异常",
+        "无法",
+        "连不上",
+        "连接不上",
+        "原因",
+        "为什么",
+        "提示",
+        "配置",
+        "detail",
+        "details",
+        "screenshot",
+        "screen",
+        "page",
+        "error log",
     ];
 
     triggers.iter().any(|kw| msg.contains(kw))
@@ -1526,24 +1803,38 @@ fn wants_screen_context_auto(message: &str) -> bool {
 
     let msg = message.to_lowercase();
     let context_triggers = [
-        "??", "??", "??", "??", "??", "??", "??", "??",
-        "??", "??", "??", "??", "??", "??", "??", "??",
-        "??", "??", "??", "??", "??", "alert", "log", "error",
-        "crash", "issue", "history", "record", "records", "activity",
+        "??", "??", "??", "??", "??", "??", "??", "??", "??", "??", "??", "??", "??", "??", "??",
+        "??", "??", "??", "??", "??", "??", "alert", "log", "error", "crash", "issue", "history",
+        "record", "records", "activity",
     ];
     if context_triggers.iter().any(|kw| msg.contains(kw)) {
         return true;
     }
 
     let time_triggers = [
-        "??", "??", "??", "??", "??", "??", "??", "??", "??",
-        "??", "??", "??", "recent", "earlier", "before", "today",
-        "yesterday", "this week", "last week",
+        "??",
+        "??",
+        "??",
+        "??",
+        "??",
+        "??",
+        "??",
+        "??",
+        "??",
+        "??",
+        "??",
+        "??",
+        "recent",
+        "earlier",
+        "before",
+        "today",
+        "yesterday",
+        "this week",
+        "last week",
     ];
     let action_triggers = [
-        "??", "??", "??", "??", "??", "??", "??", "??", "??",
-        "??", "??", "??", "??", "open", "click", "type", "input",
-        "edit", "save",
+        "??", "??", "??", "??", "??", "??", "??", "??", "??", "??", "??", "??", "??", "open",
+        "click", "type", "input", "edit", "save",
     ];
     time_triggers.iter().any(|kw| msg.contains(kw))
         && action_triggers.iter().any(|kw| msg.contains(kw))
@@ -1558,7 +1849,6 @@ fn build_detail_cutoff(config: &Config) -> Option<String> {
     Some(cutoff.format("%Y-%m-%dT%H:%M:%S").to_string())
 }
 
-
 /// 构建包含全局提示词的上下文
 fn build_context_with_global_prompts(config: &Config, context: String) -> String {
     let global_section = build_global_prompts_section(config);
@@ -1571,7 +1861,9 @@ fn build_context_with_global_prompts(config: &Config, context: String) -> String
 
 /// 构建全局提示词部分
 fn build_global_prompts_section(config: &Config) -> String {
-    let enabled_prompts: Vec<&str> = config.global_prompt.items
+    let enabled_prompts: Vec<&str> = config
+        .global_prompt
+        .items
         .iter()
         .filter(|item| item.enabled && !item.content.trim().is_empty())
         .map(|item| item.content.as_str())
@@ -1580,10 +1872,7 @@ fn build_global_prompts_section(config: &Config) -> String {
     if enabled_prompts.is_empty() {
         String::new()
     } else {
-        format!(
-            "## 用户预设信息\n{}\n\n",
-            enabled_prompts.join("\n\n")
-        )
+        format!("## 用户预设信息\n{}\n\n", enabled_prompts.join("\n\n"))
     }
 }
 
@@ -1625,7 +1914,9 @@ pub async fn get_summaries(date: String) -> Result<Vec<SummaryRecord>, String> {
 #[tauri::command]
 pub async fn clear_summaries(date: String) -> Result<usize, String> {
     let storage = StorageManager::new();
-    storage.delete_summaries_for_date(&date).map_err(|e| e.to_string())
+    storage
+        .delete_summaries_for_date(&date)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1648,7 +1939,10 @@ pub async fn open_screenshots_dir(app_handle: AppHandle) -> Result<(), String> {
 /// 读取图片文件并返回 base64 编码
 /// file_type: "attachment" | "screenshot"
 #[tauri::command]
-pub async fn read_image_base64(file_path: String, file_type: Option<String>) -> Result<String, String> {
+pub async fn read_image_base64(
+    file_path: String,
+    file_type: Option<String>,
+) -> Result<String, String> {
     let storage = StorageManager::new();
     let data_dir = storage.get_data_dir().to_path_buf();
 
@@ -1667,9 +1961,11 @@ pub async fn read_image_base64(file_path: String, file_type: Option<String>) -> 
     };
 
     // 安全检查：确保路径在数据目录内
-    let canonical = full_path.canonicalize()
+    let canonical = full_path
+        .canonicalize()
         .map_err(|e| format!("文件不存在: {}", e))?;
-    let data_canonical = data_dir.canonicalize()
+    let data_canonical = data_dir
+        .canonicalize()
         .map_err(|e| format!("数据目录错误: {}", e))?;
 
     if !canonical.starts_with(&data_canonical) {
@@ -1677,18 +1973,17 @@ pub async fn read_image_base64(file_path: String, file_type: Option<String>) -> 
     }
 
     // 检查文件大小
-    let metadata = fs::metadata(&canonical)
-        .map_err(|e| format!("读取文件信息失败: {}", e))?;
+    let metadata = fs::metadata(&canonical).map_err(|e| format!("读取文件信息失败: {}", e))?;
     if metadata.len() > MAX_ATTACHMENT_BYTES {
         return Err("文件过大".to_string());
     }
 
     // 读取文件并编码
-    let bytes = fs::read(&canonical)
-        .map_err(|e| format!("读取文件失败: {}", e))?;
+    let bytes = fs::read(&canonical).map_err(|e| format!("读取文件失败: {}", e))?;
 
     // 根据扩展名确定 MIME 类型
-    let ext = canonical.extension()
+    let ext = canonical
+        .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_lowercase();
@@ -1731,7 +2026,9 @@ pub struct BashRuntimeEnsureResult {
 }
 
 #[tauri::command]
-pub async fn ensure_bash_runtime(auto_install: Option<bool>) -> Result<BashRuntimeEnsureResult, String> {
+pub async fn ensure_bash_runtime(
+    auto_install: Option<bool>,
+) -> Result<BashRuntimeEnsureResult, String> {
     #[cfg(not(target_os = "windows"))]
     {
         return Ok(BashRuntimeEnsureResult {
@@ -1803,8 +2100,16 @@ pub async fn ensure_bash_runtime(auto_install: Option<bool>) -> Result<BashRunti
                         "winget {} -> exit {}\nstdout: {}\nstderr: {}",
                         args.join(" "),
                         output.status.code().unwrap_or(-1),
-                        if stdout.is_empty() { "(empty)" } else { &stdout },
-                        if stderr.is_empty() { "(empty)" } else { &stderr }
+                        if stdout.is_empty() {
+                            "(empty)"
+                        } else {
+                            &stdout
+                        },
+                        if stderr.is_empty() {
+                            "(empty)"
+                        } else {
+                            &stderr
+                        }
                     ));
 
                     if output.status.success() {
@@ -1929,7 +2234,11 @@ pub async fn get_recent_alerts(since: Option<String>) -> Result<Vec<AlertRecord>
             confidence: record.confidence,
             intent: record.intent,
             scene: record.scene,
-            help_type: if record.has_issue { "error".to_string() } else { "info".to_string() },
+            help_type: if record.has_issue {
+                "error".to_string()
+            } else {
+                "info".to_string()
+            },
             urgency: record.urgency,
             related_skill: record.related_skill,
         });
@@ -1942,9 +2251,9 @@ pub async fn get_recent_alerts(since: Option<String>) -> Result<Vec<AlertRecord>
 
 /// 列出所有可用的 skills
 #[tauri::command]
-pub async fn list_skills() -> Result<Vec<SkillMetadata>, String> {
+pub async fn list_skills(state: State<'_, AppState>) -> Result<Vec<SkillMetadata>, String> {
     let skill_manager = SkillManager::new();
-    skill_manager.discover_skills()
+    Ok(get_available_skills_cached(&state, &skill_manager).await)
 }
 
 /// 获取完整的 skill 信息
@@ -1969,11 +2278,14 @@ pub async fn invoke_skill(
     let config = storage.load_config().map_err(|e| e.to_string())?;
     let model_manager = ModelManager::new();
     let skill_manager = SkillManager::new();
-    let request_id = request_id.unwrap_or_else(|| {
-        format!("req-{}", Local::now().timestamp_millis())
-    });
+    let request_id =
+        request_id.unwrap_or_else(|| format!("req-{}", Local::now().timestamp_millis()));
     let cancel_token = register_cancel_token(&state, &request_id).await;
-    let progress = ProgressEmitter::new(&app_handle, config.ui.show_progress, Some(request_id.clone()));
+    let progress = ProgressEmitter::new(
+        &app_handle,
+        config.ui.show_progress,
+        Some(request_id.clone()),
+    );
     if let Some(ref progress) = progress {
         progress.emit_start(&format!("开始执行技能 /{}", name));
         progress.emit_info("Prepare to run skill".to_string(), None);
@@ -2009,16 +2321,21 @@ pub async fn create_skill(
     name: String,
     description: String,
     instructions: String,
+    state: State<'_, AppState>,
 ) -> Result<(), String> {
     let skill_manager = SkillManager::new();
-    skill_manager.create_skill(&name, &description, &instructions)
+    skill_manager.create_skill(&name, &description, &instructions)?;
+    state.bump_skills_version();
+    Ok(())
 }
 
 /// 删除 skill
 #[tauri::command]
-pub async fn delete_skill(name: String) -> Result<(), String> {
+pub async fn delete_skill(name: String, state: State<'_, AppState>) -> Result<(), String> {
     let skill_manager = SkillManager::new();
-    skill_manager.delete_skill(&name)
+    skill_manager.delete_skill(&name)?;
+    state.bump_skills_version();
+    Ok(())
 }
 
 /// 获取 skills 目录路径
@@ -2036,8 +2353,7 @@ pub async fn open_skills_dir(app_handle: AppHandle) -> Result<(), String> {
 
     // 确保目录存在
     if !dir.exists() {
-        std::fs::create_dir_all(&dir)
-            .map_err(|e| format!("创建 skills 目录失败: {}", e))?;
+        std::fs::create_dir_all(&dir).map_err(|e| format!("创建 skills 目录失败: {}", e))?;
     }
 
     let dir_str = dir.to_string_lossy().to_string();
@@ -2060,19 +2376,22 @@ pub async fn show_notification(
     suggestion: String,
     urgency: String,
 ) -> Result<(), String> {
-    use tauri::{WebviewWindowBuilder, WebviewUrl, PhysicalPosition, PhysicalSize};
+    use tauri::{PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder};
 
     // 检查是否已存在通知窗口
     if let Some(window) = app_handle.get_webview_window("notification") {
         // 窗口已存在，发送更新事件
-        let _ = window.emit("notification-update", serde_json::json!({
-            "intent": intent,
-            "scene": scene,
-            "help_type": help_type,
-            "summary": summary,
-            "suggestion": suggestion,
-            "urgency": urgency,
-        }));
+        let _ = window.emit(
+            "notification-update",
+            serde_json::json!({
+                "intent": intent,
+                "scene": scene,
+                "help_type": help_type,
+                "summary": summary,
+                "suggestion": suggestion,
+                "urgency": urgency,
+            }),
+        );
         let _ = window.show();
         let _ = window.set_focus();
         return Ok(());
@@ -2114,7 +2433,8 @@ pub async fn show_notification(
         let monitor_size = monitor.size();
         let monitor_position = monitor.position();
         let x = monitor_position.x + monitor_size.width as i32 - window_width as i32 - margin;
-        let y = monitor_position.y + monitor_size.height as i32 - window_height as i32 - margin - 40; // 40 for taskbar
+        let y =
+            monitor_position.y + monitor_size.height as i32 - window_height as i32 - margin - 40; // 40 for taskbar
         let _ = window.set_position(PhysicalPosition::new(x, y));
     }
 
@@ -2125,7 +2445,9 @@ pub async fn show_notification(
 #[tauri::command]
 pub async fn close_notification(app_handle: AppHandle) -> Result<(), String> {
     if let Some(window) = app_handle.get_webview_window("notification") {
-        window.close().map_err(|e| format!("关闭通知窗口失败: {}", e))?;
+        window
+            .close()
+            .map_err(|e| format!("关闭通知窗口失败: {}", e))?;
     }
     Ok(())
 }
@@ -2136,7 +2458,9 @@ pub async fn focus_main_window(app_handle: AppHandle) -> Result<(), String> {
     if let Some(window) = app_handle.get_webview_window("main") {
         let _ = window.show();
         let _ = window.unminimize();
-        window.set_focus().map_err(|e| format!("聚焦主窗口失败: {}", e))?;
+        window
+            .set_focus()
+            .map_err(|e| format!("聚焦主窗口失败: {}", e))?;
     }
     Ok(())
 }
@@ -2410,9 +2734,7 @@ fn extract_xlsx_text(path: &str, max_chars: usize) -> Result<String, String> {
                 .map_err(|e| format!("读取工作表失败: {}", e))?;
             file.name().to_string()
         };
-        if name.starts_with("xl/worksheets/")
-            && name.ends_with(".xml")
-            && !name.contains("_rels/")
+        if name.starts_with("xl/worksheets/") && name.ends_with(".xml") && !name.contains("_rels/")
         {
             sheet_names.push(name);
         }
@@ -2425,10 +2747,7 @@ fn extract_xlsx_text(path: &str, max_chars: usize) -> Result<String, String> {
             break;
         }
 
-        let display = sheet_name
-            .rsplit('/')
-            .next()
-            .unwrap_or(sheet_name.as_str());
+        let display = sheet_name.rsplit('/').next().unwrap_or(sheet_name.as_str());
         output.push_str(&format!("Sheet: {}\n", display));
 
         let sheet_file = archive
@@ -2445,65 +2764,61 @@ fn extract_xlsx_text(path: &str, max_chars: usize) -> Result<String, String> {
 
         loop {
             match reader.read_event_into(&mut buf) {
-                Ok(Event::Start(e)) => {
-                    match e.name().as_ref() {
-                        b"c" => {
-                            cell_ref.clear();
-                            cell_type = None;
-                            value.clear();
-                            for attr in e.attributes().with_checks(false) {
-                                let attr = attr
-                                    .map_err(|err| format!("解析 Excel 属性失败: {}", err))?;
-                                let key = attr.key.as_ref();
-                                if key == b"r" {
-                                    cell_ref = attr
-                                        .unescape_value()
+                Ok(Event::Start(e)) => match e.name().as_ref() {
+                    b"c" => {
+                        cell_ref.clear();
+                        cell_type = None;
+                        value.clear();
+                        for attr in e.attributes().with_checks(false) {
+                            let attr =
+                                attr.map_err(|err| format!("解析 Excel 属性失败: {}", err))?;
+                            let key = attr.key.as_ref();
+                            if key == b"r" {
+                                cell_ref = attr
+                                    .unescape_value()
+                                    .map_err(|err| format!("解析 Excel 单元格失败: {}", err))?
+                                    .to_string();
+                            } else if key == b"t" {
+                                cell_type = Some(
+                                    attr.unescape_value()
                                         .map_err(|err| format!("解析 Excel 单元格失败: {}", err))?
-                                        .to_string();
-                                } else if key == b"t" {
-                                    cell_type = Some(
-                                        attr.unescape_value()
-                                            .map_err(|err| format!("解析 Excel 单元格失败: {}", err))?
-                                            .to_string(),
-                                    );
-                                }
-                            }
-                        }
-                        b"v" | b"t" => {
-                            in_value = true;
-                            value.clear();
-                        }
-                        _ => {}
-                    }
-                }
-                Ok(Event::End(e)) => {
-                    match e.name().as_ref() {
-                        b"v" | b"t" => {
-                            in_value = false;
-                        }
-                        b"c" => {
-                            if !value.trim().is_empty() {
-                                let resolved = resolve_xlsx_cell_value(
-                                    value.trim(),
-                                    cell_type.as_deref(),
-                                    &shared_strings,
+                                        .to_string(),
                                 );
-                                if !resolved.trim().is_empty() {
-                                    if cell_ref.is_empty() {
-                                        output.push_str(&resolved);
-                                    } else {
-                                        output.push_str(&format!("{}: {}", cell_ref, resolved));
-                                    }
-                                    output.push('\n');
-                                }
                             }
-                            cell_ref.clear();
-                            cell_type = None;
-                            value.clear();
                         }
-                        _ => {}
                     }
-                }
+                    b"v" | b"t" => {
+                        in_value = true;
+                        value.clear();
+                    }
+                    _ => {}
+                },
+                Ok(Event::End(e)) => match e.name().as_ref() {
+                    b"v" | b"t" => {
+                        in_value = false;
+                    }
+                    b"c" => {
+                        if !value.trim().is_empty() {
+                            let resolved = resolve_xlsx_cell_value(
+                                value.trim(),
+                                cell_type.as_deref(),
+                                &shared_strings,
+                            );
+                            if !resolved.trim().is_empty() {
+                                if cell_ref.is_empty() {
+                                    output.push_str(&resolved);
+                                } else {
+                                    output.push_str(&format!("{}: {}", cell_ref, resolved));
+                                }
+                                output.push('\n');
+                            }
+                        }
+                        cell_ref.clear();
+                        cell_type = None;
+                        value.clear();
+                    }
+                    _ => {}
+                },
                 Ok(Event::Text(e)) => {
                     if in_value {
                         let content = e
@@ -2577,7 +2892,11 @@ fn read_shared_strings(archive: &mut ZipArchive<fs::File>) -> Result<Vec<String>
     Ok(strings)
 }
 
-fn resolve_xlsx_cell_value(value: &str, cell_type: Option<&str>, shared_strings: &[String]) -> String {
+fn resolve_xlsx_cell_value(
+    value: &str,
+    cell_type: Option<&str>,
+    shared_strings: &[String],
+) -> String {
     match cell_type {
         Some("s") => value
             .parse::<usize>()
@@ -2642,7 +2961,11 @@ fn build_tool_access(
         .unwrap_or_else(|| normalize_path(&data_dir));
     let base_dir = if let Some(dir) = preferred_base_dir {
         let preferred = normalize_path(dir);
-        if mode == "allow_all" || allowed_dirs.iter().any(|allowed| preferred.starts_with(allowed)) {
+        if mode == "allow_all"
+            || allowed_dirs
+                .iter()
+                .any(|allowed| preferred.starts_with(allowed))
+        {
             preferred
         } else {
             default_base_dir
@@ -2720,11 +3043,7 @@ fn tool_allowed_in_skill(tool_name: &str, allowed_tools: &Option<Vec<String>>) -
         if trimmed == "*" {
             return true;
         }
-        let name = trimmed
-            .split('(')
-            .next()
-            .unwrap_or(trimmed)
-            .trim();
+        let name = trimmed.split('(').next().unwrap_or(trimmed).trim();
         if normalize_tool_name(name) == target {
             return true;
         }
@@ -2898,11 +3217,7 @@ fn extract_command_token(command: &str) -> String {
             return trimmed[1..=end].to_string();
         }
     }
-    trimmed
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .to_string()
+    trimmed.split_whitespace().next().unwrap_or("").to_string()
 }
 
 fn command_allowed(access: &ToolAccess, command: &str) -> bool {
@@ -2964,7 +3279,11 @@ fn read_file_tool(access: &ToolAccess, args: ReadArgs) -> Result<String, String>
     let max_bytes = args.max_bytes.unwrap_or(DEFAULT_MAX_READ_BYTES);
     let data = fs::read(&path).map_err(|e| format!("读取失败: {}", e))?;
     let truncated = data.len() > max_bytes;
-    let slice = if truncated { &data[..max_bytes] } else { &data[..] };
+    let slice = if truncated {
+        &data[..max_bytes]
+    } else {
+        &data[..]
+    };
     let mut text = String::from_utf8_lossy(slice).to_string();
     if truncated {
         text.push_str(&format!("\n\n[truncated {} bytes]", data.len() - max_bytes));
@@ -3144,12 +3463,7 @@ fn grep_files_tool(access: &ToolAccess, args: GrepArgs) -> Result<String, String
             }
             let line = line.unwrap_or_default();
             if regex.is_match(&line) {
-                results.push(format!(
-                    "{}:{}:{}",
-                    path.to_string_lossy(),
-                    idx + 1,
-                    line
-                ));
+                results.push(format!("{}:{}:{}", path.to_string_lossy(), idx + 1, line));
             }
         }
     }
@@ -3204,10 +3518,7 @@ async fn run_command_tool(access: &ToolAccess, args: BashArgs) -> Result<String,
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    let mut response = format!(
-        "exit_code: {}\n",
-        output.status.code().unwrap_or(-1)
-    );
+    let mut response = format!("exit_code: {}\n", output.status.code().unwrap_or(-1));
 
     if !stdout.trim().is_empty() {
         let (truncated, cut) = truncate_string(stdout.trim_end(), MAX_COMMAND_OUTPUT_CHARS);
@@ -3233,9 +3544,8 @@ async fn run_command_tool(access: &ToolAccess, args: BashArgs) -> Result<String,
 
 fn url_host_regex() -> &'static Regex {
     static URL_HOST_REGEX: OnceLock<Regex> = OnceLock::new();
-    URL_HOST_REGEX.get_or_init(|| {
-        Regex::new(r#"(?i)https?://([^/\s"'`]+)"#).expect("valid URL host regex")
-    })
+    URL_HOST_REGEX
+        .get_or_init(|| Regex::new(r#"(?i)https?://([^/\s"'`]+)"#).expect("valid URL host regex"))
 }
 
 fn normalize_host(raw_host: &str) -> Option<String> {
@@ -3255,7 +3565,11 @@ fn normalize_host(raw_host: &str) -> Option<String> {
             .unwrap_or(without_auth)
             .to_string()
     } else {
-        without_auth.split(':').next().unwrap_or(without_auth).to_string()
+        without_auth
+            .split(':')
+            .next()
+            .unwrap_or(without_auth)
+            .to_string()
     };
     let normalized = host.trim().to_lowercase();
     if normalized.is_empty() {
@@ -3288,20 +3602,22 @@ fn is_local_host(host: &str) -> bool {
 fn fenced_code_regex() -> &'static Regex {
     static FENCED_CODE_REGEX: OnceLock<Regex> = OnceLock::new();
     FENCED_CODE_REGEX.get_or_init(|| {
-        Regex::new(r"(?s)```(?:[a-zA-Z0-9_-]+)?\s*\n(.*?)```")
-            .expect("valid fenced code regex")
+        Regex::new(r"(?s)```(?:[a-zA-Z0-9_-]+)?\s*\n(.*?)```").expect("valid fenced code regex")
     })
 }
 
 fn inline_code_regex() -> &'static Regex {
     static INLINE_CODE_REGEX: OnceLock<Regex> = OnceLock::new();
-    INLINE_CODE_REGEX.get_or_init(|| {
-        Regex::new(r"`([^`\n]{2,})`").expect("valid inline code regex")
-    })
+    INLINE_CODE_REGEX
+        .get_or_init(|| Regex::new(r"`([^`\n]{2,})`").expect("valid inline code regex"))
 }
 
 fn normalize_spaces(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 fn extract_skill_command_snippets(instructions: &str) -> Vec<String> {
@@ -3400,7 +3716,6 @@ fn build_shell_command(command: &str) -> TokioCommand {
     cmd
 }
 
-
 fn build_shell_hint() -> String {
     #[cfg(target_os = "windows")]
     {
@@ -3477,16 +3792,17 @@ fn detect_windows_bash_path() -> Option<PathBuf> {
 
 #[cfg(target_os = "windows")]
 fn is_windows_system_bash(path: &Path) -> bool {
-    let normalized = path
-        .to_string_lossy()
-        .replace('/', "\\")
-        .to_lowercase();
+    let normalized = path.to_string_lossy().replace('/', "\\").to_lowercase();
     normalized.ends_with("\\windows\\system32\\bash.exe")
 }
 
 fn build_skill_file_manifest(skill_dir: &Path, max_entries: usize) -> String {
     let mut files = Vec::new();
-    for entry in WalkDir::new(skill_dir).follow_links(false).into_iter().flatten() {
+    for entry in WalkDir::new(skill_dir)
+        .follow_links(false)
+        .into_iter()
+        .flatten()
+    {
         let path = entry.path();
         if !path.is_file() {
             continue;
@@ -3534,7 +3850,11 @@ fn is_tool_failure(output: &str) -> bool {
     parse_exit_code(output).map_or(false, |code| code != 0)
 }
 
-fn build_tool_system_prompt(context: &str, skills_dir: &Path, available_skills: &[SkillMetadata]) -> String {
+fn build_tool_system_prompt(
+    context: &str,
+    skills_dir: &Path,
+    available_skills: &[SkillMetadata],
+) -> String {
     let shell_hint = build_shell_hint();
 
     // 构建可用技能列表
@@ -3549,7 +3869,10 @@ fn build_tool_system_prompt(context: &str, skills_dir: &Path, available_skills: 
         if skills_list.is_empty() {
             "当前没有用户可调用的技能。".to_string()
         } else {
-            format!("以下是已安装的技能，可通过 invoke_skill 工具调用：\n{}", skills_list.join("\n"))
+            format!(
+                "以下是已安装的技能，可通过 invoke_skill 工具调用：\n{}",
+                skills_list.join("\n")
+            )
         }
     };
 
@@ -3596,8 +3919,7 @@ fn build_tool_system_prompt(context: &str, skills_dir: &Path, available_skills: 
 2. 如果需要创建/更新/删除技能，请调用 manage_skill。
 3. 可用 Read/Write/Edit/Update/Glob/Grep 读取与搜索文件。
 4. 可用 Bash/run_command 运行命令（受权限限制）。"#,
-        context,
-        skills_section
+        context, skills_section
     )
 }
 
@@ -3772,34 +4094,79 @@ async fn run_tool_loop(
                         tool_context: collected_tool_context,
                     });
                 }
-                
 
-                result = if let Some(token) = cancel_token {
-                    retry_with_cancel(
-                        token,
-                        progress,
-                        "model",
-                        || model_manager.continue_with_tool_results_filtered(
+                let next_result = if let Some(token) = cancel_token {
+                    retry_with_cancel(token, progress, "model", || {
+                        model_manager.continue_with_tool_results_filtered(
                             &config.model,
                             system_prompt,
                             messages.clone(),
                             tool_results.clone(),
                             available_skills,
                             allowed_tools,
-                        ),
-                    )
-                    .await?
+                        )
+                    })
+                    .await
                 } else {
                     model_manager
                         .continue_with_tool_results_filtered(
                             &config.model,
                             system_prompt,
-                            messages,
-                            tool_results,
+                            messages.clone(),
+                            tool_results.clone(),
                             available_skills,
                             allowed_tools,
                         )
-                        .await?
+                        .await
+                };
+                result = match next_result {
+                    Ok(value) => value,
+                    Err(err) if is_context_overflow_error(&err) => {
+                        if let Some(progress) = progress {
+                            progress.emit_info(
+                                "Tool context too large; retrying with truncated tool output"
+                                    .to_string(),
+                                None,
+                            );
+                        }
+                        let truncated_results: Vec<(String, String)> = tool_results
+                            .iter()
+                            .map(|(id, output)| {
+                                let (shortened, truncated) = truncate_string(output, 2400);
+                                let normalized = if truncated {
+                                    format!("{}\n...(tool output truncated)", shortened)
+                                } else {
+                                    shortened
+                                };
+                                (id.clone(), normalized)
+                            })
+                            .collect();
+                        if let Some(token) = cancel_token {
+                            retry_with_cancel(token, progress, "model", || {
+                                model_manager.continue_with_tool_results_filtered(
+                                    &config.model,
+                                    system_prompt,
+                                    messages.clone(),
+                                    truncated_results.clone(),
+                                    available_skills,
+                                    allowed_tools,
+                                )
+                            })
+                            .await?
+                        } else {
+                            model_manager
+                                .continue_with_tool_results_filtered(
+                                    &config.model,
+                                    system_prompt,
+                                    messages.clone(),
+                                    truncated_results,
+                                    available_skills,
+                                    allowed_tools,
+                                )
+                                .await?
+                        }
+                    }
+                    Err(err) => return Err(err),
                 };
                 loops += 1;
             }
@@ -3834,32 +4201,32 @@ async fn execute_tool_call(
 
     match tool_name {
         "Read" => {
-            let args: ReadArgs = serde_json::from_value(args_value)
-                .map_err(|e| format!("Read 参数错误: {}", e))?;
+            let args: ReadArgs =
+                serde_json::from_value(args_value).map_err(|e| format!("Read 参数错误: {}", e))?;
             if let Some(progress) = progress {
                 progress.emit_step("读取文件".to_string(), Some(args.path.clone()));
             }
             read_file_tool(access, args)
         }
         "Write" => {
-            let args: WriteArgs = serde_json::from_value(args_value)
-                .map_err(|e| format!("Write 参数错误: {}", e))?;
+            let args: WriteArgs =
+                serde_json::from_value(args_value).map_err(|e| format!("Write 参数错误: {}", e))?;
             if let Some(progress) = progress {
                 progress.emit_step("写入文件".to_string(), Some(args.path.clone()));
             }
             write_file_tool(access, args)
         }
         "Edit" | "Update" => {
-            let args: EditArgs = serde_json::from_value(args_value)
-                .map_err(|e| format!("Edit 参数错误: {}", e))?;
+            let args: EditArgs =
+                serde_json::from_value(args_value).map_err(|e| format!("Edit 参数错误: {}", e))?;
             if let Some(progress) = progress {
                 progress.emit_step("修改文件".to_string(), Some(args.path.clone()));
             }
             edit_file_tool(access, args)
         }
         "Glob" => {
-            let args: GlobArgs = serde_json::from_value(args_value)
-                .map_err(|e| format!("Glob 参数错误: {}", e))?;
+            let args: GlobArgs =
+                serde_json::from_value(args_value).map_err(|e| format!("Glob 参数错误: {}", e))?;
             if let Some(progress) = progress {
                 let (detail, _) = truncate_string(&args.pattern, 200);
                 progress.emit_step("匹配文件".to_string(), Some(detail));
@@ -3867,8 +4234,8 @@ async fn execute_tool_call(
             glob_files_tool(access, args)
         }
         "Grep" => {
-            let args: GrepArgs = serde_json::from_value(args_value)
-                .map_err(|e| format!("Grep 参数错误: {}", e))?;
+            let args: GrepArgs =
+                serde_json::from_value(args_value).map_err(|e| format!("Grep 参数错误: {}", e))?;
             if let Some(progress) = progress {
                 let mut detail = args.pattern.clone();
                 if let Some(path) = &args.path {
@@ -3882,8 +4249,8 @@ async fn execute_tool_call(
             grep_files_tool(access, args)
         }
         "Bash" | "run_command" => {
-            let args: BashArgs = serde_json::from_value(args_value)
-                .map_err(|e| format!("Bash 参数错误: {}", e))?;
+            let args: BashArgs =
+                serde_json::from_value(args_value).map_err(|e| format!("Bash 参数错误: {}", e))?;
             if let Some(progress) = progress {
                 let (detail, _) = truncate_string(&args.command, 200);
                 let step_label = if command_mentions_script(&args.command) {
@@ -3906,10 +4273,7 @@ async fn execute_tool_call(
                 .map(|s| s.to_string());
 
             if let Some(progress) = progress {
-                progress.emit_step(
-                    "调用技能".to_string(),
-                    Some(format!("/{}", skill_name)),
-                );
+                progress.emit_step("调用技能".to_string(), Some(format!("/{}", skill_name)));
             }
             execute_skill_internal(
                 storage,
@@ -3960,7 +4324,12 @@ async fn execute_tool_call(
                         .get("instructions")
                         .and_then(|v| v.as_str())
                         .ok_or_else(|| "创建技能需要 instructions 参数".to_string())?;
-                    match skill_manager.create_skill_with_meta(name, description, instructions, overrides.clone()) {
+                    match skill_manager.create_skill_with_meta(
+                        name,
+                        description,
+                        instructions,
+                        overrides.clone(),
+                    ) {
                         Ok(_) => Ok(format!("技能 `{}` 创建成功。", name)),
                         Err(e) => Ok(format!("创建技能失败: {}", e)),
                     }
@@ -3974,7 +4343,12 @@ async fn execute_tool_call(
                         .get("instructions")
                         .and_then(|v| v.as_str())
                         .ok_or_else(|| "更新技能需要 instructions 参数".to_string())?;
-                    match skill_manager.update_skill_with_meta(name, description, instructions, overrides.clone()) {
+                    match skill_manager.update_skill_with_meta(
+                        name,
+                        description,
+                        instructions,
+                        overrides.clone(),
+                    ) {
                         Ok(_) => Ok(format!("技能 `{}` 更新成功。", name)),
                         Err(e) => Ok(format!("更新技能失败: {}", e)),
                     }

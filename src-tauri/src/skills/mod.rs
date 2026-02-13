@@ -1,12 +1,12 @@
 mod parser;
 
+use crate::storage::StorageManager;
+use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tauri::Emitter;
-use serde::{Deserialize, Serialize};
-use crate::storage::StorageManager;
 
 pub use parser::SkillParser;
 
@@ -43,41 +43,43 @@ struct BuiltinSkill {
     files: &'static [BuiltinFile],
 }
 
-const BUILTIN_SKILLS: &[BuiltinSkill] = &[
-    BuiltinSkill {
-        name: "skill-creator",
-        files: &[
-            BuiltinFile {
-                rel_path: "SKILL.md",
-                contents: include_str!("../../resources/skills/skill-creator/SKILL.md"),
-            },
-            BuiltinFile {
-                rel_path: "references/workflows.md",
-                contents: include_str!("../../resources/skills/skill-creator/references/workflows.md"),
-            },
-            BuiltinFile {
-                rel_path: "references/output-patterns.md",
-                contents: include_str!("../../resources/skills/skill-creator/references/output-patterns.md"),
-            },
-            BuiltinFile {
-                rel_path: "assets/template.md",
-                contents: include_str!("../../resources/skills/skill-creator/assets/template.md"),
-            },
-            BuiltinFile {
-                rel_path: "scripts/init_skill.py",
-                contents: include_str!("../../resources/skills/skill-creator/scripts/init_skill.py"),
-            },
-            BuiltinFile {
-                rel_path: "scripts/package_skill.py",
-                contents: include_str!("../../resources/skills/skill-creator/scripts/package_skill.py"),
-            },
-            BuiltinFile {
-                rel_path: "scripts/quick_validate.py",
-                contents: include_str!("../../resources/skills/skill-creator/scripts/quick_validate.py"),
-            },
-        ],
-    },
-];
+const BUILTIN_SKILLS: &[BuiltinSkill] = &[BuiltinSkill {
+    name: "skill-creator",
+    files: &[
+        BuiltinFile {
+            rel_path: "SKILL.md",
+            contents: include_str!("../../resources/skills/skill-creator/SKILL.md"),
+        },
+        BuiltinFile {
+            rel_path: "references/workflows.md",
+            contents: include_str!("../../resources/skills/skill-creator/references/workflows.md"),
+        },
+        BuiltinFile {
+            rel_path: "references/output-patterns.md",
+            contents: include_str!(
+                "../../resources/skills/skill-creator/references/output-patterns.md"
+            ),
+        },
+        BuiltinFile {
+            rel_path: "assets/template.md",
+            contents: include_str!("../../resources/skills/skill-creator/assets/template.md"),
+        },
+        BuiltinFile {
+            rel_path: "scripts/init_skill.py",
+            contents: include_str!("../../resources/skills/skill-creator/scripts/init_skill.py"),
+        },
+        BuiltinFile {
+            rel_path: "scripts/package_skill.py",
+            contents: include_str!("../../resources/skills/skill-creator/scripts/package_skill.py"),
+        },
+        BuiltinFile {
+            rel_path: "scripts/quick_validate.py",
+            contents: include_str!(
+                "../../resources/skills/skill-creator/scripts/quick_validate.py"
+            ),
+        },
+    ],
+}];
 
 /// Skill 元数据（启动时加载）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,9 +160,7 @@ impl SkillManager {
                 if let Some(skill_md) = Self::resolve_skill_md_path(&path) {
                     match SkillParser::parse_metadata(&skill_md) {
                         Ok(mut metadata) => {
-                            let dir_name = path.file_name()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or("");
+                            let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
                             if !dir_name.is_empty() && metadata.name != dir_name {
                                 eprintln!(
                                     "Skill name '{}' differs from directory '{}', normalized",
@@ -205,7 +205,12 @@ impl SkillManager {
         description: &str,
         instructions: &str,
     ) -> Result<(), String> {
-        self.create_skill_with_meta(name, description, instructions, SkillFrontmatterOverrides::default())
+        self.create_skill_with_meta(
+            name,
+            description,
+            instructions,
+            SkillFrontmatterOverrides::default(),
+        )
     }
 
     /// 创建新的 skill（带元数据覆盖）
@@ -224,16 +229,14 @@ impl SkillManager {
             return Err(format!("Skill '{}' 已存在", name));
         }
 
-        std::fs::create_dir_all(&skill_dir)
-            .map_err(|e| format!("创建 skill 目录失败: {}", e))?;
+        std::fs::create_dir_all(&skill_dir).map_err(|e| format!("创建 skill 目录失败: {}", e))?;
 
         let skill_md = skill_dir.join(DEFAULT_SKILL_MD_FILE);
         let instructions = ensure_resource_section(instructions);
         let frontmatter = build_skill_frontmatter(name, description, None, &overrides);
         let content = format!("---\n{}\n---\n\n{}", frontmatter, instructions);
 
-        std::fs::write(&skill_md, content)
-            .map_err(|e| format!("写入 SKILL.md 失败: {}", e))?;
+        std::fs::write(&skill_md, content).map_err(|e| format!("写入 SKILL.md 失败: {}", e))?;
 
         for dir in ["scripts", "references", "assets"] {
             std::fs::create_dir_all(skill_dir.join(dir))
@@ -251,7 +254,12 @@ impl SkillManager {
         description: &str,
         instructions: &str,
     ) -> Result<(), String> {
-        self.update_skill_with_meta(name, description, instructions, SkillFrontmatterOverrides::default())
+        self.update_skill_with_meta(
+            name,
+            description,
+            instructions,
+            SkillFrontmatterOverrides::default(),
+        )
     }
 
     /// 更新现有的 skill（带元数据覆盖）
@@ -275,8 +283,7 @@ impl SkillManager {
         let frontmatter = build_skill_frontmatter(name, description, existing.as_ref(), &overrides);
         let content = format!("---\n{}\n---\n\n{}", frontmatter, instructions);
 
-        std::fs::write(&skill_md, content)
-            .map_err(|e| format!("写入 SKILL.md 失败: {}", e))?;
+        std::fs::write(&skill_md, content).map_err(|e| format!("写入 SKILL.md 失败: {}", e))?;
 
         for dir in ["scripts", "references", "assets"] {
             std::fs::create_dir_all(skill_dir.join(dir))
@@ -295,8 +302,7 @@ impl SkillManager {
             return Err(format!("Skill '{}' 不存在", name));
         }
 
-        std::fs::remove_dir_all(&skill_dir)
-            .map_err(|e| format!("删除 skill 失败: {}", e))?;
+        std::fs::remove_dir_all(&skill_dir).map_err(|e| format!("删除 skill 失败: {}", e))?;
 
         Ok(())
     }
@@ -385,7 +391,6 @@ fn yaml_quote(value: &str) -> String {
     escaped
 }
 
-
 fn build_skill_frontmatter(
     name: &str,
     description: &str,
@@ -396,7 +401,10 @@ fn build_skill_frontmatter(
     lines.push(format!("name: {}", yaml_quote(name)));
     lines.push(format!("description: {}", yaml_quote(description)));
 
-    let allowed_tools = overrides.allowed_tools.clone().or_else(|| existing.and_then(|m| m.allowed_tools.clone()));
+    let allowed_tools = overrides
+        .allowed_tools
+        .clone()
+        .or_else(|| existing.and_then(|m| m.allowed_tools.clone()));
     if let Some(list) = allowed_tools {
         let cleaned: Vec<String> = list
             .into_iter()
@@ -404,11 +412,17 @@ fn build_skill_frontmatter(
             .filter(|item| !item.is_empty())
             .collect();
         if !cleaned.is_empty() {
-            lines.push(format!("allowed-tools: {}", yaml_quote(&cleaned.join(", "))));
+            lines.push(format!(
+                "allowed-tools: {}",
+                yaml_quote(&cleaned.join(", "))
+            ));
         }
     }
 
-    let model = overrides.model.clone().or_else(|| existing.and_then(|m| m.model.clone()));
+    let model = overrides
+        .model
+        .clone()
+        .or_else(|| existing.and_then(|m| m.model.clone()));
     if let Some(model) = model {
         let model = model.trim();
         if !model.is_empty() {
@@ -416,7 +430,10 @@ fn build_skill_frontmatter(
         }
     }
 
-    let context = overrides.context.clone().or_else(|| existing.and_then(|m| m.context.clone()));
+    let context = overrides
+        .context
+        .clone()
+        .or_else(|| existing.and_then(|m| m.context.clone()));
     if let Some(context) = context {
         let context = context.trim();
         if !context.is_empty() {
@@ -424,7 +441,9 @@ fn build_skill_frontmatter(
         }
     }
 
-    let user_invocable = overrides.user_invocable.or_else(|| existing.and_then(|m| m.user_invocable));
+    let user_invocable = overrides
+        .user_invocable
+        .or_else(|| existing.and_then(|m| m.user_invocable));
     if let Some(value) = user_invocable {
         lines.push(format!("user-invocable: {}", value));
     }
@@ -436,7 +455,10 @@ fn build_skill_frontmatter(
         lines.push(format!("disable-model-invocation: {}", value));
     }
 
-    let metadata = overrides.metadata.clone().or_else(|| existing.and_then(|m| m.metadata.clone()));
+    let metadata = overrides
+        .metadata
+        .clone()
+        .or_else(|| existing.and_then(|m| m.metadata.clone()));
     if let Some(meta) = metadata {
         if !meta.is_empty() {
             lines.push("metadata:".to_string());
@@ -477,10 +499,18 @@ fn ensure_scaffold_files(skill_dir: &Path) -> Result<(), String> {
 
 pub type SkillsWatcher = RecommendedWatcher;
 
-pub fn start_skills_watcher(app_handle: &tauri::AppHandle) -> Result<SkillsWatcher, String> {
+pub fn start_skills_watcher(
+    app_handle: &tauri::AppHandle,
+    on_changed: Option<Arc<dyn Fn() + Send + Sync + 'static>>,
+) -> Result<SkillsWatcher, String> {
     let skills_dir = SkillManager::new().get_skills_dir().clone();
     let app_handle = app_handle.clone();
-    let last_emit = Arc::new(Mutex::new(Instant::now().checked_sub(Duration::from_secs(5)).unwrap_or_else(Instant::now)));
+    let on_changed = on_changed.clone();
+    let last_emit = Arc::new(Mutex::new(
+        Instant::now()
+            .checked_sub(Duration::from_secs(5))
+            .unwrap_or_else(Instant::now),
+    ));
     let last_emit_guard = Arc::clone(&last_emit);
 
     let mut watcher = notify::recommended_watcher(move |res| {
@@ -493,10 +523,7 @@ pub fn start_skills_watcher(app_handle: &tauri::AppHandle) -> Result<SkillsWatch
         };
         if !matches!(
             event.kind,
-            EventKind::Create(_)
-                | EventKind::Modify(_)
-                | EventKind::Remove(_)
-                | EventKind::Any
+            EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) | EventKind::Any
         ) {
             return;
         }
@@ -508,6 +535,9 @@ pub fn start_skills_watcher(app_handle: &tauri::AppHandle) -> Result<SkillsWatch
         }
         *last_emit_at = now;
 
+        if let Some(callback) = on_changed.as_ref() {
+            callback();
+        }
         let _ = app_handle.emit("skills-changed", ());
     })
     .map_err(|e| format!("Create skills watcher failed: {}", e))?;
