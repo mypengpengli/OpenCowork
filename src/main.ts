@@ -78,6 +78,57 @@ skillsStore.startSkillsWatcher()
 const t = (key: string, params?: Record<string, string | number>) =>
   translate(localeStore.locale, key, params)
 
+interface BashRuntimeEnsureResult {
+  available: boolean
+  attempted_install: boolean
+  installed_now: boolean
+  bash_path?: string | null
+  message: string
+}
+
+function isWindowsHost() {
+  return typeof navigator !== 'undefined' && /windows/i.test(navigator.userAgent)
+}
+
+async function ensureBashRuntimeOnStartup() {
+  if (!isWindowsHost()) return
+
+  const installAttemptKey = 'opencowork-bash-install-attempted-v1'
+  let firstAttempt = true
+  try {
+    firstAttempt = localStorage.getItem(installAttemptKey) !== '1'
+  } catch {
+    firstAttempt = true
+  }
+
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const result = await invoke<BashRuntimeEnsureResult>('ensure_bash_runtime', {
+      auto_install: firstAttempt,
+    })
+
+    if (firstAttempt) {
+      try {
+        localStorage.setItem(installAttemptKey, '1')
+      } catch {
+        // ignore localStorage write failures
+      }
+    }
+
+    if (!result.available && firstAttempt) {
+      const isZh = localeStore.locale === 'zh'
+      const prompt = isZh
+        ? '未检测到可用的 Bash 运行环境，已尝试静默安装但失败。\n\n是否现在打开 Git for Windows 下载页手动安装？'
+        : 'No Bash runtime was detected. Silent install was attempted but failed.\n\nOpen Git for Windows download page now?'
+      if (window.confirm(prompt)) {
+        await invoke('open_external_url', { url: 'https://git-scm.com/download/win' })
+      }
+    }
+  } catch (error) {
+    console.error('Failed to ensure Bash runtime:', error)
+  }
+}
+
 function formatLocalTimestamp(date: Date): string {
   const pad = (value: number) => value.toString().padStart(2, '0')
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
@@ -147,6 +198,7 @@ async function setupAlertListener() {
 }
 
 setupAlertListener()
+ensureBashRuntimeOnStartup()
 
 async function setupModelErrorListener() {
   try {

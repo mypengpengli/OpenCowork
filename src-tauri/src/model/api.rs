@@ -550,148 +550,186 @@ impl ApiClient {
     }
 
     /// 创建技能相关工具定义（invoke_skill + manage_skill）
-    pub fn create_skill_tools(skills: &[crate::skills::SkillMetadata]) -> Vec<Tool> {
+    /// allowed_tools: 如果提供，则只包含允许的工具；None 表示包含所有工具
+    pub fn create_skill_tools(skills: &[crate::skills::SkillMetadata], allowed_tools: &Option<Vec<String>>) -> Vec<Tool> {
         let mut tools = Vec::new();
 
-        // File and command tools
-        tools.push(Tool {
-            tool_type: "function".to_string(),
-            function: ToolFunction {
-                name: "Read".to_string(),
-                description: "Read a text file from disk.".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "path": { "type": "string", "description": "File path to read" },
-                        "max_bytes": { "type": "integer", "description": "Optional max bytes to read" }
-                    },
-                    "required": ["path"]
-                }),
-            },
-        });
+        // 检查工具是否被允许
+        let is_tool_allowed = |name: &str| -> bool {
+            match allowed_tools {
+                None => true,
+                Some(list) if list.is_empty() => false,
+                Some(list) => {
+                    let target = name.to_lowercase();
+                    list.iter().any(|item| {
+                        let trimmed = item.trim();
+                        if trimmed == "*" {
+                            return true;
+                        }
+                        let normalized = trimmed.to_lowercase().replace(['-', '_'], "");
+                        normalized == target || normalized == target.replace(['-', '_'], "")
+                    })
+                }
+            }
+        };
 
-        tools.push(Tool {
-            tool_type: "function".to_string(),
-            function: ToolFunction {
-                name: "Write".to_string(),
-                description: "Write text content to a file.".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "path": { "type": "string", "description": "File path to write" },
-                        "content": { "type": "string", "description": "Content to write" },
-                        "append": { "type": "boolean", "description": "Append instead of overwrite" }
-                    },
-                    "required": ["path", "content"]
-                }),
-            },
-        });
+        // File and command tools - 根据 allowed_tools 过滤
+        if is_tool_allowed("Read") {
+            tools.push(Tool {
+                tool_type: "function".to_string(),
+                function: ToolFunction {
+                    name: "Read".to_string(),
+                    description: "Read a text file from disk.".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "path": { "type": "string", "description": "File path to read" },
+                            "max_bytes": { "type": "integer", "description": "Optional max bytes to read" }
+                        },
+                        "required": ["path"]
+                    }),
+                },
+            });
+        }
 
-        tools.push(Tool {
-            tool_type: "function".to_string(),
-            function: ToolFunction {
-                name: "Edit".to_string(),
-                description: "Replace text in a file.".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "path": { "type": "string", "description": "File path to edit" },
-                        "old": { "type": "string", "description": "Text to replace" },
-                        "new": { "type": "string", "description": "Replacement text" },
-                        "replace_all": { "type": "boolean", "description": "Replace all occurrences (default true)" }
-                    },
-                    "required": ["path", "old", "new"]
-                }),
-            },
-        });
+        if is_tool_allowed("Write") {
+            tools.push(Tool {
+                tool_type: "function".to_string(),
+                function: ToolFunction {
+                    name: "Write".to_string(),
+                    description: "Write text content to a file.".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "path": { "type": "string", "description": "File path to write" },
+                            "content": { "type": "string", "description": "Content to write" },
+                            "append": { "type": "boolean", "description": "Append instead of overwrite" }
+                        },
+                        "required": ["path", "content"]
+                    }),
+                },
+            });
+        }
 
-        tools.push(Tool {
-            tool_type: "function".to_string(),
-            function: ToolFunction {
-                name: "Update".to_string(),
-                description: "Alias for Edit.".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "path": { "type": "string", "description": "File path to edit" },
-                        "old": { "type": "string", "description": "Text to replace" },
-                        "new": { "type": "string", "description": "Replacement text" },
-                        "replace_all": { "type": "boolean", "description": "Replace all occurrences (default true)" }
-                    },
-                    "required": ["path", "old", "new"]
-                }),
-            },
-        });
+        if is_tool_allowed("Edit") {
+            tools.push(Tool {
+                tool_type: "function".to_string(),
+                function: ToolFunction {
+                    name: "Edit".to_string(),
+                    description: "Replace text in a file.".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "path": { "type": "string", "description": "File path to edit" },
+                            "old": { "type": "string", "description": "Text to replace" },
+                            "new": { "type": "string", "description": "Replacement text" },
+                            "replace_all": { "type": "boolean", "description": "Replace all occurrences (default true)" }
+                        },
+                        "required": ["path", "old", "new"]
+                    }),
+                },
+            });
+        }
 
-        tools.push(Tool {
-            tool_type: "function".to_string(),
-            function: ToolFunction {
-                name: "Glob".to_string(),
-                description: "List files matching a glob pattern.".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "pattern": { "type": "string", "description": "Glob pattern" },
-                        "max_results": { "type": "integer", "description": "Optional max results" }
-                    },
-                    "required": ["pattern"]
-                }),
-            },
-        });
+        if is_tool_allowed("Update") {
+            tools.push(Tool {
+                tool_type: "function".to_string(),
+                function: ToolFunction {
+                    name: "Update".to_string(),
+                    description: "Alias for Edit.".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "path": { "type": "string", "description": "File path to edit" },
+                            "old": { "type": "string", "description": "Text to replace" },
+                            "new": { "type": "string", "description": "Replacement text" },
+                            "replace_all": { "type": "boolean", "description": "Replace all occurrences (default true)" }
+                        },
+                        "required": ["path", "old", "new"]
+                    }),
+                },
+            });
+        }
 
-        tools.push(Tool {
-            tool_type: "function".to_string(),
-            function: ToolFunction {
-                name: "Grep".to_string(),
-                description: "Search for text in files.".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "pattern": { "type": "string", "description": "Search pattern" },
-                        "path": { "type": "string", "description": "File or directory to search" },
-                        "glob": { "type": "string", "description": "Optional glob filter (e.g. **/*.txt)" },
-                        "regex": { "type": "boolean", "description": "Treat pattern as regex" },
-                        "case_sensitive": { "type": "boolean", "description": "Case-sensitive search" },
-                        "max_results": { "type": "integer", "description": "Optional max results" }
-                    },
-                    "required": ["pattern"]
-                }),
-            },
-        });
+        if is_tool_allowed("Glob") {
+            tools.push(Tool {
+                tool_type: "function".to_string(),
+                function: ToolFunction {
+                    name: "Glob".to_string(),
+                    description: "List files matching a glob pattern.".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "pattern": { "type": "string", "description": "Glob pattern" },
+                            "max_results": { "type": "integer", "description": "Optional max results" }
+                        },
+                        "required": ["pattern"]
+                    }),
+                },
+            });
+        }
 
-        tools.push(Tool {
-            tool_type: "function".to_string(),
-            function: ToolFunction {
-                name: "Bash".to_string(),
-                description: "Run a shell command. On Windows this uses cmd /C; prefer dir or powershell -Command.".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "command": { "type": "string", "description": "Command to run" },
-                        "cwd": { "type": "string", "description": "Working directory" },
-                        "timeout_ms": { "type": "integer", "description": "Timeout in milliseconds" }
-                    },
-                    "required": ["command"]
-                }),
-            },
-        });
-        tools.push(Tool {
-            tool_type: "function".to_string(),
-            function: ToolFunction {
-                name: "run_command".to_string(),
-                description: "Alias for Bash (same behavior).".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "command": { "type": "string", "description": "Command to run" },
-                        "cwd": { "type": "string", "description": "Working directory" },
-                        "timeout_ms": { "type": "integer", "description": "Timeout in milliseconds" }
-                    },
-                    "required": ["command"]
-                }),
-            },
-        });
+        if is_tool_allowed("Grep") {
+            tools.push(Tool {
+                tool_type: "function".to_string(),
+                function: ToolFunction {
+                    name: "Grep".to_string(),
+                    description: "Search for text in files.".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "pattern": { "type": "string", "description": "Search pattern" },
+                            "path": { "type": "string", "description": "File or directory to search" },
+                            "glob": { "type": "string", "description": "Optional glob filter (e.g. **/*.txt)" },
+                            "regex": { "type": "boolean", "description": "Treat pattern as regex" },
+                            "case_sensitive": { "type": "boolean", "description": "Case-sensitive search" },
+                            "max_results": { "type": "integer", "description": "Optional max results" }
+                        },
+                        "required": ["pattern"]
+                    }),
+                },
+            });
+        }
 
+        if is_tool_allowed("Bash") {
+            tools.push(Tool {
+                tool_type: "function".to_string(),
+                function: ToolFunction {
+                    name: "Bash".to_string(),
+                    description: "Run a shell command. On Windows, prefer bash -lc when available and fall back to cmd /C.".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "command": { "type": "string", "description": "Command to run" },
+                            "cwd": { "type": "string", "description": "Working directory" },
+                            "timeout_ms": { "type": "integer", "description": "Timeout in milliseconds" }
+                        },
+                        "required": ["command"]
+                    }),
+                },
+            });
+        }
+
+        if is_tool_allowed("run_command") {
+            tools.push(Tool {
+                tool_type: "function".to_string(),
+                function: ToolFunction {
+                    name: "run_command".to_string(),
+                    description: "Alias for Bash (same behavior).".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "command": { "type": "string", "description": "Command to run" },
+                            "cwd": { "type": "string", "description": "Working directory" },
+                            "timeout_ms": { "type": "integer", "description": "Timeout in milliseconds" }
+                        },
+                        "required": ["command"]
+                    }),
+                },
+            });
+        }
+
+        // progress_update 始终可用（无副作用）
         tools.push(Tool {
             tool_type: "function".to_string(),
             function: ToolFunction {
@@ -737,24 +775,24 @@ impl ApiClient {
                         "allowed_tools": {
                             "type": "array",
                             "items": { "type": "string" },
-                            "description": "??????????????????? Read, Grep?"
+                            "description": "允许技能使用的工具列表，如 Read, Grep 等"
                         },
                         "model": {
                             "type": "string",
-                            "description": "??????????????"
+                            "description": "可选，覆盖默认模型"
                         },
                         "context": {
                             "type": "string",
-                            "description": "???????????screen ? none?"
+                            "description": "上下文模式：screen 或 none"
                         },
                         "user_invocable": {
                             "type": "boolean",
-                            "description": "????????????? /skill ??"
+                            "description": "是否允许用户通过 /skill 调用"
                         },
                         "metadata": {
                             "type": "object",
                             "additionalProperties": { "type": "string" },
-                            "description": "?????????????"
+                            "description": "可选的元数据键值对"
                         },
                     },
                     "required": ["action", "name"]

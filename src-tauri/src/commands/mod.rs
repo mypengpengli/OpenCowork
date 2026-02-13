@@ -10,7 +10,7 @@ use std::fs;
 use std::io::{self, BufRead, BufReader};
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use tauri::{AppHandle, State, Emitter, Manager};
 use tauri_plugin_shell::ShellExt;
 use tokio::process::Command as TokioCommand;
@@ -210,6 +210,36 @@ pub struct CaptureStatus {
 pub struct ChatHistoryMessage {
     pub role: String,
     pub content: String,
+    #[serde(default)]
+    pub tool_call_id: Option<String>,
+    #[serde(default)]
+    pub tool_calls: Option<Vec<ToolCallInfo>>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize, Clone)]
+pub struct ToolCallInfo {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct ChatResponse {
+    pub response: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tool_context: Vec<ToolContextMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_skill: Option<String>,
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct ToolContextMessage {
+    pub role: String,
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCallInfo>>,
 }
 
 #[derive(serde::Deserialize, Clone)]
@@ -541,6 +571,8 @@ fn compress_history_if_needed(
         compressed.push(ChatHistoryMessage {
             role: "assistant".to_string(),
             content: build_history_compression_summary(older, 6000),
+            tool_call_id: None,
+            tool_calls: None,
         });
     }
     compressed.extend(recent.iter().cloned());
@@ -749,7 +781,7 @@ pub async fn chat_with_assistant(
 
     let response = (async {
         let response = if config.model.provider == "api" {
-        let system_prompt = build_tool_system_prompt(&context, skill_manager.get_skills_dir());
+        let system_prompt = build_tool_system_prompt(&context, skill_manager.get_skills_dir(), &available_skills);
         let model_history = compress_history_if_needed(
             history.clone(),
             &system_prompt,
@@ -795,7 +827,7 @@ pub async fn chat_with_assistant(
             .await?
         };
 
-        let response = run_tool_loop(
+        let tool_loop_result = run_tool_loop(
             &storage,
             &config,
             &model_manager,
@@ -809,8 +841,9 @@ pub async fn chat_with_assistant(
             progress.as_ref(),
         )
         .await;
-        let response = if let Ok(text) = response {
-            let mut combined = text;
+        let (response, mut tool_context) = if let Ok(result) = tool_loop_result {
+            let mut combined = result.response;
+            let mut combined_context = result.tool_context;
             if MODEL_MAX_CONTINUES > 0 && response_looks_incomplete(&combined) {
                 if let Some(ref progress) = progress {
                     progress.emit_info("Continuing incomplete response".to_string(), None);
@@ -819,10 +852,14 @@ pub async fn chat_with_assistant(
                 extended_history.push(ChatHistoryMessage {
                     role: "user".to_string(),
                     content: user_message.clone(),
+                    tool_call_id: None,
+                    tool_calls: None,
                 });
                 extended_history.push(ChatHistoryMessage {
                     role: "assistant".to_string(),
                     content: combined.clone(),
+                    tool_call_id: None,
+                    tool_calls: None,
                 });
 
                 let followup = if attachment_payload.image_urls.is_empty()
@@ -860,7 +897,7 @@ pub async fn chat_with_assistant(
                 };
 
                 if let Ok(followup_result) = followup {
-                    if let Ok(followup_text) = run_tool_loop(
+                    if let Ok(followup_loop_result) = run_tool_loop(
                         &storage,
                         &config,
                         &model_manager,
@@ -875,20 +912,21 @@ pub async fn chat_with_assistant(
                     )
                     .await
                     {
-                        if !followup_text.trim().is_empty() {
+                        if !followup_loop_result.response.trim().is_empty() {
                             combined = format!(
                                 "{}
 {}",
                                 combined.trim_end(),
-                                followup_text.trim_start()
+                                followup_loop_result.response.trim_start()
                             );
                         }
+                        combined_context.extend(followup_loop_result.tool_context);
                     }
                 }
             }
-            Ok(combined)
+            (Ok(combined), combined_context)
         } else {
-            response
+            (tool_loop_result.map(|r| r.response), Vec::new())
         };
 if let Some(ref progress) = progress {
             if response.is_ok() {
@@ -897,7 +935,18 @@ if let Some(ref progress) = progress {
                 progress.emit_error("处理失败");
             }
         }
-        response
+        // 返回 JSON 格式的响应
+        match response {
+            Ok(text) => {
+                let chat_response = ChatResponse {
+                    response: text,
+                    tool_context,
+                    active_skill: None,
+                };
+                Ok(serde_json::to_string(&chat_response).unwrap_or_else(|_| chat_response.response))
+            }
+            Err(e) => Err(e),
+        }
     } else {
         if let Some(ref progress) = progress {
             progress.emit_start("Begin processing request");
@@ -971,10 +1020,14 @@ if let Some(ref progress) = progress {
                 extended_history.push(ChatHistoryMessage {
                     role: "user".to_string(),
                     content: user_message.clone(),
+                    tool_call_id: None,
+                    tool_calls: None,
                 });
                 extended_history.push(ChatHistoryMessage {
                     role: "assistant".to_string(),
                     content: combined.clone(),
+                    tool_call_id: None,
+                    tool_calls: None,
                 });
                 let followup = if attachment_payload.image_urls.is_empty()
                     && attachment_payload.image_base64.is_empty()
@@ -1057,6 +1110,15 @@ async fn execute_skill_internal(
     check_cancel(cancel_token)?;
     if let Some(progress) = progress {
         progress.emit_info("Loaded skill file".to_string(), Some(skill.path.clone()));
+        // 调试：输出 instructions 内容
+        progress.emit_info(
+            format!("Skill instructions loaded: {} chars", skill.instructions.len()),
+            Some(if skill.instructions.len() > 300 {
+                format!("{}...", skill.instructions.chars().take(300).collect::<String>())
+            } else {
+                skill.instructions.clone()
+            }),
+        );
     }
 
     // 构建用户消息（包含参数）
@@ -1073,16 +1135,22 @@ async fn execute_skill_internal(
     let has_attachments = attachments.as_ref().map_or(false, |items| !items.is_empty());
     let user_message = merge_user_message(&base_message, &attachment_payload.text, has_attachments);
 
-    // 获取屏幕记录上下文
-    let query = parse_user_query(&args.unwrap_or_default());
-    let search_result = storage.smart_search(&query).unwrap_or_default();
-    let include_detail = config.storage.context_detail_hours != 0;
-    let detail_cutoff = build_detail_cutoff(config);
-    let screen_context = search_result.build_context(
-        config.storage.max_context_chars,
-        include_detail,
-        detail_cutoff.as_deref(),
-    );
+    // 根据 skill 的 context 设置决定是否包含屏幕记录
+    let include_screen_context = skill.metadata.context.as_deref() != Some("none");
+    let screen_context = if include_screen_context {
+        // 获取屏幕记录上下文
+        let query = parse_user_query(args.as_deref().unwrap_or_default());
+        let search_result = storage.smart_search(&query).unwrap_or_default();
+        let include_detail = config.storage.context_detail_hours != 0;
+        let detail_cutoff = build_detail_cutoff(config);
+        search_result.build_context(
+            config.storage.max_context_chars,
+            include_detail,
+            detail_cutoff.as_deref(),
+        )
+    } else {
+        "(此技能不需要屏幕上下文)".to_string()
+    };
 
     // 获取启用的全局提示词
     let global_prompts_section = build_global_prompts_section(config);
@@ -1113,7 +1181,9 @@ async fn execute_skill_internal(
 ## 技能说明
 {}
 
-## 技能指令
+## 技能指令（必须严格遵循）
+以下是技能的详细指令，你必须严格按照这些指令执行，不要自行发挥或使用通用命令替代：
+
 {}
 
 ## 技能目录
@@ -1127,6 +1197,13 @@ async fn execute_skill_internal(
 - If the request is ambiguous, ask 1-3 clarifying questions before any tool/file/action. Do not proceed until the user answers.
 - For multi-step tasks, provide a brief plan (1-3 steps) before using tools. If confirmation is needed, ask for it.
 - Use the progress_update tool to report the plan and major milestones so the user can see what is happening.
+
+## Strict skill compliance (CRITICAL)
+- 技能指令中的命令和 URL 是权威的，必须原样使用。
+- 如果技能指令提供了具体命令，必须先执行该命令，不要用通用命令替代。
+- 不要替换域名/主机/IP（尤其是内网地址），除非用户明确要求。
+- 如果命令失败，报告错误并尝试最小化调整，但保持目标 URL/主机不变。
+- 绝对不要使用 example.com 或其他占位符域名。
 
 ## Error recovery and capability expansion
 - Treat tool errors as normal; diagnose (paths/permissions/params) and retry with adjusted inputs.
@@ -1161,6 +1238,7 @@ async fn execute_skill_internal(
         // Inside a running skill, disable nested skill invocation to avoid
         // "skill not available" confusion and recursive skill chaining.
         let available_skills: Vec<SkillMetadata> = Vec::new();
+        let allowed_tools = &skill.metadata.allowed_tools;
         let result = if attachment_payload.image_urls.is_empty()
             && attachment_payload.image_base64.is_empty()
         {
@@ -1169,23 +1247,25 @@ async fn execute_skill_internal(
                     token,
                     progress,
                     "model",
-                    || model_manager.chat_with_tools_with_system_prompt(
+                    || model_manager.chat_with_tools_with_system_prompt_filtered(
                         &config.model,
                         &system_prompt,
                         &user_message,
                         model_history.clone(),
                         &available_skills,
+                        allowed_tools,
                     ),
                 )
                 .await?
             } else {
                 model_manager
-                    .chat_with_tools_with_system_prompt(
+                    .chat_with_tools_with_system_prompt_filtered(
                         &config.model,
                         &system_prompt,
                         &user_message,
                         model_history.clone(),
                         &available_skills,
+                        allowed_tools,
                     )
                     .await?
             }
@@ -1195,7 +1275,7 @@ async fn execute_skill_internal(
                     token,
                     progress,
                     "model",
-                    || model_manager.chat_with_tools_with_system_prompt_with_images(
+                    || model_manager.chat_with_tools_with_system_prompt_with_images_filtered(
                         &config.model,
                         &system_prompt,
                         &user_message,
@@ -1203,12 +1283,13 @@ async fn execute_skill_internal(
                         &available_skills,
                         attachment_payload.image_urls.clone(),
                         attachment_payload.image_base64.clone(),
+                        allowed_tools,
                     ),
                 )
                 .await?
             } else {
                 model_manager
-                    .chat_with_tools_with_system_prompt_with_images(
+                    .chat_with_tools_with_system_prompt_with_images_filtered(
                         &config.model,
                         &system_prompt,
                         &user_message,
@@ -1216,12 +1297,13 @@ async fn execute_skill_internal(
                         &available_skills,
                         attachment_payload.image_urls.clone(),
                         attachment_payload.image_base64.clone(),
+                        allowed_tools,
                     )
                     .await?
             }
         };
 
-        return Box::pin(run_tool_loop(
+        return match Box::pin(run_tool_loop(
             storage,
             config,
             model_manager,
@@ -1234,7 +1316,17 @@ async fn execute_skill_internal(
             cancel_token,
             progress,
         ))
-        .await;
+        .await {
+            Ok(result) => {
+                let chat_response = ChatResponse {
+                    response: result.response,
+                    tool_context: result.tool_context,
+                    active_skill: Some(skill_name.to_string()),
+                };
+                Ok(serde_json::to_string(&chat_response).unwrap_or_else(|_| chat_response.response))
+            }
+            Err(e) => Err(e),
+        };
     }
 
     if attachment_payload.image_urls.is_empty() && attachment_payload.image_base64.is_empty() {
@@ -1586,6 +1678,136 @@ pub async fn open_release_page(app_handle: AppHandle) -> Result<(), String> {
         .shell()
         .open(RELEASE_PAGE_URL.to_string(), None)
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn open_external_url(app_handle: AppHandle, url: String) -> Result<(), String> {
+    app_handle
+        .shell()
+        .open(url, None)
+        .map_err(|e| e.to_string())
+}
+
+#[derive(serde::Serialize)]
+pub struct BashRuntimeEnsureResult {
+    pub available: bool,
+    pub attempted_install: bool,
+    pub installed_now: bool,
+    pub bash_path: Option<String>,
+    pub message: String,
+}
+
+#[tauri::command]
+pub async fn ensure_bash_runtime(auto_install: Option<bool>) -> Result<BashRuntimeEnsureResult, String> {
+    #[cfg(not(target_os = "windows"))]
+    {
+        return Ok(BashRuntimeEnsureResult {
+            available: true,
+            attempted_install: false,
+            installed_now: false,
+            bash_path: Some("sh".to_string()),
+            message: "Non-Windows platform uses default shell.".to_string(),
+        });
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(path) = find_windows_bash_path() {
+            return Ok(BashRuntimeEnsureResult {
+                available: true,
+                attempted_install: false,
+                installed_now: false,
+                bash_path: Some(path.to_string_lossy().to_string()),
+                message: "Bash runtime detected.".to_string(),
+            });
+        }
+
+        let should_install = auto_install.unwrap_or(true);
+        if !should_install {
+            return Ok(BashRuntimeEnsureResult {
+                available: false,
+                attempted_install: false,
+                installed_now: false,
+                bash_path: None,
+                message: "Bash runtime not found.".to_string(),
+            });
+        }
+
+        let mut logs = Vec::new();
+        for args in [
+            vec![
+                "install",
+                "--id",
+                "Git.Git",
+                "-e",
+                "--silent",
+                "--accept-package-agreements",
+                "--accept-source-agreements",
+                "--scope",
+                "user",
+            ],
+            vec![
+                "install",
+                "--id",
+                "Git.Git",
+                "-e",
+                "--silent",
+                "--accept-package-agreements",
+                "--accept-source-agreements",
+            ],
+        ] {
+            let mut cmd = TokioCommand::new("winget");
+            cmd.args(&args)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+
+            let run = timeout(TokioDuration::from_secs(15 * 60), cmd.output()).await;
+            match run {
+                Ok(Ok(output)) => {
+                    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                    logs.push(format!(
+                        "winget {} -> exit {}\nstdout: {}\nstderr: {}",
+                        args.join(" "),
+                        output.status.code().unwrap_or(-1),
+                        if stdout.is_empty() { "(empty)" } else { &stdout },
+                        if stderr.is_empty() { "(empty)" } else { &stderr }
+                    ));
+
+                    if output.status.success() {
+                        break;
+                    }
+                }
+                Ok(Err(e)) => {
+                    logs.push(format!("winget {} -> exec error: {}", args.join(" "), e));
+                }
+                Err(_) => {
+                    logs.push(format!("winget {} -> timeout", args.join(" ")));
+                }
+            }
+        }
+
+        if let Some(path) = refresh_windows_bash_path_cache() {
+            return Ok(BashRuntimeEnsureResult {
+                available: true,
+                attempted_install: true,
+                installed_now: true,
+                bash_path: Some(path.to_string_lossy().to_string()),
+                message: "Bash runtime installed successfully.".to_string(),
+            });
+        }
+
+        Ok(BashRuntimeEnsureResult {
+            available: false,
+            attempted_install: true,
+            installed_now: false,
+            bash_path: None,
+            message: format!(
+                "Silent install failed. Manual install may be required. {}",
+                logs.join("\n---\n")
+            ),
+        })
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -2873,6 +3095,12 @@ async fn run_command_tool(access: &ToolAccess, args: BashArgs) -> Result<String,
 
 #[cfg(target_os = "windows")]
 fn build_shell_command(command: &str) -> TokioCommand {
+    if let Some(bash_path) = find_windows_bash_path() {
+        let mut cmd = TokioCommand::new(bash_path);
+        cmd.arg("-lc").arg(command);
+        return cmd;
+    }
+
     let mut cmd = TokioCommand::new("cmd");
     cmd.arg("/C").arg(command);
     cmd
@@ -2886,15 +3114,87 @@ fn build_shell_command(command: &str) -> TokioCommand {
 }
 
 
-fn build_shell_hint() -> &'static str {
+fn build_shell_hint() -> String {
     #[cfg(target_os = "windows")]
     {
-        "Windows uses cmd /C for Bash/run_command. Prefer dir or powershell -Command Get-ChildItem; avoid find/ls/head/grep."
+        if let Some(bash_path) = find_windows_bash_path() {
+            format!(
+                "Windows Bash/run_command uses bash -lc ({}). Prefer Bash syntax first.",
+                bash_path.display()
+            )
+        } else {
+            "Windows Bash/run_command falls back to cmd /C because bash was not found. Prefer dir or powershell -Command Get-ChildItem; avoid find/ls/head/grep unless bash is installed.".to_string()
+        }
     }
     #[cfg(not(target_os = "windows"))]
     {
-        "Unix-like systems use sh -c for Bash/run_command."
+        "Unix-like systems use sh -c for Bash/run_command.".to_string()
     }
+}
+
+#[cfg(target_os = "windows")]
+fn find_windows_bash_path() -> Option<PathBuf> {
+    let cache = windows_bash_path_cache();
+    {
+        let guard = cache.lock().unwrap();
+        if let Some(cached) = guard.as_ref() {
+            return cached.clone();
+        }
+    }
+
+    let detected = detect_windows_bash_path();
+    {
+        let mut guard = cache.lock().unwrap();
+        *guard = Some(detected.clone());
+    }
+    detected
+}
+
+#[cfg(target_os = "windows")]
+fn refresh_windows_bash_path_cache() -> Option<PathBuf> {
+    let detected = detect_windows_bash_path();
+    let mut guard = windows_bash_path_cache().lock().unwrap();
+    *guard = Some(detected.clone());
+    detected
+}
+
+#[cfg(target_os = "windows")]
+fn windows_bash_path_cache() -> &'static Mutex<Option<Option<PathBuf>>> {
+    static WINDOWS_BASH_PATH_CACHE: OnceLock<Mutex<Option<Option<PathBuf>>>> = OnceLock::new();
+    WINDOWS_BASH_PATH_CACHE.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(target_os = "windows")]
+fn detect_windows_bash_path() -> Option<PathBuf> {
+    if let Some(path_var) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            let candidate = dir.join("bash.exe");
+            if candidate.is_file() && !is_windows_system_bash(&candidate) {
+                return Some(candidate);
+            }
+        }
+    }
+
+    for candidate in [
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files\Git\usr\bin\bash.exe",
+    ] {
+        let path = PathBuf::from(candidate);
+        if path.is_file() && !is_windows_system_bash(&path) {
+            return Some(path);
+        }
+    }
+
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn is_windows_system_bash(path: &Path) -> bool {
+    let normalized = path
+        .to_string_lossy()
+        .replace('/', "\\")
+        .to_lowercase();
+    normalized.ends_with("\\windows\\system32\\bash.exe")
 }
 
 fn build_skill_file_manifest(skill_dir: &Path, max_entries: usize) -> String {
@@ -2947,8 +3247,25 @@ fn is_tool_failure(output: &str) -> bool {
     parse_exit_code(output).map_or(false, |code| code != 0)
 }
 
-fn build_tool_system_prompt(context: &str, skills_dir: &Path) -> String {
+fn build_tool_system_prompt(context: &str, skills_dir: &Path, available_skills: &[SkillMetadata]) -> String {
     let shell_hint = build_shell_hint();
+
+    // 构建可用技能列表
+    let skills_section = if available_skills.is_empty() {
+        "当前没有已安装的技能。你可以使用 manage_skill 工具创建新技能。".to_string()
+    } else {
+        let skills_list: Vec<String> = available_skills
+            .iter()
+            .filter(|s| s.user_invocable.unwrap_or(true))
+            .map(|s| format!("- {}: {}", s.name, s.description))
+            .collect();
+        if skills_list.is_empty() {
+            "当前没有用户可调用的技能。".to_string()
+        } else {
+            format!("以下是已安装的技能，可通过 invoke_skill 工具调用：\n{}", skills_list.join("\n"))
+        }
+    };
+
     let context = format!(
         "{}\n\n## Environment\n{}\n- App skills directory: {}\n- Do not assume ~/.kiro/skills or ~/.codex/skills. Use the app skills directory above for skill files.",
         context,
@@ -2962,10 +3279,13 @@ fn build_tool_system_prompt(context: &str, skills_dir: &Path) -> String {
 
 请根据上面的操作记录回答用户的问题。如果记录中没有相关信息，请如实说明。
 
+## 可用技能
+{}
+
 ## 任务处理方式
 1. 先确认目标和约束；信息不足时先问 1-2 个关键问题。
 2. 判断是否需要技能/工具：
-   - 有合适技能就调用 invoke_skill。
+   - 有合适技能就调用 invoke_skill，传入 skill_name 参数。
    - 需要新增/调整能力就用 manage_skill（create/update），并尽量最小化 allowed_tools，选择合适 context（screen/none），必要时设置 user_invocable。
 3. 需要工具时先给简短计划（1-3 步），再调用工具。
 4. 工具返回后先检查错误：有失败就解释原因、换方案或请用户授权/补充信息；不要重复相同工具+参数超过 2 次。
@@ -2985,12 +3305,19 @@ fn build_tool_system_prompt(context: &str, skills_dir: &Path) -> String {
 - If still blocked, report what was tried and ask for the missing info or permission.
 
 ## 你拥有以下能力
-1. 如果需要某个技能完成任务，请调用 invoke_skill。
+1. 如果需要某个技能完成任务，请调用 invoke_skill，skill_name 必须是上面列出的技能名称之一。
 2. 如果需要创建/更新/删除技能，请调用 manage_skill。
 3. 可用 Read/Write/Edit/Update/Glob/Grep 读取与搜索文件。
 4. 可用 Bash/run_command 运行命令（受权限限制）。"#,
-        context
+        context,
+        skills_section
     )
+}
+
+/// Tool loop 的返回结果，包含响应文本和工具上下文
+struct ToolLoopResult {
+    response: String,
+    tool_context: Vec<ToolContextMessage>,
 }
 
 async fn run_tool_loop(
@@ -3005,11 +3332,12 @@ async fn run_tool_loop(
     preferred_base_dir: Option<&Path>,
     cancel_token: Option<&CancellationToken>,
     progress: Option<&ProgressEmitter>,
-) -> Result<String, String> {
+) -> Result<ToolLoopResult, String> {
     let access = build_tool_access(config, storage, preferred_base_dir);
     let mut loops = 0usize;
     let mut last_tool_calls: Option<Vec<(String, String)>> = None;
     let mut repeat_loops = 0usize;
+    let mut collected_tool_context: Vec<ToolContextMessage> = Vec::new();
 
     loop {
         check_cancel(cancel_token)?;
@@ -3020,7 +3348,10 @@ async fn run_tool_loop(
                         progress.emit_info("未调用工具，直接给出回答".to_string(), None);
                     }
                 }
-                return Ok(text);
+                return Ok(ToolLoopResult {
+                    response: text,
+                    tool_context: collected_tool_context,
+                });
             }
             ChatWithToolsResult::ToolCalls { calls, messages } => {
                 if loops >= MAX_TOOL_LOOPS {
@@ -3033,11 +3364,30 @@ async fn run_tool_loop(
                     } else {
                         format!("未执行的工具: {}", pending.join(", "))
                     };
-                    return Ok(format!(
-                        "已停止工具调用以避免循环（上限 {} 次）。{}\\n你可以：1) 缩小任务范围 2) 指定下一步要做的操作 3) 检查工具权限/路径。",
-                        MAX_TOOL_LOOPS, pending_hint
-                    ));
+                    return Ok(ToolLoopResult {
+                        response: format!(
+                            "已停止工具调用以避免循环（上限 {} 次）。{}\\n你可以：1) 缩小任务范围 2) 指定下一步要做的操作 3) 检查工具权限/路径。",
+                            MAX_TOOL_LOOPS, pending_hint
+                        ),
+                        tool_context: collected_tool_context,
+                    });
                 }
+
+                // 收集 assistant 的 tool_calls 到上下文
+                let tool_call_infos: Vec<ToolCallInfo> = calls
+                    .iter()
+                    .map(|c| ToolCallInfo {
+                        id: c.id.clone(),
+                        name: c.function.name.clone(),
+                        arguments: c.function.arguments.clone(),
+                    })
+                    .collect();
+                collected_tool_context.push(ToolContextMessage {
+                    role: "assistant".to_string(),
+                    content: None,
+                    tool_call_id: None,
+                    tool_calls: Some(tool_call_infos),
+                });
 
                 let signature: Vec<(String, String)> = calls
                     .iter()
@@ -3088,7 +3438,15 @@ async fn run_tool_loop(
                             format!("{} {}", TOOL_ERROR_PREFIX, err)
                         }
                     };
-                    tool_results.push((call.id.clone(), output));
+                    tool_results.push((call.id.clone(), output.clone()));
+
+                    // 收集 tool result 到上下文
+                    collected_tool_context.push(ToolContextMessage {
+                        role: "tool".to_string(),
+                        content: Some(output),
+                        tool_call_id: Some(call.id.clone()),
+                        tool_calls: None,
+                    });
                 }
                 let has_failure = tool_results
                     .iter()
@@ -3100,7 +3458,7 @@ async fn run_tool_loop(
                     repeat_loops = 0;
                 }
                 last_tool_calls = Some(signature);
-                
+
                 if repeat_loops >= MAX_REPEAT_TOOL_LOOPS {
                     let pending: Vec<String> = calls
                         .iter()
@@ -3111,10 +3469,13 @@ async fn run_tool_loop(
                     } else {
                         format!("重复失败的工具: {}", pending.join(", "))
                     };
-                    return Ok(format!(
-                        "检测到工具重复失败，已暂停以避免循环。{}\\n建议：确认参数/权限，或提供替代方案与更多信息。",
-                        pending_hint
-                    ));
+                    return Ok(ToolLoopResult {
+                        response: format!(
+                            "检测到工具重复失败，已暂停以避免循环。{}\\n建议：确认参数/权限，或提供替代方案与更多信息。",
+                            pending_hint
+                        ),
+                        tool_context: collected_tool_context,
+                    });
                 }
                 
 
@@ -3123,23 +3484,25 @@ async fn run_tool_loop(
                         token,
                         progress,
                         "model",
-                        || model_manager.continue_with_tool_results(
+                        || model_manager.continue_with_tool_results_filtered(
                             &config.model,
                             system_prompt,
                             messages.clone(),
                             tool_results.clone(),
                             available_skills,
+                            allowed_tools,
                         ),
                     )
                     .await?
                 } else {
                     model_manager
-                        .continue_with_tool_results(
+                        .continue_with_tool_results_filtered(
                             &config.model,
                             system_prompt,
                             messages,
                             tool_results,
                             available_skills,
+                            allowed_tools,
                         )
                         .await?
                 };

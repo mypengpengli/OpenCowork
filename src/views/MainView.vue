@@ -69,7 +69,7 @@ const CLIPBOARD_IMAGE_EXT: Record<string, string> = {
 
 interface PendingRequest {
   message: string
-  history: { role: string; content: string }[]
+  history: { role: string; content: string; tool_call_id?: string; tool_calls?: { id: string; name: string; arguments: string }[] }[]
   attachments: ChatAttachment[]
   isSkill: boolean
   skillName?: string
@@ -492,11 +492,28 @@ async function executeRequest(payload: PendingRequest, includeUserMessage: boole
 
     const toolStepsSnapshot = collectToolSteps()
 
+    // 解析 JSON 响应，提取 tool_context
+    let responseText = response
+    let toolContext: import('../stores/chat').ToolContextMessage[] | undefined
+    let activeSkill: string | undefined
+    try {
+      const parsed = JSON.parse(response)
+      if (parsed && typeof parsed.response === 'string') {
+        responseText = parsed.response
+        toolContext = parsed.tool_context
+        activeSkill = parsed.active_skill
+      }
+    } catch {
+      // 不是 JSON，使用原始响应
+    }
+
     chatStore.addMessage({
       role: 'assistant',
-      content: response,
+      content: responseText,
       timestamp: new Date().toISOString(),
       toolSteps: toolStepsSnapshot.length > 0 ? toolStepsSnapshot : undefined,
+      toolContext: toolContext && toolContext.length > 0 ? toolContext : undefined,
+      activeSkill,
     })
   } catch (error) {
     const errorText = String(error)
@@ -596,8 +613,27 @@ async function sendMessage() {
   if (!userMessage && !hasAttachments) return
 
   const messageAttachments = attachments.value.map(item => ({ ...item }))
-  const historyForModel = chatStore.chatHistoryForModel
-    .map(m => ({ role: m.role, content: m.content }))
+
+  // 构建包含 tool_context 的完整历史
+  const historyForModel: PendingRequest['history'] = []
+  for (const m of chatStore.chatHistoryForModel) {
+    // 添加主消息
+    historyForModel.push({
+      role: m.role,
+      content: m.content,
+    })
+    // 如果有 tool_context，展开添加到历史中
+    if (m.toolContext && m.toolContext.length > 0) {
+      for (const tc of m.toolContext) {
+        historyForModel.push({
+          role: tc.role,
+          content: tc.content || '',
+          tool_call_id: tc.tool_call_id,
+          tool_calls: tc.tool_calls,
+        })
+      }
+    }
+  }
 
   inputMessage.value = ''
   attachments.value = []
@@ -693,10 +729,25 @@ async function handleRegenerate(msg: { role: string; content: string; timestamp:
   // 删除从用户消息之后的所有消息
   chatStore.messages.splice(userMsgIndex + 1)
 
-  // 构建历史（不包含被删除的消息）
-  const historyForModel = chatStore.chatHistoryForModel
-    .slice(0, -1) // 移除最后一条（刚删除的 AI 回复）
-    .map(m => ({ role: m.role, content: m.content }))
+  // 构建历史（不包含被删除的消息），包含 tool_context
+  const historyForModel: PendingRequest['history'] = []
+  const remainingMessages = chatStore.chatHistoryForModel.slice(0, -1) // 移除最后一条
+  for (const m of remainingMessages) {
+    historyForModel.push({
+      role: m.role,
+      content: m.content,
+    })
+    if (m.toolContext && m.toolContext.length > 0) {
+      for (const tc of m.toolContext) {
+        historyForModel.push({
+          role: tc.role,
+          content: tc.content || '',
+          tool_call_id: tc.tool_call_id,
+          tool_calls: tc.tool_calls,
+        })
+      }
+    }
+  }
 
   const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
   const payload: PendingRequest = {

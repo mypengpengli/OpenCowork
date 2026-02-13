@@ -252,10 +252,22 @@ impl ModelManager {
         history: Option<Vec<ChatHistoryMessage>>,
         available_skills: &[SkillMetadata],
     ) -> Result<ChatWithToolsResult, String> {
+        self.chat_with_tools_with_system_prompt_filtered(config, system_prompt, message, history, available_skills, &None).await
+    }
+
+    pub async fn chat_with_tools_with_system_prompt_filtered(
+        &self,
+        config: &ModelConfig,
+        system_prompt: &str,
+        message: &str,
+        history: Option<Vec<ChatHistoryMessage>>,
+        available_skills: &[SkillMetadata],
+        allowed_tools: &Option<Vec<String>>,
+    ) -> Result<ChatWithToolsResult, String> {
         match config.provider.as_str() {
             "api" => {
                 let api_client = ApiClient::new(&config.api);
-                let tools = ApiClient::create_skill_tools(available_skills);
+                let tools = ApiClient::create_skill_tools(available_skills, allowed_tools);
                 api_client
                     .chat_with_tools(system_prompt, message, history, tools)
                     .await
@@ -281,10 +293,26 @@ impl ModelManager {
         image_urls: Vec<String>,
         image_base64: Vec<String>,
     ) -> Result<ChatWithToolsResult, String> {
+        self.chat_with_tools_with_system_prompt_with_images_filtered(
+            config, system_prompt, message, history, available_skills, image_urls, image_base64, &None
+        ).await
+    }
+
+    pub async fn chat_with_tools_with_system_prompt_with_images_filtered(
+        &self,
+        config: &ModelConfig,
+        system_prompt: &str,
+        message: &str,
+        history: Option<Vec<ChatHistoryMessage>>,
+        available_skills: &[SkillMetadata],
+        image_urls: Vec<String>,
+        image_base64: Vec<String>,
+        allowed_tools: &Option<Vec<String>>,
+    ) -> Result<ChatWithToolsResult, String> {
         match config.provider.as_str() {
             "api" => {
                 let api_client = ApiClient::new(&config.api);
-                let tools = ApiClient::create_skill_tools(available_skills);
+                let tools = ApiClient::create_skill_tools(available_skills, allowed_tools);
                 api_client
                     .chat_with_tools_with_images(system_prompt, message, history, tools, &image_urls)
                     .await
@@ -308,10 +336,22 @@ impl ModelManager {
         tool_results: Vec<(String, String)>,
         available_skills: &[SkillMetadata],
     ) -> Result<ChatWithToolsResult, String> {
+        self.continue_with_tool_results_filtered(config, system_prompt, messages_so_far, tool_results, available_skills, &None).await
+    }
+
+    pub async fn continue_with_tool_results_filtered(
+        &self,
+        config: &ModelConfig,
+        system_prompt: &str,
+        messages_so_far: Vec<api::Message>,
+        tool_results: Vec<(String, String)>,
+        available_skills: &[SkillMetadata],
+        allowed_tools: &Option<Vec<String>>,
+    ) -> Result<ChatWithToolsResult, String> {
         match config.provider.as_str() {
             "api" => {
                 let api_client = ApiClient::new(&config.api);
-                let tools = ApiClient::create_skill_tools(available_skills);
+                let tools = ApiClient::create_skill_tools(available_skills, allowed_tools);
                 api_client
                     .continue_with_tool_results(system_prompt, messages_so_far, tool_results, tools)
                     .await

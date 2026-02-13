@@ -206,7 +206,7 @@ impl SkillManager {
         self.create_skill_with_meta(name, description, instructions, SkillFrontmatterOverrides::default())
     }
 
-    /// ??????? skill
+    /// 创建新的 skill（带元数据覆盖）
     pub fn create_skill_with_meta(
         &self,
         name: &str,
@@ -214,16 +214,16 @@ impl SkillManager {
         instructions: &str,
         overrides: SkillFrontmatterOverrides,
     ) -> Result<(), String> {
-        // ?? name ??
+        // 验证 name 格式
         Self::validate_skill_name(name)?;
 
         let skill_dir = self.skills_dir.join(name);
         if skill_dir.exists() {
-            return Err(format!("Skill '{}' ???", name));
+            return Err(format!("Skill '{}' 已存在", name));
         }
 
         std::fs::create_dir_all(&skill_dir)
-            .map_err(|e| format!("?? skill ????: {}", e))?;
+            .map_err(|e| format!("创建 skill 目录失败: {}", e))?;
 
         let skill_md = skill_dir.join(DEFAULT_SKILL_MD_FILE);
         let instructions = ensure_resource_section(instructions);
@@ -231,18 +231,18 @@ impl SkillManager {
         let content = format!("---\n{}\n---\n\n{}", frontmatter, instructions);
 
         std::fs::write(&skill_md, content)
-            .map_err(|e| format!("?? SKILL.md ??: {}", e))?;
+            .map_err(|e| format!("写入 SKILL.md 失败: {}", e))?;
 
         for dir in ["scripts", "references", "assets"] {
             std::fs::create_dir_all(skill_dir.join(dir))
-                .map_err(|e| format!("?? {} ????: {}", dir, e))?;
+                .map_err(|e| format!("创建 {} 目录失败: {}", dir, e))?;
         }
         ensure_scaffold_files(&skill_dir)?;
 
         Ok(())
     }
 
-    /// ?????? skill
+    /// 更新现有的 skill
     pub fn update_skill(
         &self,
         name: &str,
@@ -252,7 +252,7 @@ impl SkillManager {
         self.update_skill_with_meta(name, description, instructions, SkillFrontmatterOverrides::default())
     }
 
-    /// ??????? skill
+    /// 更新现有的 skill（带元数据覆盖）
     pub fn update_skill_with_meta(
         &self,
         name: &str,
@@ -264,7 +264,7 @@ impl SkillManager {
 
         let skill_dir = self.skills_dir.join(name);
         if !skill_dir.exists() {
-            return Err(format!("Skill '{}' ???", name));
+            return Err(format!("Skill '{}' 不存在", name));
         }
 
         let skill_md = Self::skill_md_path_for_write(&skill_dir);
@@ -274,11 +274,11 @@ impl SkillManager {
         let content = format!("---\n{}\n---\n\n{}", frontmatter, instructions);
 
         std::fs::write(&skill_md, content)
-            .map_err(|e| format!("?? SKILL.md ??: {}", e))?;
+            .map_err(|e| format!("写入 SKILL.md 失败: {}", e))?;
 
         for dir in ["scripts", "references", "assets"] {
             std::fs::create_dir_all(skill_dir.join(dir))
-                .map_err(|e| format!("?? {} ????: {}", dir, e))?;
+                .map_err(|e| format!("创建 {} 目录失败: {}", dir, e))?;
         }
         ensure_scaffold_files(&skill_dir)?;
 

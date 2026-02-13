@@ -14,6 +14,19 @@ export interface ChatAttachment {
   mime?: string
 }
 
+export interface ToolCallInfo {
+  id: string
+  name: string
+  arguments: string
+}
+
+export interface ToolContextMessage {
+  role: string
+  content?: string
+  tool_call_id?: string
+  tool_calls?: ToolCallInfo[]
+}
+
 export interface ToolStep {
   title: string
   detail?: string
@@ -27,6 +40,8 @@ export interface ChatMessage {
   alertKey?: string
   attachments?: ChatAttachment[]
   toolSteps?: ToolStep[]
+  toolContext?: ToolContextMessage[]  // 工具调用上下文
+  activeSkill?: string  // 当前活跃的技能
 }
 
 export interface SavedConversation {
@@ -39,7 +54,7 @@ export interface SavedConversation {
 
 const STORAGE_KEY = 'opencowork-conversations'
 const LEGACY_STORAGE_KEY = 'screen-assistant-conversations'
-const MAX_HISTORY_FOR_CONTEXT = 50  // 发送给模型的最大对话轮�?
+const MAX_HISTORY_FOR_CONTEXT = 50  // 发送给模型的最大对话轮�?
 
 export const useChatStore = defineStore('chat', () => {
   const messages = ref<ChatMessage[]>([])
@@ -50,10 +65,10 @@ export const useChatStore = defineStore('chat', () => {
   const t = (key: string, params?: Record<string, string | number>) =>
     translate(localeStore.locale, key, params)
 
-  // 获取用于发送给模型的对话历史（只取最近N轮，不包含alert�?
+  // 获取用于发送给模型的对话历史（只取最近N轮，不包含alert�?
   const chatHistoryForModel = computed(() => {
     const nonAlertMessages = messages.value.filter(m => !m.isAlert)
-    // 取最近的对话（最�?MAX_HISTORY_FOR_CONTEXT * 2 条消息，因为一轮包含user+assistant�?
+    // 取最近的对话（最�?MAX_HISTORY_FOR_CONTEXT * 2 条消息，因为一轮包含user+assistant�?
     const maxMessages = MAX_HISTORY_FOR_CONTEXT * 2
     if (nonAlertMessages.length <= maxMessages) {
       return nonAlertMessages
@@ -118,7 +133,7 @@ export const useChatStore = defineStore('chat', () => {
     return false
   }
 
-  // �?localStorage 加载保存的对话列�?
+  // �?localStorage 加载保存的对话列�?
   function loadSavedConversations() {
     try {
       const data = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY)
@@ -171,7 +186,7 @@ export const useChatStore = defineStore('chat', () => {
     persistConversations()
   }
 
-  // 自动生成对话标题（取第一条用户消息的�?0个字符）
+  // 自动生成对话标题（取第一条用户消息的�?0个字符）
   function generateTitle(msgs: ChatMessage[]): string {
     const firstUserMsg = msgs.find(m => m.role === 'user')
     if (firstUserMsg) {
@@ -181,7 +196,7 @@ export const useChatStore = defineStore('chat', () => {
     return t('chat.defaultTitle')
   }
 
-  // 初始化时加载保存的对�?
+  // 初始化时加载保存的对�?
   loadSavedConversations()
 
   return {
