@@ -52,6 +52,9 @@ const MAX_TOOL_LOOPS: usize = 999;
 const MAX_REPEAT_TOOL_LOOPS: usize = 3;
 const MODEL_MAX_RETRIES: usize = 2;
 const MODEL_MAX_CONTINUES: usize = 1;
+const MIN_HISTORY_MESSAGES_BEFORE_COMPRESSION: usize = 14;
+const MAX_PERSISTED_TOOL_CONTEXT_CHARS: usize = 3000;
+static BACKGROUND_TASK_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 const DEFAULT_MAX_READ_BYTES: usize = 200_000;
 const DEFAULT_MAX_GLOB_RESULTS: usize = 500;
@@ -592,6 +595,11 @@ fn compress_history_if_needed(
     if history.len() <= 2 {
         return Some(history);
     }
+    // Align with mainstream agent behavior: avoid eager compaction on short chats.
+    // Keep full history for early turns and only compact once conversation is truly long.
+    if history.len() < MIN_HISTORY_MESSAGES_BEFORE_COMPRESSION {
+        return Some(history);
+    }
 
     let max_context_tokens = storage.max_context_tokens.max(4096);
     let trigger_ratio = storage.context_compress_trigger_ratio.clamp(0.70, 0.99);
@@ -829,14 +837,7 @@ struct ToolAccess {
     allowed_commands: Vec<String>,
     allowed_dirs: Vec<PathBuf>,
     base_dir: PathBuf,
-    strict_skill_mode: bool,
-    skill_evidence: Option<SkillExecutionEvidence>,
-}
-
-#[derive(Clone)]
-struct SkillExecutionEvidence {
-    instruction_hosts: HashSet<String>,
-    command_snippets: Vec<String>,
+    tasks_dir: PathBuf,
 }
 
 #[tauri::command]
@@ -916,6 +917,7 @@ pub async fn chat_with_assistant(
         .as_ref()
         .map_or(false, |items| !items.is_empty());
     let user_message = merge_user_message(&message, &attachment_payload.text, has_attachments);
+    let inherited_skill_block = extract_latest_skill_instructions_block(history.as_ref());
 
     let request_id =
         request_id.unwrap_or_else(|| format!("req-{}", Local::now().timestamp_millis()));
@@ -929,6 +931,8 @@ pub async fn chat_with_assistant(
     let response = (async {
         let response = if config.model.provider == "api" {
         let system_prompt = build_tool_system_prompt(&context, skill_manager.get_skills_dir(), &available_skills);
+        let system_prompt =
+            apply_skill_block_to_system_prompt(&system_prompt, inherited_skill_block.as_deref());
         let mut model_history = compress_history_if_needed(
             history.clone(),
             &system_prompt,
@@ -1023,8 +1027,6 @@ pub async fn chat_with_assistant(
             &available_skills,
             &None,
             None,
-            false,
-            None,
             Some(&cancel_token),
             progress.as_ref(),
         )
@@ -1095,8 +1097,6 @@ pub async fn chat_with_assistant(
                         &available_skills,
                         &None,
                         None,
-                        false,
-                        None,
                         Some(&cancel_token),
                         progress.as_ref(),
                     )
@@ -1162,6 +1162,8 @@ if let Some(ref progress) = progress {
         };
 
         let context_with_skills = format!("{}{}", context, skills_hint);
+        let context_with_skills =
+            apply_skill_block_to_system_prompt(&context_with_skills, inherited_skill_block.as_deref());
         let model_history = compress_history_if_needed(
             history.clone(),
             &context_with_skills,
@@ -1301,22 +1303,16 @@ async fn execute_skill_internal(
     check_cancel(cancel_token)?;
     if let Some(progress) = progress {
         progress.emit_info("Loaded skill file".to_string(), Some(skill.path.clone()));
-        // 调试：输出 instructions 内容
-        progress.emit_info(
-            format!(
-                "Skill instructions loaded: {} chars",
-                rendered_instructions.len()
-            ),
-            Some(if rendered_instructions.len() > 300 {
-                format!(
-                    "{}...",
-                    rendered_instructions.chars().take(300).collect::<String>()
-                )
-            } else {
-                rendered_instructions.clone()
-            }),
-        );
     }
+
+    let skill_dir = Path::new(&skill.path)
+        .parent()
+        .unwrap_or_else(|| Path::new(&skill.path));
+    let skill_instruction_block = format_skill_instructions_block(
+        skill.metadata.name.as_str(),
+        skill.path.as_str(),
+        &rendered_instructions,
+    );
 
     // 构建用户消息（包含参数）
     let base_message = if let Some(ref args_str) = args {
@@ -1337,7 +1333,6 @@ async fn execute_skill_internal(
     // 根据 skill 的 context 设置决定是否包含屏幕记录
     let include_screen_context = skill.metadata.context.as_deref() == Some("screen");
     let screen_context = if include_screen_context {
-        // 获取屏幕记录上下文
         let query = parse_user_query(args.as_deref().unwrap_or_default());
         let search_result = storage.smart_search(&query).unwrap_or_default();
         let include_detail = config.storage.context_detail_hours != 0;
@@ -1348,97 +1343,16 @@ async fn execute_skill_internal(
             detail_cutoff.as_deref(),
         )
     } else {
-        "(此技能不需要屏幕上下文)".to_string()
+        String::new()
     };
-
-    // 获取启用的全局提示词
-    let global_prompts_section = build_global_prompts_section(config);
-
-    let skill_dir = Path::new(&skill.path)
-        .parent()
-        .unwrap_or_else(|| Path::new(&skill.path));
-    let skill_dir_display = skill_dir.to_string_lossy();
-    let skill_evidence = SkillExecutionEvidence {
-        instruction_hosts: extract_url_hosts(&rendered_instructions),
-        command_snippets: extract_skill_command_snippets(&rendered_instructions),
-    };
-    let effective_allowed_tools = skill.metadata.allowed_tools.clone().or_else(|| {
-        Some(vec![
-            "Read".to_string(),
-            "Write".to_string(),
-            "Edit".to_string(),
-            "Update".to_string(),
-            "Glob".to_string(),
-            "Grep".to_string(),
-            "Bash".to_string(),
-            "run_command".to_string(),
-            "progress_update".to_string(),
-        ])
-    });
-    let allowed_tools_hint = match &effective_allowed_tools {
-        Some(list) if !list.is_empty() => format!("\n## 允许的工具\n{}\n", list.join(", ")),
-        _ => String::new(),
-    };
-    let shell_hint = build_shell_hint();
-    let skill_files_hint = build_skill_file_manifest(skill_dir, 200);
-    let extra_hint = format!(
-        "\n## Environment\n{}\n- App skills directory: {}\n- Do not assume ~/.kiro/skills or ~/.codex/skills. Use the app skills directory above for skill files.\n\n## Skill Files (authoritative, relative to skill directory)\n{}\n\n## Skill Path Rules\n- When using skill resources, only use files from the list above.\n- Do not invent absolute paths outside the skill directory unless user explicitly provides that path.\n- If a required file is missing, report it and stop guessing paths.\n\n## Execution Hint\nYou are running /{}. Do not invoke the same skill again.\n",
-        shell_hint,
-        skill_manager.get_skills_dir().to_string_lossy(),
-        skill_files_hint,
-        skill.metadata.name
+    let context = build_context_with_global_prompts(config, screen_context);
+    let available_skills: Vec<SkillMetadata> = Vec::new();
+    let system_prompt = build_skill_execution_system_prompt(
+        &context,
+        skill_manager.get_skills_dir(),
+        &skill_instruction_block,
     );
-    let allowed_tools_hint = format!("{}{}", allowed_tools_hint, extra_hint);
-
-    // 构建 system prompt，注入 skill 指令
-    let system_prompt = format!(
-        r#"你是一个屏幕监控助手。现在用户调用了技能 "{}"。
-{}
-## 技能说明
-{}
-
-## 技能指令（必须严格遵循）
-以下是技能的详细指令，你必须严格按照这些指令执行，不要自行发挥或使用通用命令替代：
-
-{}
-
-## 技能目录
-{}
-该目录下可能有 scripts/ references/ assets/ 。如果需要运行脚本，请使用 Bash/run_command 工具，并把 cwd 设置为技能目录。{}
-
-## 屏幕活动记录
-{}
-
-## Execution transparency
-- If the request is ambiguous, ask 1-3 clarifying questions before any tool/file/action. Do not proceed until the user answers.
-- For multi-step tasks, provide a brief plan (1-3 steps) before using tools. If confirmation is needed, ask for it.
-- Use the progress_update tool to report the plan and major milestones so the user can see what is happening.
-
-## Strict skill compliance (CRITICAL)
-- 全局提示词仅作补充；与技能指令冲突时，始终以技能指令为准。
-- 技能指令中的命令和 URL 是权威的，必须原样使用。
-- 每次工具调用都必须能在技能指令中找到依据（命令片段、URL、脚本路径或步骤说明）。
-- 如果技能指令提供了具体命令，必须先执行该命令，不要用通用命令替代。
-- 不要替换域名/主机/IP（尤其是内网地址），除非用户明确要求。
-- 如果命令失败，报告错误并尝试最小化调整，但保持目标 URL/主机不变。
-- 绝对不要使用 example.com 或其他占位符域名。
-
-## Error recovery and capability expansion
-- Treat tool errors as normal; diagnose (paths/permissions/params) and retry with adjusted inputs.
-- Prefer existing tools/skills first; if capability is missing, use /skill-creator or manage_skill to create/update with minimal allowed_tools.
-- For new skills, ask the user which path to take: (A) find an existing skill online, or (B) wrap an open-source GitHub project as a skill. Only proceed with downloads/installs after explicit approval.
-- If an external tool/project is needed, prefer mature options, ask the user for approval before download/install, then encapsulate it as a skill.
-- If still blocked, report what was tried and ask for the missing info or permission.
-
-请根据技能指令和屏幕活动记录，完成用户的请求。"#,
-        skill.metadata.name,
-        global_prompts_section,
-        skill.metadata.description,
-        rendered_instructions,
-        skill_dir_display,
-        allowed_tools_hint,
-        screen_context
-    );
+    let effective_allowed_tools = skill.metadata.allowed_tools.clone();
 
     if let Some(progress) = progress {
         progress.emit_step(
@@ -1447,28 +1361,15 @@ async fn execute_skill_internal(
         );
     }
 
-    // Keep same-conversation memory for /skill calls.
-    // History is compressed when approaching context limits.
-    let mut model_history = compress_history_if_needed(
+    let model_history = compress_history_if_needed(
         history,
         &system_prompt,
         &user_message,
         &config.storage,
         progress,
     );
-    if let Some(progress) = progress {
-        if let Some(ref hist) = model_history {
-            progress.emit_info(
-                "Skill session memory enabled".to_string(),
-                Some(format!("history messages: {}", hist.len())),
-            );
-        }
-    }
 
     if config.model.provider == "api" {
-        // Inside a running skill, disable nested skill invocation to avoid
-        // "skill not available" confusion and recursive skill chaining.
-        let available_skills: Vec<SkillMetadata> = Vec::new();
         let allowed_tools = &effective_allowed_tools;
         let history_candidates = build_overflow_recovery_histories(
             &model_history,
@@ -1578,17 +1479,22 @@ async fn execute_skill_internal(
             &available_skills,
             allowed_tools,
             Some(skill_dir),
-            true,
-            Some(skill_evidence.clone()),
             cancel_token,
             progress,
         ))
         .await
         {
             Ok(result) => {
+                let mut tool_context = vec![ToolContextMessage {
+                    role: "user".to_string(),
+                    content: Some(skill_instruction_block.clone()),
+                    tool_call_id: None,
+                    tool_calls: None,
+                }];
+                tool_context.extend(result.tool_context);
                 let chat_response = ChatResponse {
                     response: result.response,
-                    tool_context: result.tool_context,
+                    tool_context,
                     active_skill: Some(skill_name.to_string()),
                 };
                 Ok(
@@ -1600,7 +1506,9 @@ async fn execute_skill_internal(
         };
     }
 
-    if attachment_payload.image_urls.is_empty() && attachment_payload.image_base64.is_empty() {
+    let response_text = if attachment_payload.image_urls.is_empty()
+        && attachment_payload.image_base64.is_empty()
+    {
         if let Some(token) = cancel_token {
             retry_with_cancel(token, progress, "model", || {
                 model_manager.chat_with_system_prompt(
@@ -1621,32 +1529,42 @@ async fn execute_skill_internal(
                 )
                 .await
         }
+    } else if let Some(token) = cancel_token {
+        retry_with_cancel(token, progress, "model", || {
+            model_manager.chat_with_system_prompt_with_images(
+                &config.model,
+                &system_prompt,
+                &user_message,
+                model_history.clone(),
+                attachment_payload.image_urls.clone(),
+                attachment_payload.image_base64.clone(),
+            )
+        })
+        .await
     } else {
-        if let Some(token) = cancel_token {
-            retry_with_cancel(token, progress, "model", || {
-                model_manager.chat_with_system_prompt_with_images(
-                    &config.model,
-                    &system_prompt,
-                    &user_message,
-                    model_history.clone(),
-                    attachment_payload.image_urls.clone(),
-                    attachment_payload.image_base64.clone(),
-                )
-            })
+        model_manager
+            .chat_with_system_prompt_with_images(
+                &config.model,
+                &system_prompt,
+                &user_message,
+                model_history,
+                attachment_payload.image_urls,
+                attachment_payload.image_base64,
+            )
             .await
-        } else {
-            model_manager
-                .chat_with_system_prompt_with_images(
-                    &config.model,
-                    &system_prompt,
-                    &user_message,
-                    model_history,
-                    attachment_payload.image_urls,
-                    attachment_payload.image_base64,
-                )
-                .await
-        }
-    }
+    }?;
+
+    let chat_response = ChatResponse {
+        response: response_text,
+        tool_context: vec![ToolContextMessage {
+            role: "user".to_string(),
+            content: Some(skill_instruction_block),
+            tool_call_id: None,
+            tool_calls: None,
+        }],
+        active_skill: Some(skill_name.to_string()),
+    };
+    Ok(serde_json::to_string(&chat_response).unwrap_or_else(|_| chat_response.response))
 }
 
 /// 解析用户问题，提取时间范围和关键词
@@ -2930,8 +2848,6 @@ fn build_tool_access(
     config: &Config,
     storage: &StorageManager,
     preferred_base_dir: Option<&Path>,
-    strict_skill_mode: bool,
-    skill_evidence: Option<SkillExecutionEvidence>,
 ) -> ToolAccess {
     let mode = normalize_tool_mode(&config.tools.mode);
     let data_dir = storage.get_data_dir().to_path_buf();
@@ -2978,9 +2894,8 @@ fn build_tool_access(
         mode,
         allowed_commands: config.tools.allowed_commands.clone(),
         allowed_dirs,
+        tasks_dir: base_dir.join(".task_outputs"),
         base_dir,
-        strict_skill_mode,
-        skill_evidence,
     }
 }
 
@@ -3210,6 +3125,50 @@ fn inject_skill_arguments(instructions: &str, args: Option<&str>) -> String {
         .into_owned()
 }
 
+fn format_skill_instructions_block(skill_name: &str, skill_path: &str, instructions: &str) -> String {
+    format!(
+        "<skill>\n<name>{}</name>\n<path>{}</path>\n{}\n</skill>",
+        skill_name, skill_path, instructions
+    )
+}
+
+fn extract_latest_skill_instructions_block(
+    history: Option<&Vec<ChatHistoryMessage>>,
+) -> Option<String> {
+    let messages = history?;
+    for msg in messages.iter().rev() {
+        let content = msg.content.trim();
+        if content.is_empty() {
+            continue;
+        }
+        let Some(start) = content.find("<skill>") else {
+            continue;
+        };
+        let Some(end_tag_idx) = content.rfind("</skill>") else {
+            continue;
+        };
+        let end = end_tag_idx + "</skill>".len();
+        if end <= start || end > content.len() {
+            continue;
+        }
+        let block = content[start..end].trim();
+        if !block.is_empty() {
+            return Some(block.to_string());
+        }
+    }
+    None
+}
+
+fn apply_skill_block_to_system_prompt(base_prompt: &str, skill_block: Option<&str>) -> String {
+    if let Some(block) = skill_block {
+        return format!(
+            "{}\n\n## Active Skill\nA skill is active in this conversation. Continue following these skill instructions unless the user explicitly switches skills.\n{}",
+            base_prompt, block
+        );
+    }
+    base_prompt.to_string()
+}
+
 fn extract_command_token(command: &str) -> String {
     let trimmed = command.trim_start();
     if trimmed.starts_with('"') {
@@ -3260,6 +3219,37 @@ fn truncate_string(value: &str, max_chars: usize) -> (String, bool) {
     }
     let truncated: String = value.chars().take(max_chars).collect();
     (truncated, true)
+}
+
+fn compact_tool_context_content(value: &str, max_chars: usize) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let (truncated, cut) = truncate_string(trimmed, max_chars);
+    if cut {
+        format!("{}\n...(truncated for conversation history)", truncated)
+    } else {
+        truncated
+    }
+}
+
+fn command_requests_background(command: &str) -> bool {
+    let trimmed = command.trim();
+    if trimmed.ends_with('&') {
+        return true;
+    }
+
+    let lower = trimmed.to_lowercase();
+    lower.starts_with("start ")
+        || lower.starts_with("cmd /c start ")
+        || lower.starts_with("powershell -command \"start-process")
+        || lower.starts_with("powershell -noprofile -command \"start-process")
+}
+
+fn next_background_task_id() -> String {
+    let seq = BACKGROUND_TASK_COUNTER.fetch_add(1, Ordering::SeqCst);
+    format!("bg-{}-{}", Local::now().timestamp_millis(), seq)
 }
 
 fn command_mentions_script(command: &str) -> bool {
@@ -3493,18 +3483,34 @@ async fn run_command_tool(access: &ToolAccess, args: BashArgs) -> Result<String,
         return Ok(format!("工作目录不在允许范围内: {}", cwd.display()));
     }
 
-    if access.strict_skill_mode {
-        if let Some(evidence) = &access.skill_evidence {
-            if !command_has_skill_basis(&args.command, evidence) {
-                return Ok(format!(
-                    "{} 当前命令缺少 SKILL.md 依据。请先按技能指令中的原始命令执行，再进行最小必要调整。",
-                    TOOL_ERROR_PREFIX
-                ));
-            }
-        }
-    }
-
     let timeout_ms = args.timeout_ms.unwrap_or(DEFAULT_COMMAND_TIMEOUT_MS);
+
+    if command_requests_background(&args.command) {
+        fs::create_dir_all(&access.tasks_dir)
+            .map_err(|e| format!("create tasks dir failed: {}", e))?;
+        let task_id = next_background_task_id();
+        let output_path = access.tasks_dir.join(format!("{}.output", task_id));
+        let stdout_file =
+            fs::File::create(&output_path).map_err(|e| format!("create output file failed: {}", e))?;
+        let stderr_file = stdout_file
+            .try_clone()
+            .map_err(|e| format!("prepare stderr output file failed: {}", e))?;
+
+        let mut bg_cmd = build_shell_command(&args.command);
+        bg_cmd
+            .current_dir(&cwd)
+            .stdout(Stdio::from(stdout_file))
+            .stderr(Stdio::from(stderr_file));
+        bg_cmd
+            .spawn()
+            .map_err(|e| format!("start background command failed: {}", e))?;
+
+        return Ok(format!(
+            "Command running in background with ID: {}. Output is being written to: {}",
+            task_id,
+            output_path.display()
+        ));
+    }
 
     let mut cmd = build_shell_command(&args.command);
     cmd.current_dir(&cwd)
@@ -3542,160 +3548,6 @@ async fn run_command_tool(access: &ToolAccess, args: BashArgs) -> Result<String,
     Ok(response.trim_end().to_string())
 }
 
-fn url_host_regex() -> &'static Regex {
-    static URL_HOST_REGEX: OnceLock<Regex> = OnceLock::new();
-    URL_HOST_REGEX
-        .get_or_init(|| Regex::new(r#"(?i)https?://([^/\s"'`]+)"#).expect("valid URL host regex"))
-}
-
-fn normalize_host(raw_host: &str) -> Option<String> {
-    let trimmed = raw_host
-        .trim()
-        .trim_matches(|c: char| matches!(c, ')' | ']' | '}' | ',' | ';' | '.'));
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    let without_auth = trimmed.rsplit('@').next().unwrap_or(trimmed);
-    let host = if without_auth.starts_with('[') {
-        without_auth
-            .trim_start_matches('[')
-            .split(']')
-            .next()
-            .unwrap_or(without_auth)
-            .to_string()
-    } else {
-        without_auth
-            .split(':')
-            .next()
-            .unwrap_or(without_auth)
-            .to_string()
-    };
-    let normalized = host.trim().to_lowercase();
-    if normalized.is_empty() {
-        None
-    } else {
-        Some(normalized)
-    }
-}
-
-fn extract_url_hosts(text: &str) -> HashSet<String> {
-    let mut hosts = HashSet::new();
-    for caps in url_host_regex().captures_iter(text) {
-        let Some(raw) = caps.get(1).map(|m| m.as_str()) else {
-            continue;
-        };
-        if let Some(host) = normalize_host(raw) {
-            hosts.insert(host);
-        }
-    }
-    hosts
-}
-
-fn is_local_host(host: &str) -> bool {
-    if host == "localhost" || host == "0.0.0.0" || host == "::1" {
-        return true;
-    }
-    host.starts_with("127.")
-}
-
-fn fenced_code_regex() -> &'static Regex {
-    static FENCED_CODE_REGEX: OnceLock<Regex> = OnceLock::new();
-    FENCED_CODE_REGEX.get_or_init(|| {
-        Regex::new(r"(?s)```(?:[a-zA-Z0-9_-]+)?\s*\n(.*?)```").expect("valid fenced code regex")
-    })
-}
-
-fn inline_code_regex() -> &'static Regex {
-    static INLINE_CODE_REGEX: OnceLock<Regex> = OnceLock::new();
-    INLINE_CODE_REGEX
-        .get_or_init(|| Regex::new(r"`([^`\n]{2,})`").expect("valid inline code regex"))
-}
-
-fn normalize_spaces(value: &str) -> String {
-    value
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
-}
-
-fn extract_skill_command_snippets(instructions: &str) -> Vec<String> {
-    let mut snippets = Vec::new();
-
-    for caps in fenced_code_regex().captures_iter(instructions) {
-        let Some(body) = caps.get(1).map(|m| m.as_str().trim()) else {
-            continue;
-        };
-        if body.is_empty() {
-            continue;
-        }
-        snippets.push(body.to_string());
-    }
-
-    for caps in inline_code_regex().captures_iter(instructions) {
-        let Some(body) = caps.get(1).map(|m| m.as_str().trim()) else {
-            continue;
-        };
-        if body.is_empty() {
-            continue;
-        }
-        snippets.push(body.to_string());
-    }
-
-    snippets
-}
-
-fn command_has_skill_basis(command: &str, evidence: &SkillExecutionEvidence) -> bool {
-    let command_trimmed = command.trim();
-    if command_trimmed.is_empty() {
-        return true;
-    }
-
-    if evidence.command_snippets.is_empty() && evidence.instruction_hosts.is_empty() {
-        return true;
-    }
-
-    let command_norm = normalize_spaces(command_trimmed);
-    for snippet in &evidence.command_snippets {
-        let snippet_norm = normalize_spaces(snippet);
-        if snippet_norm.is_empty() {
-            continue;
-        }
-        if snippet_norm.contains(&command_norm) || command_norm.contains(&snippet_norm) {
-            return true;
-        }
-    }
-
-    let command_exec = normalize_tool_name(&extract_command_token(command_trimmed));
-    if !command_exec.is_empty() {
-        for snippet in &evidence.command_snippets {
-            for line in snippet.lines() {
-                let line_exec = normalize_tool_name(&extract_command_token(line));
-                if !line_exec.is_empty() && line_exec == command_exec {
-                    return true;
-                }
-            }
-        }
-    }
-
-    let command_hosts = extract_url_hosts(command_trimmed);
-    if !command_hosts.is_empty() {
-        return command_hosts
-            .into_iter()
-            .all(|host| is_local_host(&host) || evidence.instruction_hosts.contains(&host));
-    }
-
-    for snippet in &evidence.command_snippets {
-        let snippet_norm = normalize_spaces(snippet);
-        if !snippet_norm.is_empty() && command_norm.contains(&snippet_norm) {
-            return true;
-        }
-    }
-
-    false
-}
-
 #[cfg(target_os = "windows")]
 fn build_shell_command(command: &str) -> TokioCommand {
     if let Some(bash_path) = find_windows_bash_path() {
@@ -3714,24 +3566,6 @@ fn build_shell_command(command: &str) -> TokioCommand {
     let mut cmd = TokioCommand::new("sh");
     cmd.arg("-c").arg(command);
     cmd
-}
-
-fn build_shell_hint() -> String {
-    #[cfg(target_os = "windows")]
-    {
-        if let Some(bash_path) = find_windows_bash_path() {
-            format!(
-                "Current OS is Windows. Bash/run_command uses bash -lc ({}). Prefer Windows-safe Bash commands and Windows paths; do not use macOS/Linux-only commands (open/apt/brew) unless the user explicitly asks.",
-                bash_path.display()
-            )
-        } else {
-            "Current OS is Windows. Bash/run_command falls back to cmd /C because bash was not found. Prefer dir or powershell -Command Get-ChildItem; avoid macOS/Linux-only commands (open/apt/brew/find/ls/head/grep) unless bash is installed and the user explicitly asks.".to_string()
-        }
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        "Unix-like systems use sh -c for Bash/run_command.".to_string()
-    }
 }
 
 #[cfg(target_os = "windows")]
@@ -3796,42 +3630,6 @@ fn is_windows_system_bash(path: &Path) -> bool {
     normalized.ends_with("\\windows\\system32\\bash.exe")
 }
 
-fn build_skill_file_manifest(skill_dir: &Path, max_entries: usize) -> String {
-    let mut files = Vec::new();
-    for entry in WalkDir::new(skill_dir)
-        .follow_links(false)
-        .into_iter()
-        .flatten()
-    {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let Ok(relative) = path.strip_prefix(skill_dir) else {
-            continue;
-        };
-        let relative = relative.to_string_lossy().replace('\\', "/");
-        if relative.is_empty() {
-            continue;
-        }
-        files.push(relative);
-        if files.len() >= max_entries {
-            break;
-        }
-    }
-
-    if files.is_empty() {
-        return "(no files found)".to_string();
-    }
-
-    files.sort();
-    files
-        .into_iter()
-        .map(|item| format!("- {}", item))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 fn parse_exit_code(output: &str) -> Option<i32> {
     let mut lines = output.lines();
     let first = lines.next()?.trim();
@@ -3850,13 +3648,35 @@ fn is_tool_failure(output: &str) -> bool {
     parse_exit_code(output).map_or(false, |code| code != 0)
 }
 
+fn build_skill_execution_system_prompt(context: &str, skills_dir: &Path, skill_block: &str) -> String {
+    format!(
+        r#"You are executing a user-invoked skill.
+
+{}
+
+## Environment
+- App skills directory: {}
+- Use the app skills directory above for skill files.
+- Do not assume ~/.kiro/skills or ~/.codex/skills.
+
+## Execution Rules
+- Follow the active skill instructions below as the primary procedure for this request.
+- Prefer exact commands/URLs/paths from the skill over generic placeholders.
+- If required info is missing, ask for only the minimum missing info.
+
+{}
+"#,
+        context,
+        skills_dir.to_string_lossy(),
+        skill_block
+    )
+}
+
 fn build_tool_system_prompt(
     context: &str,
     skills_dir: &Path,
     available_skills: &[SkillMetadata],
 ) -> String {
-    let shell_hint = build_shell_hint();
-
     // 构建可用技能列表
     let skills_section = if available_skills.is_empty() {
         "当前没有已安装的技能。你可以使用 manage_skill 工具创建新技能。".to_string()
@@ -3877,9 +3697,8 @@ fn build_tool_system_prompt(
     };
 
     let context = format!(
-        "{}\n\n## Environment\n{}\n- App skills directory: {}\n- Do not assume ~/.kiro/skills or ~/.codex/skills. Use the app skills directory above for skill files.",
+        "{}\n\n## Environment\n- App skills directory: {}\n- Do not assume ~/.kiro/skills or ~/.codex/skills. Use the app skills directory above for skill files.",
         context,
-        shell_hint,
         skills_dir.to_string_lossy()
     );
     format!(
@@ -3939,18 +3758,10 @@ async fn run_tool_loop(
     available_skills: &[SkillMetadata],
     allowed_tools: &Option<Vec<String>>,
     preferred_base_dir: Option<&Path>,
-    strict_skill_mode: bool,
-    skill_evidence: Option<SkillExecutionEvidence>,
     cancel_token: Option<&CancellationToken>,
     progress: Option<&ProgressEmitter>,
 ) -> Result<ToolLoopResult, String> {
-    let access = build_tool_access(
-        config,
-        storage,
-        preferred_base_dir,
-        strict_skill_mode,
-        skill_evidence,
-    );
+    let access = build_tool_access(config, storage, preferred_base_dir);
     let mut loops = 0usize;
     let mut last_tool_calls: Option<Vec<(String, String)>> = None;
     let mut repeat_loops = 0usize;
@@ -4057,10 +3868,11 @@ async fn run_tool_loop(
                     };
                     tool_results.push((call.id.clone(), output.clone()));
 
-                    // 收集 tool result 到上下文
+                    let persisted_output =
+                        compact_tool_context_content(&output, MAX_PERSISTED_TOOL_CONTEXT_CHARS);
                     collected_tool_context.push(ToolContextMessage {
                         role: "tool".to_string(),
-                        content: Some(output),
+                        content: Some(persisted_output),
                         tool_call_id: Some(call.id.clone()),
                         tool_calls: None,
                     });

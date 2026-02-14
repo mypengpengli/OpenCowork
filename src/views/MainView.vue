@@ -221,19 +221,6 @@ function parseExplicitSkillCommand(messageText: string): ParsedSkillCommand | nu
   }
 }
 
-function findLastActiveSkill(messages = chatStore.messages): string | undefined {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const messageItem = messages[i]
-    if (messageItem.role !== 'assistant' || messageItem.isAlert) {
-      continue
-    }
-    if (messageItem.activeSkill && messageItem.activeSkill.trim().length > 0) {
-      return messageItem.activeSkill.trim().toLowerCase()
-    }
-  }
-  return undefined
-}
-
 function buildHistoryForModel(
   messages: typeof chatStore.chatHistoryForModel.value,
 ): PendingRequest['history'] {
@@ -573,13 +560,6 @@ async function executeRequest(payload: PendingRequest, includeUserMessage: boole
         timestamp: new Date().toISOString(),
       })
       placeholderAdded = true
-      appendProcessItem({
-        request_id: payload.requestId,
-        stage: 'step',
-        message: '\u8c03\u7528\u6280\u80fd',
-        detail: skillName ? '/' + skillName : undefined,
-        timestamp: new Date().toISOString(),
-      })
 
       response = await invoke<string>('invoke_skill', {
         name: skillName.toLowerCase(),
@@ -735,13 +715,8 @@ async function sendMessage() {
   attachments.value = []
 
   const explicitSkill = parseExplicitSkillCommand(userMessage)
-  const inheritedSkill = explicitSkill ? undefined : findLastActiveSkill()
-  const requestSkillName = explicitSkill?.name || inheritedSkill
-  const requestSkillArgs = explicitSkill
-    ? explicitSkill.args
-    : inheritedSkill
-      ? (userMessage || null)
-      : null
+  const requestSkillName = explicitSkill?.name
+  const requestSkillArgs = explicitSkill ? explicitSkill.args : null
   const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
   const payload: PendingRequest = {
     message: userMessage,
@@ -840,13 +815,8 @@ async function handleRegenerate(msg: { role: string; content: string; timestamp:
 
   const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
   const explicitSkill = parseExplicitSkillCommand(userMsg.content)
-  const inheritedSkill = explicitSkill ? undefined : findLastActiveSkill(chatStore.messages)
-  const requestSkillName = explicitSkill?.name || inheritedSkill
-  const requestSkillArgs = explicitSkill
-    ? explicitSkill.args
-    : inheritedSkill
-      ? (userMsg.content || null)
-      : null
+  const requestSkillName = explicitSkill?.name
+  const requestSkillArgs = explicitSkill ? explicitSkill.args : null
   const payload: PendingRequest = {
     message: userMsg.content,
     history: historyForModel,
@@ -1504,8 +1474,6 @@ onUnmounted(() => {
   flex: 1;
 }
 </style>
-
-
 
 
 
