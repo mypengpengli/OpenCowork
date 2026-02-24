@@ -6,6 +6,7 @@ import {
   NLayoutSider,
   NIcon,
   NButton,
+  NPopconfirm,
   darkTheme,
   zhCN,
   enUS,
@@ -43,8 +44,6 @@ function handleLoadConversation(id: string) {
 }
 
 function handleDeleteConversation(id: string) {
-  const confirmed = window.confirm(t('sidebar.deleteConfirm'))
-  if (!confirmed) return
   chatStore.deleteConversation(id)
 }
 
@@ -111,17 +110,26 @@ function goSettings() {
                     @click="handleLoadConversation(conversation.id)"
                   >
                     <span class="conversation-title">{{ conversation.title }}</span>
-                    <NButton
-                      quaternary
-                      size="tiny"
-                      class="conversation-delete"
-                      :title="t('common.delete')"
-                      @click.stop="handleDeleteConversation(conversation.id)"
+                    <NPopconfirm
+                      :positive-text="t('common.delete')"
+                      :negative-text="t('common.cancel')"
+                      @positive-click="handleDeleteConversation(conversation.id)"
                     >
-                      <template #icon>
-                        <NIcon><TrashOutline /></NIcon>
+                      <template #trigger>
+                        <NButton
+                          quaternary
+                          size="tiny"
+                          class="conversation-delete"
+                          :title="t('common.delete')"
+                          @click.stop
+                        >
+                          <template #icon>
+                            <NIcon><TrashOutline /></NIcon>
+                          </template>
+                        </NButton>
                       </template>
-                    </NButton>
+                      {{ t('sidebar.deleteConfirm') }}
+                    </NPopconfirm>
                   </div>
                 </div>
               </div>
