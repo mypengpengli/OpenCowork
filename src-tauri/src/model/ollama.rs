@@ -3,11 +3,15 @@ use crate::commands::ChatHistoryMessage;
 use chrono::Local;
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 pub struct OllamaClient {
     config: OllamaConfig,
     client: Client,
 }
+
+const OLLAMA_CONNECT_TIMEOUT_SECS: u64 = 10;
+const OLLAMA_REQUEST_TIMEOUT_SECS: u64 = 300;
 
 #[derive(Serialize)]
 struct GenerateRequest {
@@ -37,7 +41,7 @@ impl OllamaClient {
     pub fn new(config: &OllamaConfig) -> Self {
         Self {
             config: config.clone(),
-            client: Client::new(),
+            client: build_ollama_client(),
         }
     }
 
@@ -271,6 +275,14 @@ impl OllamaClient {
 
         Ok(generate_response.response)
     }
+}
+
+fn build_ollama_client() -> Client {
+    Client::builder()
+        .connect_timeout(Duration::from_secs(OLLAMA_CONNECT_TIMEOUT_SECS))
+        .timeout(Duration::from_secs(OLLAMA_REQUEST_TIMEOUT_SECS))
+        .build()
+        .unwrap_or_else(|_| Client::new())
 }
 
 fn write_exchange_log(

@@ -3,12 +3,16 @@ use crate::commands::ChatHistoryMessage;
 use chrono::Local;
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 pub struct ApiClient {
     config: ApiConfig,
     client: Client,
     direct_client: Client,
 }
+
+const API_CONNECT_TIMEOUT_SECS: u64 = 15;
+const API_REQUEST_TIMEOUT_SECS: u64 = 120;
 
 #[derive(Serialize)]
 struct ChatRequest {
@@ -1203,14 +1207,21 @@ fn history_message_to_message(msg: ChatHistoryMessage) -> Option<Message> {
 }
 
 fn build_default_api_client() -> Client {
-    Client::builder().build().unwrap_or_else(|_| Client::new())
+    build_api_client(false)
 }
 
 fn build_direct_api_client() -> Client {
-    Client::builder()
-        .no_proxy()
-        .build()
-        .unwrap_or_else(|_| Client::new())
+    build_api_client(true)
+}
+
+fn build_api_client(no_proxy: bool) -> Client {
+    let mut builder = Client::builder()
+        .connect_timeout(Duration::from_secs(API_CONNECT_TIMEOUT_SECS))
+        .timeout(Duration::from_secs(API_REQUEST_TIMEOUT_SECS));
+    if no_proxy {
+        builder = builder.no_proxy();
+    }
+    builder.build().unwrap_or_else(|_| Client::new())
 }
 
 fn should_retry_without_proxy(error: &reqwest::Error) -> bool {

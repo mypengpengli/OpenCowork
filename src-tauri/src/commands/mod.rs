@@ -60,6 +60,8 @@ const DEFAULT_MAX_READ_BYTES: usize = 200_000;
 const DEFAULT_MAX_GLOB_RESULTS: usize = 500;
 const DEFAULT_MAX_GREP_RESULTS: usize = 200;
 const DEFAULT_COMMAND_TIMEOUT_MS: u64 = 120_000;
+const DEFAULT_AGENT_BROWSER_TIMEOUT_MS: u64 = 20_000;
+const MAX_COMMAND_TIMEOUT_MS: u64 = 900_000;
 const MAX_COMMAND_OUTPUT_CHARS: usize = 20_000;
 const MAX_GREP_FILE_BYTES: u64 = 2_000_000;
 
@@ -3261,6 +3263,15 @@ fn command_mentions_script(command: &str) -> bool {
     script_exts.iter().any(|ext| lower.contains(ext))
 }
 
+fn default_timeout_for_command(command: &str) -> u64 {
+    let lower = command.trim_start().to_lowercase();
+    if lower.starts_with("agent-browser ") {
+        DEFAULT_AGENT_BROWSER_TIMEOUT_MS
+    } else {
+        DEFAULT_COMMAND_TIMEOUT_MS
+    }
+}
+
 fn read_file_tool(access: &ToolAccess, args: ReadArgs) -> Result<String, String> {
     if access.mode == "unset" {
         return Err(TOOL_MODE_UNSET_ERROR.to_string());
@@ -3483,7 +3494,11 @@ async fn run_command_tool(access: &ToolAccess, args: BashArgs) -> Result<String,
         return Ok(format!("工作目录不在允许范围内: {}", cwd.display()));
     }
 
-    let timeout_ms = args.timeout_ms.unwrap_or(DEFAULT_COMMAND_TIMEOUT_MS);
+    let timeout_ms = args
+        .timeout_ms
+        .unwrap_or_else(|| default_timeout_for_command(&args.command))
+        .min(MAX_COMMAND_TIMEOUT_MS)
+        .max(1_000);
 
     if command_requests_background(&args.command) {
         fs::create_dir_all(&access.tasks_dir)
