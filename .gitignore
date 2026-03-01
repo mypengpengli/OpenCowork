@@ -20,6 +20,9 @@ Thumbs.db
 .env
 .env.local
 
+# Local agent settings
+.claude/settings.local.json
+
 # Tauri build
 src-tauri/WixTools/
 tmpclaude-*
@@ -27,6 +30,9 @@ tmpclaude-*
 nul
 src-tauri/*.key
 .tauri-keys/
+
+# Generated schemas
+src-tauri/gen/schemas/
 
 # Local release artifacts
 release/
