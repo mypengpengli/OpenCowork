@@ -6,6 +6,9 @@ export interface AppConfig {
     provider: 'api' | 'ollama'
     api: {
       type: 'openai' | 'claude' | 'custom'
+      request_format: 'chat_completions' | 'responses'
+      responses_query_params: Record<string, string>
+      responses_headers: Record<string, string>
       endpoint: string
       api_key: string
       model: string
@@ -52,6 +55,9 @@ export const useSettingsStore = defineStore('settings', () => {
       provider: 'api',
       api: {
         type: 'openai',
+        request_format: 'chat_completions',
+        responses_query_params: {},
+        responses_headers: {},
         endpoint: 'https://api.openai.com/v1',
         api_key: '',
         model: 'gpt-4-vision-preview',

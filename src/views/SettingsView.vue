@@ -87,6 +87,9 @@ const formValue = ref({
   // 模型配置
   provider: 'api',
   apiType: 'openai',
+  apiRequestFormat: 'chat_completions',
+  apiResponsesQueryParams: '',
+  apiResponsesHeaders: '',
   apiEndpoint: 'https://api.openai.com/v1',
   apiKey: '',
   apiModel: 'gpt-4-vision-preview',
@@ -132,6 +135,11 @@ const apiTypeOptions = computed(() => [
   { label: t('settings.form.api.custom'), value: 'custom' },
 ])
 
+const apiRequestFormatOptions = computed(() => [
+  { label: t('settings.form.apiRequestFormat.chatCompletions'), value: 'chat_completions' },
+  { label: t('settings.form.apiRequestFormat.responses'), value: 'responses' },
+])
+
 const skillTemplateOptions = computed(() => [
   { label: t('settings.skills.template.basic'), value: 'basic' },
   { label: t('settings.skills.template.file'), value: 'file' },
@@ -160,6 +168,29 @@ const drawerTitle = computed(() => {
 function listToText(values?: string[]) {
   if (!values || values.length === 0) return ''
   return values.join('\n')
+}
+
+function mapToText(values?: Record<string, string>) {
+  if (!values) return ''
+  return Object.entries(values)
+    .filter(([key]) => key.trim().length > 0)
+    .map(([key, value]) => `${key}=${value}`)
+    .join('\n')
+}
+
+function textToMap(value: string) {
+  const result: Record<string, string> = {}
+  for (const rawLine of value.split('\n')) {
+    const line = rawLine.trim()
+    if (!line) continue
+    const equalsIndex = line.indexOf('=')
+    if (equalsIndex <= 0) continue
+    const key = line.slice(0, equalsIndex).trim()
+    const val = line.slice(equalsIndex + 1).trim()
+    if (!key) continue
+    result[key] = val
+  }
+  return result
 }
 
 
@@ -193,6 +224,9 @@ function normalizeConfig(raw: any) {
       provider: raw?.model?.provider || 'api',
       api: {
         type: raw?.model?.api?.type || 'openai',
+        request_format: raw?.model?.api?.request_format || 'chat_completions',
+        responses_query_params: raw?.model?.api?.responses_query_params || {},
+        responses_headers: raw?.model?.api?.responses_headers || {},
         endpoint: raw?.model?.api?.endpoint || 'https://api.openai.com/v1',
         api_key: raw?.model?.api?.api_key || '',
         model: raw?.model?.api?.model || 'gpt-4-vision-preview',
@@ -243,6 +277,9 @@ function applyConfigToForm(config: any) {
   formValue.value = {
     provider: normalized.model.provider,
     apiType: normalized.model.api.type,
+    apiRequestFormat: normalized.model.api.request_format,
+    apiResponsesQueryParams: mapToText(normalized.model.api.responses_query_params),
+    apiResponsesHeaders: mapToText(normalized.model.api.responses_headers),
     apiEndpoint: normalized.model.api.endpoint,
     apiKey: normalized.model.api.api_key,
     apiModel: normalized.model.api.model,
@@ -278,6 +315,9 @@ function buildConfigFromForm() {
       provider: formValue.value.provider,
       api: {
         type: formValue.value.apiType,
+        request_format: formValue.value.apiRequestFormat,
+        responses_query_params: textToMap(formValue.value.apiResponsesQueryParams),
+        responses_headers: textToMap(formValue.value.apiResponsesHeaders),
         endpoint: formValue.value.apiEndpoint,
         api_key: formValue.value.apiKey,
         model: formValue.value.apiModel,
@@ -322,8 +362,10 @@ function buildConfigFromForm() {
 function buildProfileSummary(config: any) {
   const normalized = normalizeConfig(config)
   if (normalized.model.provider === 'api') {
+    const formatLabel =
+      normalized.model.api.request_format === 'responses' ? 'responses' : 'chat'
     return {
-      subtitle: `API/${normalized.model.api.type} · ${normalized.model.api.model}`,
+      subtitle: `API/${normalized.model.api.type}/${formatLabel} · ${normalized.model.api.model}`,
       detail: normalized.model.api.endpoint,
     }
   }
@@ -956,6 +998,27 @@ async function installUpdate() {
                 <NFormItem :label="t('settings.form.apiType')">
                   <NSelect v-model:value="formValue.apiType" :options="apiTypeOptions" />
                 </NFormItem>
+                <NFormItem :label="t('settings.form.apiRequestFormat')">
+                  <NSelect v-model:value="formValue.apiRequestFormat" :options="apiRequestFormatOptions" />
+                </NFormItem>
+                <template v-if="formValue.apiRequestFormat === 'responses'">
+                  <NFormItem :label="t('settings.form.responsesQueryParams')">
+                    <NInput
+                      v-model:value="formValue.apiResponsesQueryParams"
+                      type="textarea"
+                      :autosize="{ minRows: 2, maxRows: 6 }"
+                      :placeholder="t('settings.form.responsesQueryParamsPlaceholder')"
+                    />
+                  </NFormItem>
+                  <NFormItem :label="t('settings.form.responsesHeaders')">
+                    <NInput
+                      v-model:value="formValue.apiResponsesHeaders"
+                      type="textarea"
+                      :autosize="{ minRows: 2, maxRows: 6 }"
+                      :placeholder="t('settings.form.responsesHeadersPlaceholder')"
+                    />
+                  </NFormItem>
+                </template>
                 <NFormItem :label="t('settings.form.apiEndpoint')">
                   <NInput v-model:value="formValue.apiEndpoint" placeholder="https://api.openai.com/v1" />
                 </NFormItem>

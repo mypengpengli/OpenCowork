@@ -139,6 +139,11 @@ pub enum ChatWithToolsResult {
     },
 }
 
+struct ResponsesResult {
+    text: Option<String>,
+    tool_calls: Vec<ToolCall>,
+}
+
 impl ApiClient {
     pub fn new(config: &ApiConfig) -> Self {
         Self {
@@ -146,6 +151,313 @@ impl ApiClient {
             client: build_default_api_client(),
             direct_client: build_direct_api_client(),
         }
+    }
+
+    fn use_responses_request_format(&self) -> bool {
+        self.config.request_format == "responses"
+    }
+
+    fn responses_reasoning_effort(&self) -> Option<&'static str> {
+        let model = self.config.model.to_lowercase();
+        if model.contains("codex") {
+            Some("high")
+        } else {
+            None
+        }
+    }
+
+    fn messages_to_responses_input(
+        messages: &[Message],
+    ) -> (Option<String>, Vec<serde_json::Value>) {
+        let mut instructions_parts = Vec::new();
+        let mut input = Vec::new();
+        for message in messages {
+            let role = message.role.trim().to_lowercase();
+
+            if role == "system" || role == "developer" {
+                let instructions = message_text_content(message.content.as_ref());
+                if !instructions.trim().is_empty() {
+                    instructions_parts.push(instructions);
+                }
+                continue;
+            }
+
+            if role == "tool" {
+                let output = message_text_content(message.content.as_ref());
+                if !output.is_empty() {
+                    if let Some(call_id) = message.tool_call_id.as_ref() {
+                        input.push(serde_json::json!({
+                            "type": "function_call_output",
+                            "call_id": call_id,
+                            "output": output,
+                        }));
+                    } else {
+                        input.push(serde_json::json!({
+                            "type": "message",
+                            "role": "tool",
+                            "content": output,
+                        }));
+                    }
+                }
+                continue;
+            }
+
+            if role == "assistant" {
+                if let Some(tool_calls) = &message.tool_calls {
+                    for call in tool_calls {
+                        input.push(serde_json::json!({
+                            "type": "function_call",
+                            "call_id": call.id,
+                            "name": call.function.name,
+                            "arguments": call.function.arguments,
+                        }));
+                    }
+                }
+            }
+
+            match message.content.as_ref() {
+                Some(MessageContent::Text(text)) => {
+                    if !text.trim().is_empty() {
+                        input.push(serde_json::json!({
+                            "type": "message",
+                            "role": role,
+                            "content": text,
+                        }));
+                    }
+                }
+                Some(MessageContent::Parts(parts)) => {
+                    let mut content = Vec::new();
+                    for part in parts {
+                        match part.content_type.as_str() {
+                            "text" => {
+                                if let Some(text) = &part.text {
+                                    if !text.trim().is_empty() {
+                                        content.push(serde_json::json!({
+                                            "type": "input_text",
+                                            "text": text,
+                                        }));
+                                    }
+                                }
+                            }
+                            "image_url" => {
+                                if let Some(image_url) = &part.image_url {
+                                    content.push(serde_json::json!({
+                                        "type": "input_image",
+                                        "image_url": image_url.url,
+                                    }));
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    if !content.is_empty() {
+                        input.push(serde_json::json!({
+                            "type": "message",
+                            "role": role,
+                            "content": content,
+                        }));
+                    }
+                }
+                None => {}
+            }
+        }
+        let instructions = if instructions_parts.is_empty() {
+            None
+        } else {
+            Some(instructions_parts.join("\n\n"))
+        };
+        (instructions, input)
+    }
+
+    fn tools_to_responses(tools: &[Tool]) -> Vec<serde_json::Value> {
+        tools
+            .iter()
+            .map(|tool| {
+                serde_json::json!({
+                    "type": tool.tool_type.clone(),
+                    "name": tool.function.name.clone(),
+                    "description": tool.function.description.clone(),
+                    "parameters": tool.function.parameters.clone(),
+                })
+            })
+            .collect()
+    }
+
+    fn parse_responses_result(body: &serde_json::Value) -> ResponsesResult {
+        let mut text_parts = Vec::new();
+        let mut tool_calls = Vec::new();
+
+        if let Some(output_text) = body.get("output_text").and_then(|v| v.as_str()) {
+            let trimmed = output_text.trim();
+            if !trimmed.is_empty() {
+                text_parts.push(trimmed.to_string());
+            }
+        }
+
+        if let Some(output) = body.get("output").and_then(|v| v.as_array()) {
+            for item in output {
+                let item_type = item.get("type").and_then(|v| v.as_str()).unwrap_or_default();
+                match item_type {
+                    "message" => {
+                        if let Some(content) = item.get("content").and_then(|v| v.as_array()) {
+                            for part in content {
+                                if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
+                                    let trimmed = text.trim();
+                                    if !trimmed.is_empty() {
+                                        text_parts.push(trimmed.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    "function_call" | "tool_call" => {
+                        let name = item
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string();
+                        if name.is_empty() {
+                            continue;
+                        }
+
+                        let id = item
+                            .get("call_id")
+                            .and_then(|v| v.as_str())
+                            .or_else(|| item.get("id").and_then(|v| v.as_str()))
+                            .unwrap_or("call_generated")
+                            .to_string();
+
+                        let arguments = match item.get("arguments") {
+                            Some(serde_json::Value::String(s)) => s.clone(),
+                            Some(other) => {
+                                serde_json::to_string(other).unwrap_or_else(|_| "{}".to_string())
+                            }
+                            None => "{}".to_string(),
+                        };
+
+                        tool_calls.push(ToolCall {
+                            id,
+                            call_type: "function".to_string(),
+                            function: ToolCallFunction { name, arguments },
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        ResponsesResult {
+            text: if text_parts.is_empty() {
+                None
+            } else {
+                Some(text_parts.join("\n\n"))
+            },
+            tool_calls,
+        }
+    }
+
+    async fn send_responses_request(
+        &self,
+        log_prefix: &str,
+        messages: Vec<Message>,
+        max_output_tokens: u32,
+        tools: Option<Vec<Tool>>,
+    ) -> Result<ResponsesResult, String> {
+        let url = format!("{}/responses", self.config.endpoint);
+        let (instructions, input) = Self::messages_to_responses_input(&messages);
+        let mut body = serde_json::json!({
+            "model": self.config.model.clone(),
+            "input": input,
+            "max_output_tokens": max_output_tokens,
+        });
+
+        if let Some(instructions) = instructions {
+            body["instructions"] = serde_json::Value::String(instructions);
+        }
+
+        if let Some(effort) = self.responses_reasoning_effort() {
+            body["reasoning"] = serde_json::json!({ "effort": effort });
+        }
+
+        if let Some(tool_defs) = tools.as_ref() {
+            if !tool_defs.is_empty() {
+                body["tools"] = serde_json::Value::Array(Self::tools_to_responses(tool_defs));
+            }
+        }
+
+        let request_json = serde_json::to_string_pretty(&body)
+            .unwrap_or_else(|e| format!("Unable to serialize request: {}", e));
+        let log_key = format!("{}-responses", log_prefix);
+        let responses_query_params: Vec<(String, String)> = self
+            .config
+            .responses_query_params
+            .iter()
+            .filter_map(|(key, value)| {
+                let trimmed = key.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some((trimmed.to_string(), value.clone()))
+                }
+            })
+            .collect();
+        let responses_headers: Vec<(String, String)> = self
+            .config
+            .responses_headers
+            .iter()
+            .filter_map(|(key, value)| {
+                let trimmed = key.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some((trimmed.to_string(), value.clone()))
+                }
+            })
+            .collect();
+
+        let response = self
+            .send_with_proxy_fallback(|client| {
+                let mut request_builder = client
+                    .post(&url)
+                    .header("Authorization", format!("Bearer {}", self.config.api_key))
+                    .header("Content-Type", "application/json");
+
+                if !responses_query_params.is_empty() {
+                    request_builder = request_builder.query(&responses_query_params);
+                }
+
+                for (key, value) in &responses_headers {
+                    request_builder = request_builder.header(key, value);
+                }
+
+                request_builder.json(&body)
+            })
+            .await
+            .map_err(|e| {
+                write_exchange_log(&log_key, &url, &request_json, None, None, Some(&e.to_string()));
+                format!("Request failed: {}", e)
+            })?;
+
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        write_exchange_log(&log_key, &url, &request_json, Some(status), Some(&text), None);
+
+        if !status.is_success() {
+            return Err(format!("API error {}: {}", status, text));
+        }
+
+        let json: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|e| format!("Failed to parse response JSON: {}", e))?;
+
+        if let Some(error_obj) = json.get("error") {
+            // OpenAI Responses returns `"error": null` on success.
+            if !error_obj.is_null() {
+                return Err(format!("API error: {}", error_obj));
+            }
+        }
+
+        Ok(Self::parse_responses_result(&json))
     }
 
     pub async fn test_connection(&self) -> Result<(), String> {
@@ -175,6 +487,29 @@ impl ApiClient {
     }
 
     pub async fn chat(&self, system_prompt: &str, user_message: &str) -> Result<String, String> {
+        if self.use_responses_request_format() {
+            let messages = vec![
+                Message {
+                    role: "system".to_string(),
+                    content: Some(MessageContent::Text(system_prompt.to_string())),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                Message {
+                    role: "user".to_string(),
+                    content: Some(MessageContent::Text(user_message.to_string())),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+            ];
+            let result = self
+                .send_responses_request("api-chat", messages, 2048, None)
+                .await?;
+            return result
+                .text
+                .ok_or_else(|| "No content returned".to_string());
+        }
+
         let url = format!("{}/chat/completions", self.config.endpoint);
 
         let request = ChatRequest {
@@ -239,6 +574,38 @@ impl ApiClient {
         user_message: &str,
         history: Option<Vec<ChatHistoryMessage>>,
     ) -> Result<String, String> {
+        if self.use_responses_request_format() {
+            let mut messages = vec![Message {
+                role: "system".to_string(),
+                content: Some(MessageContent::Text(system_prompt.to_string())),
+                tool_calls: None,
+                tool_call_id: None,
+            }];
+
+            if let Some(hist) = history.clone() {
+                for msg in hist {
+                    let Some(message) = history_message_to_message(msg) else {
+                        continue;
+                    };
+                    messages.push(message);
+                }
+            }
+
+            messages.push(Message {
+                role: "user".to_string(),
+                content: Some(MessageContent::Text(user_message.to_string())),
+                tool_calls: None,
+                tool_call_id: None,
+            });
+
+            let result = self
+                .send_responses_request("api-chat-history", messages, 2048, None)
+                .await?;
+            return result
+                .text
+                .ok_or_else(|| "No content returned".to_string());
+        }
+
         let url = format!("{}/chat/completions", self.config.endpoint);
 
         let mut messages = vec![Message {
@@ -314,6 +681,39 @@ impl ApiClient {
         history: Option<Vec<ChatHistoryMessage>>,
         image_urls: &[String],
     ) -> Result<String, String> {
+        if self.use_responses_request_format() {
+            let mut messages = vec![Message {
+                role: "system".to_string(),
+                content: Some(MessageContent::Text(system_prompt.to_string())),
+                tool_calls: None,
+                tool_call_id: None,
+            }];
+
+            if let Some(hist) = history.clone() {
+                for msg in hist {
+                    let Some(message) = history_message_to_message(msg) else {
+                        continue;
+                    };
+                    messages.push(message);
+                }
+            }
+
+            let user_content = Self::build_user_message_content(user_message, image_urls);
+            messages.push(Message {
+                role: "user".to_string(),
+                content: Some(user_content),
+                tool_calls: None,
+                tool_call_id: None,
+            });
+
+            let result = self
+                .send_responses_request("api-chat-history", messages, 2048, None)
+                .await?;
+            return result
+                .text
+                .ok_or_else(|| "No content returned".to_string());
+        }
+
         let url = format!("{}/chat/completions", self.config.endpoint);
 
         let mut messages = vec![Message {
@@ -437,6 +837,34 @@ impl ApiClient {
         Ok(chat_response)
     }
     pub async fn analyze_image(&self, image_base64: &str, prompt: &str) -> Result<String, String> {
+        if self.use_responses_request_format() {
+            let messages = vec![Message {
+                role: "user".to_string(),
+                content: Some(MessageContent::Parts(vec![
+                    ContentPart {
+                        content_type: "text".to_string(),
+                        text: Some(prompt.to_string()),
+                        image_url: None,
+                    },
+                    ContentPart {
+                        content_type: "image_url".to_string(),
+                        text: None,
+                        image_url: Some(ImageUrl {
+                            url: format!("data:image/jpeg;base64,{}", image_base64),
+                        }),
+                    },
+                ])),
+                tool_calls: None,
+                tool_call_id: None,
+            }];
+            let result = self
+                .send_responses_request("api-image", messages, 10000, None)
+                .await?;
+            return result
+                .text
+                .ok_or_else(|| "No content returned".to_string());
+        }
+
         let url = format!("{}/chat/completions", self.config.endpoint);
 
         let request = ChatRequest {
@@ -507,6 +935,19 @@ impl ApiClient {
     }
 
     async fn test_chat_connection(&self) -> Result<(), String> {
+        if self.use_responses_request_format() {
+            let messages = vec![Message {
+                role: "user".to_string(),
+                content: Some(MessageContent::Text("ping".to_string())),
+                tool_calls: None,
+                tool_call_id: None,
+            }];
+            self.send_responses_request("api-test-chat", messages, 1, None)
+                .await
+                .map(|_| ())?;
+            return Ok(());
+        }
+
         let url = format!("{}/chat/completions", self.config.endpoint);
 
         let request = ChatRequest {
@@ -861,6 +1302,64 @@ impl ApiClient {
         history: Option<Vec<ChatHistoryMessage>>,
         tools: Vec<Tool>,
     ) -> Result<ChatWithToolsResult, String> {
+        if self.use_responses_request_format() {
+            let mut messages = vec![Message {
+                role: "system".to_string(),
+                content: Some(MessageContent::Text(system_prompt.to_string())),
+                tool_calls: None,
+                tool_call_id: None,
+            }];
+            let mut messages_for_return = Vec::new();
+
+            if let Some(hist) = history.clone() {
+                for msg in hist {
+                    let Some(message) = history_message_to_message(msg) else {
+                        continue;
+                    };
+                    messages.push(message.clone());
+                    messages_for_return.push(message);
+                }
+            }
+
+            let current_user_message = Message {
+                role: "user".to_string(),
+                content: Some(MessageContent::Text(user_message.to_string())),
+                tool_calls: None,
+                tool_call_id: None,
+            };
+            messages.push(current_user_message.clone());
+            messages_for_return.push(current_user_message);
+
+            let result = self
+                .send_responses_request(
+                    "api-chat-tools",
+                    messages,
+                    2048,
+                    if tools.is_empty() { None } else { Some(tools) },
+                )
+                .await?;
+
+            if !result.tool_calls.is_empty() {
+                let assistant_message = Message {
+                    role: "assistant".to_string(),
+                    content: result.text.clone().map(MessageContent::Text),
+                    tool_calls: Some(result.tool_calls.clone()),
+                    tool_call_id: None,
+                };
+                messages_for_return.push(assistant_message);
+                return Ok(ChatWithToolsResult::ToolCalls {
+                    calls: result.tool_calls,
+                    messages: messages_for_return,
+                });
+            }
+
+            return Ok(ChatWithToolsResult::Text(
+                result
+                    .text
+                    .ok_or_else(|| "No content returned".to_string())?,
+            ));
+        }
+
         let url = format!("{}/chat/completions", self.config.endpoint);
 
         let mut messages = vec![Message {
@@ -963,6 +1462,65 @@ impl ApiClient {
         tools: Vec<Tool>,
         image_urls: &[String],
     ) -> Result<ChatWithToolsResult, String> {
+        if self.use_responses_request_format() {
+            let mut messages = vec![Message {
+                role: "system".to_string(),
+                content: Some(MessageContent::Text(system_prompt.to_string())),
+                tool_calls: None,
+                tool_call_id: None,
+            }];
+            let mut messages_for_return = Vec::new();
+
+            if let Some(hist) = history.clone() {
+                for msg in hist {
+                    let Some(message) = history_message_to_message(msg) else {
+                        continue;
+                    };
+                    messages.push(message.clone());
+                    messages_for_return.push(message);
+                }
+            }
+
+            let user_content = Self::build_user_message_content(user_message, image_urls);
+            let current_user_message = Message {
+                role: "user".to_string(),
+                content: Some(user_content),
+                tool_calls: None,
+                tool_call_id: None,
+            };
+            messages.push(current_user_message.clone());
+            messages_for_return.push(current_user_message);
+
+            let result = self
+                .send_responses_request(
+                    "api-chat-tools",
+                    messages,
+                    2048,
+                    if tools.is_empty() { None } else { Some(tools) },
+                )
+                .await?;
+
+            if !result.tool_calls.is_empty() {
+                let assistant_message = Message {
+                    role: "assistant".to_string(),
+                    content: result.text.clone().map(MessageContent::Text),
+                    tool_calls: Some(result.tool_calls.clone()),
+                    tool_call_id: None,
+                };
+                messages_for_return.push(assistant_message);
+                return Ok(ChatWithToolsResult::ToolCalls {
+                    calls: result.tool_calls,
+                    messages: messages_for_return,
+                });
+            }
+
+            return Ok(ChatWithToolsResult::Text(
+                result
+                    .text
+                    .ok_or_else(|| "No content returned".to_string())?,
+            ));
+        }
+
         let url = format!("{}/chat/completions", self.config.endpoint);
 
         let mut messages = vec![Message {
@@ -1061,6 +1619,59 @@ impl ApiClient {
         tool_results: Vec<(String, String)>,
         tools: Vec<Tool>,
     ) -> Result<ChatWithToolsResult, String> {
+        if self.use_responses_request_format() {
+            let mut messages = vec![Message {
+                role: "system".to_string(),
+                content: Some(MessageContent::Text(system_prompt.to_string())),
+                tool_calls: None,
+                tool_call_id: None,
+            }];
+
+            let mut messages_for_return = messages_so_far;
+
+            messages.extend(messages_for_return.iter().cloned());
+
+            for (tool_call_id, tool_result) in tool_results {
+                let tool_message = Message {
+                    role: "tool".to_string(),
+                    content: Some(MessageContent::Text(tool_result)),
+                    tool_calls: None,
+                    tool_call_id: Some(tool_call_id),
+                };
+                messages.push(tool_message.clone());
+                messages_for_return.push(tool_message);
+            }
+
+            let result = self
+                .send_responses_request(
+                    "api-chat-tool-result",
+                    messages,
+                    2048,
+                    if tools.is_empty() { None } else { Some(tools) },
+                )
+                .await?;
+
+            if !result.tool_calls.is_empty() {
+                let assistant_message = Message {
+                    role: "assistant".to_string(),
+                    content: result.text.clone().map(MessageContent::Text),
+                    tool_calls: Some(result.tool_calls.clone()),
+                    tool_call_id: None,
+                };
+                messages_for_return.push(assistant_message);
+                return Ok(ChatWithToolsResult::ToolCalls {
+                    calls: result.tool_calls,
+                    messages: messages_for_return,
+                });
+            }
+
+            return Ok(ChatWithToolsResult::Text(
+                result
+                    .text
+                    .ok_or_else(|| "No content returned".to_string())?,
+            ));
+        }
+
         let url = format!("{}/chat/completions", self.config.endpoint);
 
         let mut messages = vec![Message {
@@ -1163,6 +1774,26 @@ impl ApiClient {
                 }
             }
         }
+    }
+}
+
+fn message_text_content(content: Option<&MessageContent>) -> String {
+    match content {
+        Some(MessageContent::Text(text)) => text.clone(),
+        Some(MessageContent::Parts(parts)) => {
+            let mut text_parts = Vec::new();
+            for part in parts {
+                if part.content_type == "text" {
+                    if let Some(text) = &part.text {
+                        if !text.trim().is_empty() {
+                            text_parts.push(text.clone());
+                        }
+                    }
+                }
+            }
+            text_parts.join("\n\n")
+        }
+        None => String::new(),
     }
 }
 

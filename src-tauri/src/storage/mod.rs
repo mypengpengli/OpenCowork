@@ -47,9 +47,19 @@ pub struct ModelConfig {
 pub struct ApiConfig {
     #[serde(rename = "type")]
     pub api_type: String,
+    #[serde(default = "default_api_request_format")]
+    pub request_format: String,
+    #[serde(default)]
+    pub responses_query_params: HashMap<String, String>,
+    #[serde(default)]
+    pub responses_headers: HashMap<String, String>,
     pub endpoint: String,
     pub api_key: String,
     pub model: String,
+}
+
+fn default_api_request_format() -> String {
+    "chat_completions".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,6 +198,9 @@ impl Default for Config {
                 provider: "api".to_string(),
                 api: ApiConfig {
                     api_type: "openai".to_string(),
+                    request_format: default_api_request_format(),
+                    responses_query_params: HashMap::new(),
+                    responses_headers: HashMap::new(),
                     endpoint: "https://api.openai.com/v1".to_string(),
                     api_key: String::new(),
                     model: "gpt-4-vision-preview".to_string(),
