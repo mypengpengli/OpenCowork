@@ -55,6 +55,24 @@ const attachmentPreviews = ref<Record<string, string>>({})
 
 const MAX_ATTACHMENTS = 6
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'])
+const IMAGE_FILE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp']
+const DOCUMENT_FILE_EXTENSIONS = [
+  'txt',
+  'md',
+  'json',
+  'csv',
+  'log',
+  'yaml',
+  'yml',
+  'pdf',
+  'doc',
+  'docx',
+  'xls',
+  'xlsx',
+  'ppt',
+  'pptx',
+]
+const ALL_ATTACHMENT_FILE_EXTENSIONS = IMAGE_FILE_EXTENSIONS.concat(DOCUMENT_FILE_EXTENSIONS)
 const TOOL_MODE_UNSET_ERROR = 'TOOLS_MODE_UNSET'
 const REQUEST_CANCELLED_ERROR = 'REQUEST_CANCELLED'
 const cancelledRequestIds = new Set<string>()
@@ -344,8 +362,9 @@ async function addAttachments() {
     const selection = await open({
       multiple: true,
       filters: [
-        { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'] },
-        { name: 'Documents', extensions: ['txt', 'md', 'json', 'csv', 'log', 'yaml', 'yml', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'] },
+        { name: t('main.attachments.filter.allSupported'), extensions: ALL_ATTACHMENT_FILE_EXTENSIONS },
+        { name: t('main.attachments.filter.images'), extensions: IMAGE_FILE_EXTENSIONS },
+        { name: t('main.attachments.filter.documents'), extensions: DOCUMENT_FILE_EXTENSIONS },
       ],
     })
     if (!selection) return
