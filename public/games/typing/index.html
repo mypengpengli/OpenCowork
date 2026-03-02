@@ -98,10 +98,95 @@
 
         .lives-container { font-size: 45px; filter: drop-shadow(3px 3px 0 #fff); }
 
-        #game-stage { flex: 1; position: relative; width: 100%; overflow: hidden; }
+        #game-stage {
+            flex: 1;
+            position: relative;
+            width: 100%;
+            overflow: hidden;
+            perspective: 1280px;
+            perspective-origin: 50% 28%;
+            isolation: isolate;
+        }
+        #game-stage::before,
+        #game-stage::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            transition: transform 0.45s ease, opacity 0.45s ease, background 0.45s ease;
+            z-index: 0;
+        }
+        #game-stage[data-mode="vertical"] {
+            perspective-origin: 50% 14%;
+        }
+        #game-stage[data-mode="vertical"]::before {
+            background:
+                radial-gradient(circle at 18% 24%, rgba(255, 255, 255, 0.34) 0%, transparent 12%),
+                radial-gradient(circle at 76% 18%, rgba(255, 255, 255, 0.26) 0%, transparent 10%),
+                linear-gradient(180deg, rgba(255,255,255,0.18), transparent 42%);
+            opacity: 0.7;
+        }
+        #game-stage[data-mode="vertical"]::after {
+            left: 8%;
+            right: 8%;
+            top: auto;
+            bottom: -22%;
+            height: 42%;
+            border-radius: 50%;
+            background:
+                radial-gradient(circle, rgba(255, 247, 174, 0.72) 0%, rgba(255, 210, 77, 0.34) 42%, rgba(255, 210, 77, 0) 72%),
+                repeating-linear-gradient(90deg, rgba(255,255,255,0.08) 0 18px, rgba(255,255,255,0) 18px 36px);
+            transform: rotateX(78deg) translateZ(-140px);
+            transform-origin: center top;
+            opacity: 0.85;
+        }
+        #game-stage[data-mode="horizontal"] {
+            perspective-origin: 18% 50%;
+        }
+        #game-stage[data-mode="horizontal"]::before {
+            background:
+                radial-gradient(circle at 12% 52%, rgba(255,255,255,0.28) 0%, rgba(255,255,255,0.06) 18%, rgba(255,255,255,0) 32%),
+                linear-gradient(90deg, rgba(255,255,255,0.08), transparent 34%);
+            opacity: 0.9;
+        }
+        #game-stage[data-mode="horizontal"]::after {
+            inset: 14% 10% 12% -6%;
+            background:
+                repeating-linear-gradient(90deg, rgba(255,255,255,0.12) 0 12px, rgba(255,255,255,0) 12px 54px),
+                linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0));
+            transform: rotateY(72deg) translateZ(-300px);
+            transform-origin: left center;
+            opacity: 0.42;
+        }
+        #game-stage[data-mode="pvz"] {
+            perspective-origin: 18% 36%;
+        }
+        #game-stage[data-mode="pvz"]::before {
+            inset: auto -4% -12% -4%;
+            height: 48%;
+            background:
+                linear-gradient(180deg, rgba(255,255,255,0.12), rgba(255,255,255,0)),
+                repeating-linear-gradient(0deg, rgba(255,255,255,0.08) 0 2px, rgba(0,0,0,0) 2px 68px),
+                linear-gradient(90deg, rgba(255,255,255,0.06) 0 2px, rgba(0,0,0,0) 2px);
+            background-size: auto, auto, 78px 100%;
+            transform: rotateX(82deg) translateZ(-120px);
+            transform-origin: center top;
+            opacity: 0.88;
+        }
+        #game-stage[data-mode="pvz"]::after {
+            background:
+                radial-gradient(circle at 18% 44%, rgba(255,255,255,0.18) 0%, transparent 20%),
+                linear-gradient(180deg, rgba(255,255,255,0.1), transparent 38%);
+            opacity: 0.45;
+        }
 
         /* 通用元素 */
-        .game-item { position: absolute; z-index: 10; }
+        .game-item {
+            position: absolute;
+            z-index: 10;
+            transform-style: preserve-3d;
+            will-change: transform, opacity, filter;
+        }
 
         /* 卡比星星 */
         .letter-star {
@@ -112,6 +197,7 @@
             display: flex; justify-content: center; align-items: center;
             box-shadow: 0 0 0 4px rgba(255, 245, 157, 0.35), 0 12px 24px rgba(255, 179, 0, 0.34);
             will-change: transform, filter;
+            transform-style: preserve-3d;
         }
         .letter-star::before {
             content: '';
@@ -139,6 +225,7 @@
             color: #4a2d00;
             margin-top: 5px;
             text-shadow: 0 2px 0 rgba(255,255,255,0.35);
+            transform: translateZ(22px);
         }
         .star-0 { animation: kirby-star-twirl 1.9s infinite ease-in-out; }
         .star-1 { animation: kirby-star-twirl 1.6s infinite ease-in-out reverse; }
@@ -159,11 +246,13 @@
             align-items: center; justify-content: center;
             transition: transform 0.1s linear;
             will-change: transform, opacity;
+            transform-style: preserve-3d;
         }
         .target-sprite {
             font-size: 60px;
             filter: drop-shadow(3px 3px 0 rgba(0,0,0,0.2));
             animation: target-bob 1s infinite ease-in-out;
+            transform-style: preserve-3d;
         }
         @keyframes target-bob {
             0%, 100% { transform: translateY(0) rotate(0deg); }
@@ -175,6 +264,7 @@
         }
         .target-item--vertical .target-sprite {
             font-size: 68px;
+            transform: translateZ(30px);
         }
         .target-sprite--kirby-star {
             position: relative;
@@ -190,8 +280,8 @@
             z-index: -1;
         }
         @keyframes kirby-star-float {
-            0%, 100% { transform: translateY(0) rotate(-6deg) scale(1); }
-            50% { transform: translateY(-8px) rotate(6deg) scale(1.06); }
+            0%, 100% { transform: translateZ(28px) translateY(0) rotateX(12deg) rotateY(-10deg) rotate(-6deg) scale(1); }
+            50% { transform: translateZ(40px) translateY(-8px) rotateX(16deg) rotateY(10deg) rotate(6deg) scale(1.06); }
         }
         .target-item--horizontal {
             width: 116px;
@@ -205,6 +295,7 @@
             z-index: 1;
             animation: animal-hover 0.95s infinite ease-in-out;
             filter: drop-shadow(0 10px 16px rgba(0,0,0,0.22));
+            transform: translateZ(32px);
         }
         .target-shadow {
             position: absolute;
@@ -215,10 +306,11 @@
             background: rgba(40, 40, 40, 0.18);
             filter: blur(2px);
             animation: animal-shadow 0.95s infinite ease-in-out;
+            transform: translateZ(-20px);
         }
         @keyframes animal-hover {
-            0%, 100% { transform: translateY(0) rotate(0deg); }
-            50% { transform: translateY(-8px) rotate(3deg); }
+            0%, 100% { transform: translateZ(26px) translateY(0) rotateX(10deg) rotateY(-14deg) rotate(0deg); }
+            50% { transform: translateZ(40px) translateY(-8px) rotateX(18deg) rotateY(-4deg) rotate(3deg); }
         }
         @keyframes animal-shadow {
             0%, 100% { transform: scaleX(1); opacity: 0.18; }
@@ -249,6 +341,7 @@
             transform-origin: center;
             transition: transform 0.08s linear, filter 0.08s linear;
             will-change: transform, filter;
+            transform-style: preserve-3d;
         }
         .pvz-zombie,
         .pvz-zombie * {
@@ -397,6 +490,7 @@
             z-index: 32;
             transform-origin: center;
             filter: drop-shadow(2px 4px 0 rgba(0,0,0,0.18));
+            transform-style: preserve-3d;
         }
         .pvz-zombie-debris svg {
             width: 100%;
@@ -407,6 +501,7 @@
             position: absolute; top: -15px; font-size: 26px; font-weight: bold;
             color: #ff4081; background: white; border: 3px solid #ff4081;
             padding: 2px 10px; border-radius: 10px; box-shadow: 2px 2px 0 #333;
+            transform: translateZ(42px);
         }
         .letter-pvz { color: #2e7d32; border-color: #2e7d32; }
         .prompt-typed { color: #fff; background: #4caf50; padding: 0 4px; border-radius: 6px; }
@@ -431,6 +526,8 @@
             background-image: radial-gradient(circle at 30% 30%, #e1f5fe, transparent 60%);
             box-shadow: 0 0 12px rgba(129, 212, 250, 0.9);
             pointer-events: none;
+            transform: translateZ(48px);
+            transform-style: preserve-3d;
         }
         .pea-bullet.melon {
             width: 46px; height: 46px;
@@ -441,7 +538,7 @@
             box-shadow: 0 0 12px rgba(76, 175, 80, 0.7);
             animation: melon-spin 0.4s linear infinite;
         }
-        @keyframes melon-spin { to { transform: rotate(360deg); } }
+        @keyframes melon-spin { to { transform: translateZ(58px) rotateX(12deg) rotate(360deg); } }
         .pea-bullet.corn {
             width: 30px; height: 30px;
             background: #ffd54f; border-color: #f57f17;
@@ -453,8 +550,8 @@
             animation: corn-wobble 0.35s ease-in-out infinite;
         }
         @keyframes corn-wobble {
-            0%, 100% { transform: rotate(-10deg) translateY(0); }
-            50% { transform: rotate(10deg) translateY(-2px); }
+            0%, 100% { transform: translateZ(52px) rotateX(12deg) rotate(-10deg) translateY(0); }
+            50% { transform: translateZ(62px) rotateX(16deg) rotate(10deg) translateY(-2px); }
         }
 
         /* 吸气流光 */
@@ -463,10 +560,11 @@
             background: linear-gradient(90deg, rgba(255,255,255,0), rgba(255, 255, 255, 0.95), rgba(173, 216, 255, 0.65));
             border-radius: 5px; pointer-events: none; z-index: 45;
             animation: wind-anim 0.4s ease-out forwards;
+            transform-style: preserve-3d;
         }
         @keyframes wind-anim {
-            0% { width: 200px; opacity: 1; transform: scaleX(1.5); }
-            100% { width: 0; opacity: 0; transform: translateX(-200px) scaleX(0); }
+            0% { width: 200px; opacity: 1; transform: translateZ(44px) scaleX(1.5); }
+            100% { width: 0; opacity: 0; transform: translateZ(14px) translateX(-200px) scaleX(0); }
         }
 
         /* 切换按钮 */
@@ -493,10 +591,12 @@
         #kirby-container {
             position: absolute; z-index: 50; pointer-events: none;
             transition: left 0.5s, top 0.25s;
+            transform-style: preserve-3d;
         }
         #kirby-svg {
             overflow: visible;
             transform-origin: center 72%;
+            transform-style: preserve-3d;
         }
         #kirby-svg.kirby-mode-vertical {
             animation: kirby-idle-vertical 2.2s infinite ease-in-out;
@@ -510,12 +610,12 @@
             will-change: transform;
         }
         @keyframes kirby-idle-vertical {
-            0%, 100% { transform: translateY(0) rotate(0deg); }
-            50% { transform: translateY(-8px) rotate(-2deg); }
+            0%, 100% { transform: translateZ(54px) translateY(0) rotateX(8deg) rotateY(-8deg) rotate(0deg); }
+            50% { transform: translateZ(64px) translateY(-8px) rotateX(14deg) rotateY(4deg) rotate(-2deg); }
         }
         @keyframes kirby-idle-horizontal {
-            0%, 100% { transform: translateY(0) rotate(0deg) scale(1); }
-            50% { transform: translateY(-4px) rotate(1.6deg) scale(1.02); }
+            0%, 100% { transform: translateZ(62px) translateY(0) rotateX(10deg) rotateY(-16deg) rotate(0deg) scale(1); }
+            50% { transform: translateZ(74px) translateY(-4px) rotateX(14deg) rotateY(-6deg) rotate(1.6deg) scale(1.02); }
         }
         .projectile-star {
             position: absolute;
@@ -527,6 +627,7 @@
             pointer-events: none;
             z-index: 46;
             animation: projectile-star-spin 0.35s linear infinite;
+            transform-style: preserve-3d;
         }
         .projectile-star::before,
         .projectile-star::after {
@@ -546,7 +647,8 @@
             height: 42px;
         }
         @keyframes projectile-star-spin {
-            to { transform: rotate(360deg) scale(1.03); }
+            0% { transform: translateZ(48px) rotateX(12deg) rotateY(8deg) rotate(0deg) scale(1); }
+            100% { transform: translateZ(62px) rotateX(18deg) rotateY(14deg) rotate(360deg) scale(1.03); }
         }
 
         #overlay {
@@ -1417,6 +1519,9 @@
             const staggerX = stunned ? Math.sin(now / 36 + (it.poseSeed || 0)) * 4.5 : 0;
             const staggerY = stunned ? -2 : 0;
             const staggerRotate = stunned ? Math.sin(now / 34 + (it.poseSeed || 0)) * 2.6 : 0;
+            const depth = 22 + threat * 52;
+            const pitch = 10 + threat * 8;
+            const yaw = -12 - threat * 14;
 
             it.element.style.setProperty('--threat-lean', `${(7.4 * threat).toFixed(2)}deg`);
             it.element.style.setProperty('--threat-lean-soft', `${(4.4 * threat).toFixed(2)}deg`);
@@ -1430,7 +1535,7 @@
             it.element.style.setProperty('--head-drop', `${(7.5 * threat).toFixed(2)}px`);
             it.element.style.setProperty('--drag-depth', `${(4.2 * threat).toFixed(2)}px`);
             it.element.style.setProperty('--lane-roll', `${laneRoll.toFixed(2)}deg`);
-            it.element.style.transform = `translate3d(${staggerX.toFixed(2)}px, ${staggerY}px, 0) rotate(${staggerRotate.toFixed(2)}deg)`;
+            it.element.style.transform = `translate3d(${staggerX.toFixed(2)}px, ${staggerY}px, ${depth.toFixed(2)}px) rotateX(${pitch.toFixed(2)}deg) rotateY(${yaw.toFixed(2)}deg) rotate(${staggerRotate.toFixed(2)}deg)`;
 
             if (it.svgEl) {
                 const spriteScale = 1 + threat * 0.08;
@@ -1459,8 +1564,11 @@
             const tilt = wave * (6 + progress * 8) + progress * 6;
             const scale = 1 + progress * 0.08;
             const glow = 0.9 + progress * 0.75;
+            const depth = 10 + progress * 68;
+            const pitch = 18 + progress * 22;
+            const yaw = wave * (8 + progress * 12);
 
-            it.element.style.transform = `translate3d(${drift.toFixed(2)}px, 0, 0) rotate(${tilt.toFixed(2)}deg) scale(${scale.toFixed(3)})`;
+            it.element.style.transform = `translate3d(${drift.toFixed(2)}px, 0, ${depth.toFixed(2)}px) rotateX(${pitch.toFixed(2)}deg) rotateY(${yaw.toFixed(2)}deg) rotate(${tilt.toFixed(2)}deg) scale(${scale.toFixed(3)})`;
             if (it.element.classList.contains('letter-star')) {
                 it.element.style.boxShadow = `0 0 0 4px rgba(255, 245, 157, ${(0.26 + progress * 0.16).toFixed(2)}), 0 12px 24px rgba(255, 179, 0, ${(0.24 + progress * 0.22).toFixed(2)})`;
             }
@@ -1477,8 +1585,11 @@
             const tilt = wave * (4 + progress * 8);
             const scaleX = 1 + progress * 0.08;
             const scaleY = 1 - progress * 0.06;
+            const depth = 24 + progress * 80;
+            const yaw = -26 + progress * 18;
+            const pitch = 10 + progress * 8;
 
-            it.element.style.transform = `translate3d(0, ${hop.toFixed(2)}px, 0) rotate(${tilt.toFixed(2)}deg) scale(${scaleX.toFixed(3)}, ${scaleY.toFixed(3)})`;
+            it.element.style.transform = `translate3d(0, ${hop.toFixed(2)}px, ${depth.toFixed(2)}px) rotateX(${pitch.toFixed(2)}deg) rotateY(${yaw.toFixed(2)}deg) rotate(${tilt.toFixed(2)}deg) scale(${scaleX.toFixed(3)}, ${scaleY.toFixed(3)})`;
             if (it.spriteEl) {
                 it.spriteEl.style.filter = `drop-shadow(0 12px 20px rgba(0, 0, 0, ${(0.18 + progress * 0.18).toFixed(2)}))`;
             }
@@ -1499,20 +1610,22 @@
             if (gameMode === 'vertical') {
                 kirbyCont.style.left = '50%';
                 kirbyCont.style.top = '80%';
+                kirbyCont.style.transform = 'translate(-50%, -50%) translateZ(58px)';
                 return;
             }
             if (gameMode === 'horizontal') {
                 kirbyCont.style.left = '120px';
                 kirbyCont.style.top = '50%';
+                kirbyCont.style.transform = 'translate(-50%, -50%) translateZ(68px)';
             }
         }
 
         function animateKirbyShoot() {
             kirbyCont.animate([
-                { transform: 'translate(-50%, -50%) scale(1)' },
-                { transform: 'translate(-50%, -50%) translateY(-10px) scale(1.05, 0.95)' },
-                { transform: 'translate(-50%, -50%) translateY(2px) scale(0.96, 1.04)' },
-                { transform: 'translate(-50%, -50%) scale(1)' }
+                { transform: 'translate(-50%, -50%) translateZ(58px) scale(1)' },
+                { transform: 'translate(-50%, -50%) translateZ(78px) translateY(-10px) scale(1.05, 0.95)' },
+                { transform: 'translate(-50%, -50%) translateZ(62px) translateY(2px) scale(0.96, 1.04)' },
+                { transform: 'translate(-50%, -50%) translateZ(58px) scale(1)' }
             ], { duration: 260, easing: 'ease-out' });
 
             kirbyBody.animate([
@@ -1538,10 +1651,10 @@
         function animateKirbyInhale() {
             const offset = (kirbyScale - 1) * 15;
             kirbyCont.animate([
-                { transform: 'translate(-50%, -50%) scale(1)' },
-                { transform: 'translate(-50%, -50%) scale(1.08, 0.9)' },
-                { transform: 'translate(-50%, -50%) scale(0.98, 1.04)' },
-                { transform: 'translate(-50%, -50%) scale(1)' }
+                { transform: 'translate(-50%, -50%) translateZ(68px) scale(1)' },
+                { transform: 'translate(-50%, -50%) translateZ(84px) scale(1.08, 0.9)' },
+                { transform: 'translate(-50%, -50%) translateZ(74px) scale(0.98, 1.04)' },
+                { transform: 'translate(-50%, -50%) translateZ(68px) scale(1)' }
             ], { duration: 420, easing: 'ease-out' });
 
             handLeft.animate([
@@ -1623,9 +1736,9 @@
             stage.appendChild(debris);
 
             debris.animate([
-                { transform: 'translate3d(0, 0, 0) rotate(0deg) scale(1)', opacity: 1 },
-                { transform: `translate3d(${18 * direction}px, -20px, 0) rotate(${direction * 90}deg) scale(1.02)`, opacity: 1, offset: 0.45 },
-                { transform: `translate3d(${34 * direction}px, 16px, 0) rotate(${direction * 185}deg) scale(0.86)`, opacity: 0 }
+                { transform: 'translate3d(0, 0, 26px) rotateX(12deg) rotate(0deg) scale(1)', opacity: 1 },
+                { transform: `translate3d(${18 * direction}px, -20px, 64px) rotateX(24deg) rotate(${direction * 90}deg) scale(1.02)`, opacity: 1, offset: 0.45 },
+                { transform: `translate3d(${34 * direction}px, 16px, 8px) rotateX(0deg) rotate(${direction * 185}deg) scale(0.86)`, opacity: 0 }
             ], {
                 duration: 420,
                 easing: 'cubic-bezier(0.2, 0.75, 0.25, 1)',
@@ -1647,6 +1760,7 @@
 
         function changeMode(mode) {
             gameMode = mode;
+            stage.dataset.mode = mode;
             document.querySelectorAll('.mode-switch .btn').forEach(b => b.classList.remove('active'));
             container.className = '';
             pvzLayer.style.display = 'none';
