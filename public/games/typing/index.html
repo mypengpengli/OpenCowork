@@ -765,9 +765,15 @@
             return numToCN(n);
         }
 
+        const TIMES_TABLE_PAIRS = [];
+        for (let big = 1; big <= 9; big++) {
+            for (let small = 1; small <= big; small++) {
+                TIMES_TABLE_PAIRS.push([small, big]);
+            }
+        }
+
         function randomTimesTableLine() {
-            const big = Math.floor(Math.random() * 9) + 1;
-            const small = Math.floor(Math.random() * big) + 1; // small <= big，符合“九九乘法表”顺序（小×大）
+            const [small, big] = TIMES_TABLE_PAIRS[Math.floor(Math.random() * TIMES_TABLE_PAIRS.length)];
             const result = small * big;
 
             const left = `${numToCN(small)}${numToCN(big)}`;
