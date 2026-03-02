@@ -761,11 +761,16 @@
         const pvzZombieTypes = ['basic', 'cone', 'bucket', 'flag', 'shield'];
         const pvzShooterTypes = ['ice', 'melon', 'corn', 'melon', 'ice'];
         const PVZ_ZOMBIE_STATS = {
-            basic: { speed: 1, cadence: 0.86 },
-            cone: { speed: 1.06, cadence: 0.78 },
-            bucket: { speed: 0.9, cadence: 0.98 },
-            flag: { speed: 1.14, cadence: 0.72 },
-            shield: { speed: 0.84, cadence: 1.04 }
+            basic: { speed: 1, cadence: 0.86, hp: 1 },
+            cone: { speed: 1.06, cadence: 0.78, hp: 2, breakTo: 'basic' },
+            bucket: { speed: 0.9, cadence: 0.98, hp: 2, breakTo: 'basic' },
+            flag: { speed: 1.14, cadence: 0.72, hp: 1 },
+            shield: { speed: 0.84, cadence: 1.04, hp: 2, breakTo: 'basic' }
+        };
+        const PVZ_SHOOTER_EFFECTS = {
+            ice: { damage: 1, knockback: 14, slowFactor: 0.58, slowDuration: 1800, text: 'Freeze!' },
+            corn: { damage: 1, knockback: 18, stunDuration: 420, text: 'Stun!' },
+            melon: { damage: 2, knockback: 28, text: 'Smash!' }
         };
 
         const SETTINGS_KEY = 'typingGameSettings_v1';
@@ -1384,6 +1389,21 @@
             return PVZ_ZOMBIE_STATS[type] || PVZ_ZOMBIE_STATS.basic;
         }
 
+        function getPvzShooterEffect(row) {
+            const shooterType = getPvzShooterType(row);
+            return { shooterType, ...(PVZ_SHOOTER_EFFECTS[shooterType] || PVZ_SHOOTER_EFFECTS.ice) };
+        }
+
+        function refreshPvzEnemySprite(it) {
+            if (!it?.spriteEl) return;
+
+            const stats = getPvzZombieStats(it.zombieType);
+            it.spriteEl.innerHTML = getPvzZombieSvg(it.zombieType);
+            it.svgEl = it.element.querySelector('.pvz-zombie-svg');
+            it.element.style.setProperty('--walk-duration', `${(stats.cadence + (Math.random() * 0.04 - 0.02)).toFixed(2)}s`);
+            applyPvzEnemyPose(it);
+        }
+
         function applyPvzEnemyPose(it) {
             if (!it?.element) return;
 
@@ -1391,6 +1411,12 @@
             const progress = Math.min(1, Math.max(0, 1 - (it.x / stageWidth)));
             const threat = Math.pow(progress, 1.18);
             const laneRoll = (it.row - 2) * 0.45;
+            const now = Date.now();
+            const frozen = !!(it.slowUntil && it.slowUntil > now);
+            const stunned = !!(it.stunUntil && it.stunUntil > now);
+            const staggerX = stunned ? Math.sin(now / 36 + (it.poseSeed || 0)) * 4.5 : 0;
+            const staggerY = stunned ? -2 : 0;
+            const staggerRotate = stunned ? Math.sin(now / 34 + (it.poseSeed || 0)) * 2.6 : 0;
 
             it.element.style.setProperty('--threat-lean', `${(7.4 * threat).toFixed(2)}deg`);
             it.element.style.setProperty('--threat-lean-soft', `${(4.4 * threat).toFixed(2)}deg`);
@@ -1404,12 +1430,18 @@
             it.element.style.setProperty('--head-drop', `${(7.5 * threat).toFixed(2)}px`);
             it.element.style.setProperty('--drag-depth', `${(4.2 * threat).toFixed(2)}px`);
             it.element.style.setProperty('--lane-roll', `${laneRoll.toFixed(2)}deg`);
+            it.element.style.transform = `translate3d(${staggerX.toFixed(2)}px, ${staggerY}px, 0) rotate(${staggerRotate.toFixed(2)}deg)`;
 
             if (it.svgEl) {
                 const spriteScale = 1 + threat * 0.08;
                 const spriteNudge = -6 - threat * 6;
                 it.svgEl.style.transform = `translateX(${spriteNudge.toFixed(2)}px) scaleX(-1) scale(${spriteScale.toFixed(3)})`;
-                it.svgEl.style.filter = `saturate(${(1 + threat * 0.18).toFixed(2)}) brightness(${(1 + threat * 0.12).toFixed(2)})`;
+                const filters = [
+                    `saturate(${(1 + threat * 0.18).toFixed(2)})`,
+                    `brightness(${(1 + threat * 0.12 + (stunned ? 0.06 : 0)).toFixed(2)})`
+                ];
+                if (frozen) filters.push('hue-rotate(165deg)', 'saturate(1.28)');
+                it.svgEl.style.filter = filters.join(' ');
             }
 
             if (it.spriteEl) {
@@ -1683,7 +1715,13 @@
                 spriteEl: null,
                 svgEl: null,
                 shadowEl: null,
-                poseSeed: Math.random() * Math.PI * 2
+                poseSeed: Math.random() * Math.PI * 2,
+                hp: 1,
+                maxHp: 1,
+                baseSpeed: 0,
+                slowUntil: 0,
+                slowFactor: 1,
+                stunUntil: 0
             };
 
             if (gameMode === 'vertical') {
@@ -1719,6 +1757,7 @@
                 const y = (row + 1) * (window.innerHeight / 6) - 50;
                 const zombieType = pvzZombieTypes[Math.floor(Math.random() * pvzZombieTypes.length)];
                 const zombieStats = getPvzZombieStats(zombieType);
+                const baseSpeed = (Math.random() * 1.2 + 1.2) * (speedMultiplier / 1.2);
                 div.className = 'game-item target-item target-item--pvz';
                 div.style.setProperty('--walk-duration', `${(zombieStats.cadence + (Math.random() * 0.08 - 0.04)).toFixed(2)}s`);
                 div.style.setProperty('--phase-delay', `${(-Math.random() * 1.2).toFixed(2)}s`);
@@ -1728,7 +1767,10 @@
                 item.svgEl = div.querySelector('.pvz-zombie-svg');
                 div.style.left = `${window.innerWidth}px`; div.style.top = `${y - 8}px`;
                 item.x = window.innerWidth; item.y = y - 8; item.row = row; item.zombieType = zombieType;
-                item.speed = ((Math.random() * 1.2 + 1.2) * zombieStats.speed) * (speedMultiplier / 1.2);
+                item.baseSpeed = baseSpeed;
+                item.speed = baseSpeed * zombieStats.speed;
+                item.hp = zombieStats.hp;
+                item.maxHp = zombieStats.hp;
                 applyPvzEnemyPose(item);
             }
             stage.appendChild(div);
@@ -1751,9 +1793,17 @@
                         applyVerticalTargetPose(it);
                         if (it.y > window.innerHeight - 150) { if (wordFocusItem === it) setWordFocus(null); it.element.remove(); items.splice(i, 1); loseLife(); }
                     } else {
-                        it.x -= it.speed; it.element.style.left = `${it.x}px`;
-                        if (gameMode === 'horizontal') applyHorizontalTargetPose(it);
-                        if (gameMode === 'pvz') applyPvzEnemyPose(it);
+                        if (gameMode === 'horizontal') {
+                            it.x -= it.speed;
+                            it.element.style.left = `${it.x}px`;
+                            applyHorizontalTargetPose(it);
+                        } else {
+                            const isStunned = !!(it.stunUntil && it.stunUntil > now);
+                            const speedFactor = it.slowUntil && it.slowUntil > now ? it.slowFactor : 1;
+                            if (!isStunned) it.x -= it.speed * speedFactor;
+                            it.element.style.left = `${it.x}px`;
+                            applyPvzEnemyPose(it);
+                        }
                         if (it.x < (gameMode === 'pvz' ? 150 : 50)) { if (wordFocusItem === it) setWordFocus(null); it.element.remove(); items.splice(i, 1); loseLife(); }
                     }
                 } else if (it.state === 'inhaling') {
@@ -1789,6 +1839,66 @@
                 stage.appendChild(p);
                 setTimeout(() => p.remove(), 600);
             }
+        }
+
+        function spawnCombatText(text, x, y, color = '#fff', stroke = '#333') {
+            const popup = document.createElement('div');
+            popup.className = 'hit-text';
+            popup.textContent = text;
+            popup.style.left = `${x}px`;
+            popup.style.top = `${y}px`;
+            popup.style.color = color;
+            popup.style.webkitTextStroke = `2px ${stroke}`;
+            stage.appendChild(popup);
+            setTimeout(() => popup.remove(), 500);
+        }
+
+        function resolvePvzHit(it, tx, ty) {
+            if (!it?.element || !it.element.isConnected) return;
+
+            const effect = getPvzShooterEffect(it.row);
+            const currentStats = getPvzZombieStats(it.zombieType);
+            const nextHp = (it.hp || currentStats.hp) - effect.damage;
+
+            if (nextHp > 0) {
+                const previousType = it.zombieType;
+                it.hp = nextHp;
+                it.state = 'falling';
+                it.x = Math.min(window.innerWidth + 24, it.x + effect.knockback);
+                it.element.style.left = `${it.x}px`;
+
+                if (effect.slowDuration) {
+                    it.slowUntil = Date.now() + effect.slowDuration;
+                    it.slowFactor = effect.slowFactor;
+                }
+                if (effect.stunDuration) {
+                    it.stunUntil = Date.now() + effect.stunDuration;
+                }
+
+                if (currentStats.breakTo) {
+                    spawnPvzDebris(previousType, tx, ty);
+                    it.zombieType = currentStats.breakTo;
+                    const downgradedStats = getPvzZombieStats(it.zombieType);
+                    it.speed = it.baseSpeed * downgradedStats.speed;
+                    refreshPvzEnemySprite(it);
+                }
+
+                createParticles(tx, ty, effect.shooterType === 'melon' ? '#ff7043' : (effect.shooterType === 'corn' ? '#ffe082' : '#b3e5fc'));
+                spawnCombatText(currentStats.breakTo ? 'Armor Break!' : effect.text, tx, ty, currentStats.breakTo ? '#fff3b0' : '#e1f5fe', currentStats.breakTo ? '#5d4037' : '#0d47a1');
+                it.element.animate([
+                    { transform: `${it.element.style.transform || 'translate3d(0, 0, 0)'}`, opacity: 1 },
+                    { transform: 'translate3d(-14px, -4px, 0) scale(1.04) rotate(-6deg)', opacity: 1 },
+                    { transform: `${it.element.style.transform || 'translate3d(0, 0, 0)'}`, opacity: 1 }
+                ], { duration: 240, easing: 'ease-out' });
+                applyPvzEnemyPose(it);
+                score += 4;
+                scoreEl.textContent = score;
+                playTone(effect.shooterType === 'melon' ? 720 : 520, 0.08, 'triangle', 0.08);
+                return;
+            }
+
+            it.hp = 0;
+            finishHit(it, items.indexOf(it), tx, ty);
         }
 
         function loseLife() {
@@ -1930,7 +2040,7 @@
                 { transform: 'scale(1.2) translateX(-10px)' },
                 { transform: 'scale(1) translateX(0)' }
             ], { duration: 200, easing: 'ease-out' });
-            shootPea(it.row, tx, ty, () => finishHit(it, items.indexOf(it), tx, ty));
+            shootPea(it.row, tx, ty, () => resolvePvzHit(it, tx, ty));
         }
 
         window.addEventListener('keydown', (e) => {
