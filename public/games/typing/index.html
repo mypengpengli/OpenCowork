@@ -385,21 +385,24 @@
             filter: drop-shadow(0 14px 18px rgba(0,0,0,0.24));
         }
         .target-sprite--snake {
+            --food-border: #004d40;
+            --food-ring: rgba(168, 255, 234, 0.42);
+            --food-glow: rgba(103, 255, 219, 0.12);
             position: relative;
             border-radius: 50%;
             background:
                 radial-gradient(circle at 34% 32%, #f7fffc 0%, #c8fff0 14%, #87f0d2 30%, #35d5b7 58%, #00897b 100%);
-            border: 4px solid #004d40;
+            border: 4px solid var(--food-border);
             box-shadow:
                 inset 0 0 0 6px rgba(255,255,255,0.22),
-                0 0 0 8px rgba(103, 255, 219, 0.12);
+                0 0 0 8px var(--food-glow);
         }
         .target-sprite--snake::before {
             content: '';
             position: absolute;
             inset: -11px;
             border-radius: 50%;
-            border: 2px dashed rgba(168, 255, 234, 0.42);
+            border: 2px dashed var(--food-ring);
             opacity: 0.72;
             animation: snake-food-ring 3.4s linear infinite;
         }
@@ -411,6 +414,52 @@
             background: rgba(255,255,255,0.82);
             filter: blur(1px);
             transform: rotate(-22deg);
+        }
+        .snake-food-icon {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            font-size: 40px;
+            line-height: 1;
+            transform: translate(-50%, -50%) translateZ(18px);
+            filter: drop-shadow(0 4px 5px rgba(0,0,0,0.18));
+            user-select: none;
+        }
+        .snake-food--berry {
+            --food-border: #7b1f44;
+            --food-ring: rgba(255, 128, 171, 0.42);
+            --food-glow: rgba(255, 128, 171, 0.16);
+            background: radial-gradient(circle at 34% 32%, #fff4fa 0%, #ffc1db 18%, #ff7aa9 40%, #e53976 70%, #8e114a 100%);
+        }
+        .snake-food--citrus {
+            --food-border: #8d5600;
+            --food-ring: rgba(255, 202, 40, 0.4);
+            --food-glow: rgba(255, 202, 40, 0.14);
+            background: radial-gradient(circle at 34% 32%, #fffbe9 0%, #ffe8a1 18%, #ffd54f 38%, #ffb300 68%, #d17d00 100%);
+        }
+        .snake-food--gem {
+            --food-border: #0d47a1;
+            --food-ring: rgba(129, 212, 250, 0.4);
+            --food-glow: rgba(129, 212, 250, 0.16);
+            background: radial-gradient(circle at 34% 32%, #f2fbff 0%, #c5edff 18%, #81d4fa 38%, #1e88e5 70%, #0d47a1 100%);
+        }
+        .snake-food--candy {
+            --food-border: #6a1b9a;
+            --food-ring: rgba(206, 147, 216, 0.42);
+            --food-glow: rgba(206, 147, 216, 0.16);
+            background: radial-gradient(circle at 34% 32%, #fcf6ff 0%, #efcfff 18%, #ce93d8 38%, #ab47bc 70%, #6a1b9a 100%);
+        }
+        .snake-food--apple {
+            --food-border: #33691e;
+            --food-ring: rgba(174, 213, 129, 0.42);
+            --food-glow: rgba(174, 213, 129, 0.16);
+            background: radial-gradient(circle at 34% 32%, #f7fff1 0%, #dcedb7 18%, #aed581 38%, #66bb6a 70%, #33691e 100%);
+        }
+        .snake-food--star {
+            --food-border: #6d4c00;
+            --food-ring: rgba(255, 241, 118, 0.42);
+            --food-glow: rgba(255, 241, 118, 0.18);
+            background: radial-gradient(circle at 34% 32%, #fffef1 0%, #fff7b5 18%, #fff176 36%, #ffd54f 64%, #f9a825 100%);
         }
         .snake-food-shadow {
             position: absolute;
@@ -1154,6 +1203,15 @@
         let learningToken = 0;
         let customWordEntries = [];
         const SNAKE_MAX_ITEMS = 6;
+        const SNAKE_MOUSE_IDLE_MS = 1600;
+        const SNAKE_FOOD_VARIANTS = [
+            { kind: 'berry', icon: '🍓' },
+            { kind: 'citrus', icon: '🍋' },
+            { kind: 'gem', icon: '💎' },
+            { kind: 'candy', icon: '🍬' },
+            { kind: 'apple', icon: '🍏' },
+            { kind: 'star', icon: '⭐' }
+        ];
         const snakeState = {
             headX: 0,
             headY: 0,
@@ -1162,11 +1220,15 @@
             angle: 0,
             orbitAngle: 0,
             bodyScale: 1,
-            segmentCount: 10,
+            segmentCount: 9,
             segments: [],
             segmentEls: [],
             targetItem: null,
-            pulseUntil: 0
+            pulseUntil: 0,
+            mouseX: 0,
+            mouseY: 0,
+            mouseMovedAt: 0,
+            pointerInside: false
         };
 
         const animals = ["🐱", "🐰", "🦊", "🐻", "🐼", "🐣", "🦁", "🐙", "🐵"];
@@ -1257,12 +1319,12 @@
                 if (mode === 'vertical') return '按顺序打出单词，击碎星星！';
                 if (mode === 'horizontal') return '按顺序打出单词，吸入小动物！';
                 if (mode === 'pvz') return '按顺序打出单词，指挥植物击退敌人！';
-                return '按顺序打字，优先看 #1 倒计时，让贪食蛇冲出去吞掉目标！';
+                return '移动鼠标带着蛇游走，优先看 #1 倒计时，打字后再冲出去吞掉目标！';
             }
             if (mode === 'vertical') return '按下对应字母击碎星星！';
             if (mode === 'horizontal') return '快按下对应字母吸入小动物！';
             if (mode === 'pvz') return '按下字母，指挥冰川豌豆射手、西瓜投手和玉米投手击退敌人！';
-            return '按下对应字母，优先看 #1 倒计时，让贪食蛇冲出去吃掉外圈食物！';
+            return '移动鼠标带着蛇游走，优先看 #1 倒计时，按字母后再冲出去吃掉食物！';
         }
 
         function flashHint(text, durationMs = 2800) {
@@ -1279,6 +1341,33 @@
             const width = stage.clientWidth || window.innerWidth;
             const height = stage.clientHeight || Math.max(1, window.innerHeight - (bottomBar?.offsetHeight || 0));
             return { width, height, centerX: width / 2, centerY: height / 2 };
+        }
+
+        function clamp(value, min, max) {
+            return Math.min(max, Math.max(min, value));
+        }
+
+        function updateSnakePointer(clientX, clientY) {
+            const rect = stage.getBoundingClientRect();
+            if (!rect.width || !rect.height) return;
+
+            const x = clientX - rect.left;
+            const y = clientY - rect.top;
+            if (x < 0 || y < 0 || x > rect.width || y > rect.height) {
+                snakeState.pointerInside = false;
+                return;
+            }
+
+            snakeState.mouseX = clamp(x, 60, rect.width - 60);
+            snakeState.mouseY = clamp(y, 60, rect.height - 60);
+            snakeState.mouseMovedAt = Date.now();
+            snakeState.pointerInside = true;
+        }
+
+        function hasActiveSnakePointer(now = Date.now()) {
+            return gameMode === 'snake'
+                && snakeState.pointerInside
+                && (now - snakeState.mouseMovedAt) <= SNAKE_MOUSE_IDLE_MS;
         }
 
         function getSnakeDangerRadius() {
@@ -1334,6 +1423,10 @@
             }
         }
 
+        function getRandomSnakeFoodVariant() {
+            return SNAKE_FOOD_VARIANTS[Math.floor(Math.random() * SNAKE_FOOD_VARIANTS.length)] || SNAKE_FOOD_VARIANTS[0];
+        }
+
         function syncSnakeSegments() {
             while (snakeState.segmentEls.length < snakeState.segmentCount) {
                 const seg = document.createElement('div');
@@ -1360,11 +1453,15 @@
             snakeState.vx = 0;
             snakeState.vy = 0;
             snakeState.pulseUntil = 0;
+            snakeState.pointerInside = false;
+            snakeState.mouseMovedAt = 0;
+            snakeState.mouseX = metrics.centerX;
+            snakeState.mouseY = metrics.centerY;
             clearSnakeTarget();
             syncSnakeSegments();
 
-            snakeState.headX = metrics.centerX + Math.cos(snakeState.orbitAngle) * 40;
-            snakeState.headY = metrics.centerY + Math.sin(snakeState.orbitAngle * 1.05) * 24;
+            snakeState.headX = metrics.centerX;
+            snakeState.headY = metrics.centerY;
             snakeState.segments = [];
             for (let i = 0; i < snakeState.segmentCount; i++) {
                 const dist = 18 + i * 15;
@@ -1418,8 +1515,9 @@
             if (!snakeState.segmentEls.length) syncSnakeSegments();
             if (snakeState.targetItem && (!items.includes(snakeState.targetItem) || snakeState.targetItem.state !== 'targeted')) clearSnakeTarget();
 
-            let goalX = metrics.centerX + Math.cos(snakeState.orbitAngle) * 40;
-            let goalY = metrics.centerY + Math.sin(snakeState.orbitAngle * 1.05) * 24;
+            const pointerActive = hasActiveSnakePointer(now);
+            let goalX = pointerActive ? snakeState.mouseX : metrics.centerX;
+            let goalY = pointerActive ? snakeState.mouseY : metrics.centerY;
             let maxSpeed = 2.4;
 
             if (snakeState.targetItem) {
@@ -1427,7 +1525,11 @@
                 goalY = snakeState.targetItem.y;
                 maxSpeed = Math.min(7.4, 4.8 + snakeState.segmentCount * 0.07);
             } else {
-                snakeState.orbitAngle += 0.022 * (speedMultiplier / 1.2);
+                snakeState.orbitAngle += 0.015 * (speedMultiplier / 1.2);
+                const driftX = Math.cos(snakeState.orbitAngle) * (pointerActive ? 16 : 10);
+                const driftY = Math.sin(snakeState.orbitAngle * 1.18) * (pointerActive ? 10 : 7);
+                goalX += driftX;
+                goalY += driftY;
             }
 
             const dx = goalX - snakeState.headX;
@@ -1838,6 +1940,20 @@
         });
         settingsOverlay.addEventListener('click', (e) => {
             if (e.target === settingsOverlay) closeSettings();
+        });
+        stage.addEventListener('pointermove', (e) => {
+            if (gameMode !== 'snake') return;
+            updateSnakePointer(e.clientX, e.clientY);
+        });
+        stage.addEventListener('pointerdown', (e) => {
+            if (gameMode !== 'snake') return;
+            updateSnakePointer(e.clientX, e.clientY);
+        });
+        stage.addEventListener('pointerleave', () => {
+            snakeState.pointerInside = false;
+        });
+        window.addEventListener('blur', () => {
+            snakeState.pointerInside = false;
         });
 
         function getPvzShooterType(row) {
@@ -2446,12 +2562,14 @@
                 const spawnRadius = Math.max(safeRadius + 72, Math.min(metrics.width, metrics.height) * (0.40 + Math.random() * 0.14));
                 const angle = Math.random() * Math.PI * 2;
                 const ellipse = 0.8 + Math.random() * 0.12;
+                const foodVariant = getRandomSnakeFoodVariant();
                 div.className = 'game-item target-item target-item--snake';
-                div.innerHTML = `<div class="snake-food-shadow"></div><div class="target-sprite target-sprite--snake"></div><div class="target-letter letter-snake">${promptHTML}</div><div class="snake-countdown">--</div>`;
+                div.innerHTML = `<div class="snake-food-shadow"></div><div class="target-sprite target-sprite--snake snake-food--${foodVariant.kind}"><span class="snake-food-icon">${foodVariant.icon}</span></div><div class="target-letter letter-snake">${promptHTML}</div><div class="snake-countdown">--</div>`;
                 item.promptEl = div.querySelector('.target-letter');
                 item.spriteEl = div.querySelector('.target-sprite');
                 item.shadowEl = div.querySelector('.snake-food-shadow');
                 item.timerEl = div.querySelector('.snake-countdown');
+                item.foodKind = foodVariant.kind;
                 item.angle = angle;
                 item.radius = spawnRadius;
                 item.ellipse = ellipse;
