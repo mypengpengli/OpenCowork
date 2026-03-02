@@ -613,10 +613,17 @@
         }
 
         /* 豌豆与豆子 */
+        #pvz-layer {
+            position: absolute;
+            inset: 0;
+            z-index: 48;
+            pointer-events: none;
+        }
         .peashooter {
-            position: absolute; left: 40px; z-index: 50;
+            position: absolute; left: 168px; z-index: 50;
             filter: drop-shadow(4px 4px 0 rgba(0,0,0,0.2));
             animation: shooter-idle 2s infinite ease-in-out;
+            transform: translateZ(44px);
         }
         @keyframes shooter-idle {
             0%, 100% { transform: scale(1) rotate(0deg); }
@@ -2565,7 +2572,7 @@
             const shooter = document.getElementById(`shooter-${row}`);
             const sRect = shooter ? shooter.getBoundingClientRect() : null;
             const size = type === 'melon' ? 46 : (type === 'corn' ? 30 : 32);
-            const sx = sRect ? (sRect.left + sRect.width * (type === 'melon' ? 0.55 : (type === 'corn' ? 0.60 : 0.85))) : 130;
+            const sx = sRect ? (sRect.left + sRect.width * (type === 'melon' ? 0.55 : (type === 'corn' ? 0.60 : 0.85))) : 250;
             const sy = sRect ? (sRect.top + sRect.height * (type === 'melon' ? 0.35 : (type === 'corn' ? 0.34 : 0.45))) : ((row + 1) * (window.innerHeight / 6) - 40);
 
             pea.style.left = `${sx - size / 2}px`; pea.style.top = `${sy - size / 2}px`;
