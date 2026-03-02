@@ -1206,6 +1206,7 @@
 
         const animals = ["🐱", "🐰", "🦊", "🐻", "🐼", "🐣", "🦁", "🐙", "🐵"];
         const pvzZombieTypes = ['basic', 'cone', 'bucket', 'flag', 'shield'];
+        const pvzZombiePaletteNames = ['classic', 'mint', 'violet', 'rust', 'aqua', 'sunset'];
         const pvzShooterTypes = ['ice', 'melon', 'corn', 'melon', 'ice'];
         const PVZ_ZOMBIE_STATS = {
             basic: { speed: 1, cadence: 0.86, hp: 1 },
@@ -1213,6 +1214,80 @@
             bucket: { speed: 0.9, cadence: 0.98, hp: 1 },
             flag: { speed: 1.14, cadence: 0.72, hp: 1 },
             shield: { speed: 0.84, cadence: 1.04, hp: 1 }
+        };
+        const PVZ_ZOMBIE_PALETTES = {
+            classic: {
+                skin: '#a1bf70', skinStroke: '#4a6030', skinHighlight: '#c6db9b', spot: '#6f8e45',
+                jaw: '#90ae63', brow: '#2f3d1f', eye: '#fffef3', tooth: '#fffef3', pupil: '#1b1b1b',
+                jacket: '#6b5c4c', jacketStroke: '#31261f', shirt: '#f4f1e1', shirtStroke: '#31261f',
+                tie: '#b13e2f', tieStroke: '#6d1b14', seam: '#47382f', waist: '#9dba70', waistStroke: '#486133',
+                sleeve: '#6a5544', hand: '#9dba70', handStroke: '#496133',
+                pantsBack: '#425166', pantsFront: '#54657d', shoeBack: '#5d4037', shoeFront: '#704f2d',
+                cone: '#f28c28', coneStripe: '#ffd180', coneStroke: '#713400',
+                bucket: '#b0bec5', bucketRim: '#78909c', bucketHighlight: '#eceff1', bucketStroke: '#455a64',
+                flagPole: '#6d4c41', flag: '#d84315', flagStroke: '#7f1d1d', flagBadge: '#fff3e0',
+                shieldFill: 'rgba(230, 240, 235, 0.18)', shieldStroke: '#90a4ae'
+            },
+            mint: {
+                skin: '#9ed6a5', skinStroke: '#2f6b45', skinHighlight: '#c8f0cc', spot: '#4e8a58',
+                jaw: '#7fc78d', brow: '#214d2c', eye: '#f8fff7', tooth: '#fbfff7', pupil: '#17321d',
+                jacket: '#4e6f58', jacketStroke: '#22362a', shirt: '#edf7ef', shirtStroke: '#22362a',
+                tie: '#2f8f83', tieStroke: '#0f564c', seam: '#314d3a', waist: '#8bc796', waistStroke: '#2f6b45',
+                sleeve: '#516b57', hand: '#9ed6a5', handStroke: '#2f6b45',
+                pantsBack: '#34566b', pantsFront: '#4f768e', shoeBack: '#385348', shoeFront: '#4f6e61',
+                cone: '#4db6ac', coneStripe: '#d4fff7', coneStroke: '#00695c',
+                bucket: '#b2dfdb', bucketRim: '#80cbc4', bucketHighlight: '#f1fffd', bucketStroke: '#2f6f68',
+                flagPole: '#4c5f50', flag: '#26a69a', flagStroke: '#00695c', flagBadge: '#e6fff8',
+                shieldFill: 'rgba(214, 245, 232, 0.26)', shieldStroke: '#5fa79a'
+            },
+            violet: {
+                skin: '#b4c97b', skinStroke: '#55632f', skinHighlight: '#d9e8ae', spot: '#7f9351',
+                jaw: '#9cb56a', brow: '#323618', eye: '#fffef6', tooth: '#fffef9', pupil: '#1f1b20',
+                jacket: '#70548a', jacketStroke: '#32203f', shirt: '#f3edf8', shirtStroke: '#32203f',
+                tie: '#ff8a65', tieStroke: '#8d3b23', seam: '#46354f', waist: '#a8be70', waistStroke: '#55632f',
+                sleeve: '#6a517c', hand: '#b4c97b', handStroke: '#55632f',
+                pantsBack: '#4b4f81', pantsFront: '#6167a6', shoeBack: '#563746', shoeFront: '#6a4456',
+                cone: '#ba68c8', coneStripe: '#f3d1ff', coneStroke: '#6a1b9a',
+                bucket: '#d1c4e9', bucketRim: '#b39ddb', bucketHighlight: '#faf5ff', bucketStroke: '#5e548e',
+                flagPole: '#5d4a68', flag: '#ab47bc', flagStroke: '#6a1b9a', flagBadge: '#fbeaff',
+                shieldFill: 'rgba(231, 221, 247, 0.26)', shieldStroke: '#9c84c7'
+            },
+            rust: {
+                skin: '#b5bf67', skinStroke: '#5b5f1f', skinHighlight: '#dbe29b', spot: '#868c38',
+                jaw: '#a3ac54', brow: '#42420f', eye: '#fffdf3', tooth: '#fffdf6', pupil: '#241f15',
+                jacket: '#8b4d38', jacketStroke: '#4a2217', shirt: '#fff0dc', shirtStroke: '#4a2217',
+                tie: '#7b1e12', tieStroke: '#4a0d07', seam: '#5a372d', waist: '#afba65', waistStroke: '#5b5f1f',
+                sleeve: '#82523d', hand: '#b5bf67', handStroke: '#5b5f1f',
+                pantsBack: '#5b5866', pantsFront: '#726f7f', shoeBack: '#5f3f24', shoeFront: '#764d2b',
+                cone: '#ff7043', coneStripe: '#ffe0b2', coneStroke: '#8d3b14',
+                bucket: '#bcaaa4', bucketRim: '#8d6e63', bucketHighlight: '#f6ebe8', bucketStroke: '#5d4037',
+                flagPole: '#6d4c41', flag: '#ef6c00', flagStroke: '#8d3b14', flagBadge: '#fff3e0',
+                shieldFill: 'rgba(238, 220, 209, 0.24)', shieldStroke: '#b07c63'
+            },
+            aqua: {
+                skin: '#8fcfbe', skinStroke: '#2b6d60', skinHighlight: '#c7f4ea', spot: '#4f9183',
+                jaw: '#71bcaa', brow: '#1d4a42', eye: '#f3fffd', tooth: '#f6fffd', pupil: '#14302b',
+                jacket: '#2f6f7c', jacketStroke: '#153842', shirt: '#ecfbff', shirtStroke: '#153842',
+                tie: '#ffd54f', tieStroke: '#9c6a00', seam: '#244e57', waist: '#8acdbc', waistStroke: '#2b6d60',
+                sleeve: '#356a74', hand: '#8fcfbe', handStroke: '#2b6d60',
+                pantsBack: '#4f5f79', pantsFront: '#617492', shoeBack: '#3e514c', shoeFront: '#53706a',
+                cone: '#26c6da', coneStripe: '#d9fbff', coneStroke: '#007c91',
+                bucket: '#b2ebf2', bucketRim: '#80deea', bucketHighlight: '#f0fdff', bucketStroke: '#317b87',
+                flagPole: '#4c6768', flag: '#00acc1', flagStroke: '#006064', flagBadge: '#e5feff',
+                shieldFill: 'rgba(210, 244, 247, 0.26)', shieldStroke: '#63b2bd'
+            },
+            sunset: {
+                skin: '#bcd06d', skinStroke: '#59612a', skinHighlight: '#e1efad', spot: '#8b9847',
+                jaw: '#a8bd60', brow: '#3c4419', eye: '#fffdf3', tooth: '#fffef8', pupil: '#211d18',
+                jacket: '#a63d5d', jacketStroke: '#56182c', shirt: '#fff1ea', shirtStroke: '#56182c',
+                tie: '#ffb74d', tieStroke: '#9a4f00', seam: '#6a3144', waist: '#b5c86a', waistStroke: '#59612a',
+                sleeve: '#98445a', hand: '#bcd06d', handStroke: '#59612a',
+                pantsBack: '#4e5675', pantsFront: '#626d92', shoeBack: '#5d4337', shoeFront: '#765545',
+                cone: '#ffb300', coneStripe: '#fff1b8', coneStroke: '#9a5d00',
+                bucket: '#ffe082', bucketRim: '#ffca28', bucketHighlight: '#fff8dc', bucketStroke: '#946200',
+                flagPole: '#755248', flag: '#ff7043', flagStroke: '#8d3b14', flagBadge: '#fff6dd',
+                shieldFill: 'rgba(255, 236, 204, 0.24)', shieldStroke: '#d69b52'
+            }
         };
         const PVZ_SHOOTER_EFFECTS = {
             ice: { damage: 1, knockback: 14, slowFactor: 0.58, slowDuration: 1800, text: 'Freeze!' },
@@ -1989,100 +2064,101 @@
             `;
         }
 
-        function getPvzZombieHeadgearSvg(type) {
+        function getPvzZombieHeadgearSvg(type, palette) {
             if (type === 'cone') {
                 return `
                     <g class="pvz-zombie__prop--head">
-                        <path d="M55 2 L77 14 L61 34 Z" fill="#f28c28" stroke="#713400" stroke-width="3"/>
-                        <path d="M59 10 L69 16" fill="none" stroke="#ffd180" stroke-width="3" stroke-linecap="round"/>
-                        <path d="M61 18 L70 24" fill="none" stroke="#ffd180" stroke-width="3" stroke-linecap="round"/>
+                        <path d="M55 2 L77 14 L61 34 Z" fill="${palette.cone}" stroke="${palette.coneStroke}" stroke-width="3"/>
+                        <path d="M59 10 L69 16" fill="none" stroke="${palette.coneStripe}" stroke-width="3" stroke-linecap="round"/>
+                        <path d="M61 18 L70 24" fill="none" stroke="${palette.coneStripe}" stroke-width="3" stroke-linecap="round"/>
                     </g>
                 `;
             }
             if (type === 'bucket') {
                 return `
                     <g class="pvz-zombie__prop--head">
-                        <path d="M51 5 H79 L75 29 H55 Z" fill="#b0bec5" stroke="#455a64" stroke-width="3"/>
-                        <path d="M48 8 H82" fill="none" stroke="#78909c" stroke-width="4" stroke-linecap="round"/>
-                        <path d="M59 13 H70" fill="none" stroke="#eceff1" stroke-width="3" stroke-linecap="round"/>
+                        <path d="M51 5 H79 L75 29 H55 Z" fill="${palette.bucket}" stroke="${palette.bucketStroke}" stroke-width="3"/>
+                        <path d="M48 8 H82" fill="none" stroke="${palette.bucketRim}" stroke-width="4" stroke-linecap="round"/>
+                        <path d="M59 13 H70" fill="none" stroke="${palette.bucketHighlight}" stroke-width="3" stroke-linecap="round"/>
                     </g>
                 `;
             }
             return '';
         }
 
-        function getPvzZombieHandPropSvg(type) {
+        function getPvzZombieHandPropSvg(type, palette) {
             if (type === 'flag') {
                 return `
                     <g class="pvz-zombie__prop--flag">
-                        <path d="M26 41 L26 84" fill="none" stroke="#6d4c41" stroke-width="4" stroke-linecap="round"/>
-                        <path d="M28 42 Q49 48 39 60 Q52 68 31 78 L26 78 Z" fill="#d84315" stroke="#7f1d1d" stroke-width="3"/>
-                        <circle cx="43" cy="59" r="4.5" fill="#fff3e0" stroke="#7f1d1d" stroke-width="2"/>
+                        <path d="M26 41 L26 84" fill="none" stroke="${palette.flagPole}" stroke-width="4" stroke-linecap="round"/>
+                        <path d="M28 42 Q49 48 39 60 Q52 68 31 78 L26 78 Z" fill="${palette.flag}" stroke="${palette.flagStroke}" stroke-width="3"/>
+                        <circle cx="43" cy="59" r="4.5" fill="${palette.flagBadge}" stroke="${palette.flagStroke}" stroke-width="2"/>
                     </g>
                 `;
             }
             if (type === 'shield') {
                 return `
                     <g class="pvz-zombie__prop--shield">
-                        <rect x="16" y="52" width="28" height="38" rx="2" fill="rgba(230, 240, 235, 0.18)" stroke="#90a4ae" stroke-width="3"/>
-                        <path d="M30 52 V90 M16 64 H44 M16 76 H44" fill="none" stroke="#90a4ae" stroke-width="2"/>
+                        <rect x="16" y="52" width="28" height="38" rx="2" fill="${palette.shieldFill}" stroke="${palette.shieldStroke}" stroke-width="3"/>
+                        <path d="M30 52 V90 M16 64 H44 M16 76 H44" fill="none" stroke="${palette.shieldStroke}" stroke-width="2"/>
                     </g>
                 `;
             }
             return '';
         }
 
-        function getPvzZombieSvg(type = 'basic') {
-            const headgear = getPvzZombieHeadgearSvg(type);
-            const handProp = getPvzZombieHandPropSvg(type);
+        function getPvzZombieSvg(type = 'basic', paletteName = 'classic') {
+            const palette = getPvzZombiePalette(paletteName);
+            const headgear = getPvzZombieHeadgearSvg(type, palette);
+            const handProp = getPvzZombieHandPropSvg(type, palette);
 
             return `
                 <svg class="pvz-zombie-svg" viewBox="0 0 120 120" width="118" height="118" aria-hidden="true">
                     <ellipse class="pvz-zombie__shadow" cx="60" cy="109" rx="24" ry="8" fill="rgba(35, 53, 28, 0.28)"/>
                     <g class="pvz-zombie">
                         <g class="pvz-zombie__leg--back">
-                            <path d="M63 79 L60 100 L66 109" fill="none" stroke="#425166" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
-                            <path d="M60 108 L73 108" fill="none" stroke="#5d4037" stroke-width="8" stroke-linecap="round"/>
+                            <path d="M63 79 L60 100 L66 109" fill="none" stroke="${palette.pantsBack}" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+                            <path d="M60 108 L73 108" fill="none" stroke="${palette.shoeBack}" stroke-width="8" stroke-linecap="round"/>
                         </g>
                         <g class="pvz-zombie__arm--back">
-                            <path d="M73 53 Q85 57 90 66" fill="none" stroke="#6a5544" stroke-width="13" stroke-linecap="round"/>
-                            <path d="M90 66 Q96 76 98 82" fill="none" stroke="#9dba70" stroke-width="11" stroke-linecap="round"/>
-                            <circle cx="97" cy="83" r="5" fill="#9dba70" stroke="#496133" stroke-width="2"/>
+                            <path d="M73 53 Q85 57 90 66" fill="none" stroke="${palette.sleeve}" stroke-width="13" stroke-linecap="round"/>
+                            <path d="M90 66 Q96 76 98 82" fill="none" stroke="${palette.hand}" stroke-width="11" stroke-linecap="round"/>
+                            <circle cx="97" cy="83" r="5" fill="${palette.hand}" stroke="${palette.handStroke}" stroke-width="2"/>
                         </g>
                         <g class="pvz-zombie__torso">
-                            <path d="M43 42 Q60 33 80 42 L84 74 Q67 84 47 82 L39 60 Z" fill="#6b5c4c" stroke="#31261f" stroke-width="3"/>
-                            <path d="M46 44 L57 50 L52 58 L44 53 Z" fill="#f4f1e1" stroke="#31261f" stroke-width="2.5"/>
-                            <path d="M74 44 L63 50 L68 58 L76 52 Z" fill="#f4f1e1" stroke="#31261f" stroke-width="2.5"/>
-                            <path d="M59 49 L66 80 L57 81 L54 58 Z" fill="#b13e2f" stroke="#6d1b14" stroke-width="2.5"/>
-                            <path d="M44 74 Q61 70 80 74" fill="none" stroke="#47382f" stroke-width="3" stroke-linecap="round"/>
-                            <rect x="49" y="79" width="18" height="6" rx="2" fill="#9dba70" stroke="#486133" stroke-width="2"/>
+                            <path d="M43 42 Q60 33 80 42 L84 74 Q67 84 47 82 L39 60 Z" fill="${palette.jacket}" stroke="${palette.jacketStroke}" stroke-width="3"/>
+                            <path d="M46 44 L57 50 L52 58 L44 53 Z" fill="${palette.shirt}" stroke="${palette.shirtStroke}" stroke-width="2.5"/>
+                            <path d="M74 44 L63 50 L68 58 L76 52 Z" fill="${palette.shirt}" stroke="${palette.shirtStroke}" stroke-width="2.5"/>
+                            <path d="M59 49 L66 80 L57 81 L54 58 Z" fill="${palette.tie}" stroke="${palette.tieStroke}" stroke-width="2.5"/>
+                            <path d="M44 74 Q61 70 80 74" fill="none" stroke="${palette.seam}" stroke-width="3" stroke-linecap="round"/>
+                            <rect x="49" y="79" width="18" height="6" rx="2" fill="${palette.waist}" stroke="${palette.waistStroke}" stroke-width="2"/>
                             <g class="pvz-zombie__head">
                                 ${headgear}
-                                <path d="M48 15 Q58 5 73 10 Q81 15 81 27 Q81 40 71 47 Q60 52 49 47 Q39 40 40 27 Q41 19 48 15 Z" fill="#a1bf70" stroke="#4a6030" stroke-width="3"/>
-                                <path d="M53 10 Q61 3 71 8" fill="none" stroke="#2f3d1f" stroke-width="3" stroke-linecap="round"/>
-                                <path d="M50 17 Q44 20 44 27" fill="none" stroke="#c6db9b" stroke-width="3" stroke-linecap="round"/>
+                                <path d="M48 15 Q58 5 73 10 Q81 15 81 27 Q81 40 71 47 Q60 52 49 47 Q39 40 40 27 Q41 19 48 15 Z" fill="${palette.skin}" stroke="${palette.skinStroke}" stroke-width="3"/>
+                                <path d="M53 10 Q61 3 71 8" fill="none" stroke="${palette.brow}" stroke-width="3" stroke-linecap="round"/>
+                                <path d="M50 17 Q44 20 44 27" fill="none" stroke="${palette.skinHighlight}" stroke-width="3" stroke-linecap="round"/>
                                 <g class="pvz-zombie__eyes">
-                                    <ellipse cx="57" cy="27" rx="4.8" ry="7.4" fill="#fffef3" stroke="#25331a" stroke-width="2"/>
-                                    <ellipse cx="70" cy="29" rx="4.8" ry="7.4" fill="#fffef3" stroke="#25331a" stroke-width="2"/>
-                                    <circle cx="59" cy="29" r="1.8" fill="#1b1b1b"/>
-                                    <circle cx="71" cy="30" r="1.8" fill="#1b1b1b"/>
+                                    <ellipse cx="57" cy="27" rx="4.8" ry="7.4" fill="${palette.eye}" stroke="${palette.brow}" stroke-width="2"/>
+                                    <ellipse cx="70" cy="29" rx="4.8" ry="7.4" fill="${palette.eye}" stroke="${palette.brow}" stroke-width="2"/>
+                                    <circle cx="59" cy="29" r="1.8" fill="${palette.pupil}"/>
+                                    <circle cx="71" cy="30" r="1.8" fill="${palette.pupil}"/>
                                 </g>
-                                <circle cx="48" cy="32" r="2.4" fill="#6f8e45"/>
+                                <circle cx="48" cy="32" r="2.4" fill="${palette.spot}"/>
                                 <g class="pvz-zombie__jaw">
-                                    <path d="M49 36 Q61 43 73 38 L70 49 Q58 54 48 46 Z" fill="#90ae63" stroke="#4a6030" stroke-width="3"/>
-                                    <path d="M53 40 H67" fill="none" stroke="#4a6030" stroke-width="2" stroke-linecap="round"/>
-                                    <path d="M54 42 L54 47 M59 42 L59 48 M64 42 L64 48" fill="none" stroke="#fffef3" stroke-width="2" stroke-linecap="round"/>
+                                    <path d="M49 36 Q61 43 73 38 L70 49 Q58 54 48 46 Z" fill="${palette.jaw}" stroke="${palette.skinStroke}" stroke-width="3"/>
+                                    <path d="M53 40 H67" fill="none" stroke="${palette.skinStroke}" stroke-width="2" stroke-linecap="round"/>
+                                    <path d="M54 42 L54 47 M59 42 L59 48 M64 42 L64 48" fill="none" stroke="${palette.tooth}" stroke-width="2" stroke-linecap="round"/>
                                 </g>
                             </g>
                         </g>
                         <g class="pvz-zombie__leg--front">
-                            <path d="M51 79 L48 99 L41 109" fill="none" stroke="#54657d" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
-                            <path d="M40 108 L54 108" fill="none" stroke="#704f2d" stroke-width="8" stroke-linecap="round"/>
+                            <path d="M51 79 L48 99 L41 109" fill="none" stroke="${palette.pantsFront}" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+                            <path d="M40 108 L54 108" fill="none" stroke="${palette.shoeFront}" stroke-width="8" stroke-linecap="round"/>
                         </g>
                         <g class="pvz-zombie__arm--front">
-                            <path d="M45 54 Q31 58 25 67" fill="none" stroke="#6a5544" stroke-width="13" stroke-linecap="round"/>
-                            <path d="M25 67 Q18 76 17 84" fill="none" stroke="#9dba70" stroke-width="11" stroke-linecap="round"/>
-                            <circle cx="17" cy="86" r="5" fill="#9dba70" stroke="#496133" stroke-width="2"/>
+                            <path d="M45 54 Q31 58 25 67" fill="none" stroke="${palette.sleeve}" stroke-width="13" stroke-linecap="round"/>
+                            <path d="M25 67 Q18 76 17 84" fill="none" stroke="${palette.hand}" stroke-width="11" stroke-linecap="round"/>
+                            <circle cx="17" cy="86" r="5" fill="${palette.hand}" stroke="${palette.handStroke}" stroke-width="2"/>
                         </g>
                         ${handProp}
                     </g>
@@ -2094,6 +2170,14 @@
             return PVZ_ZOMBIE_STATS[type] || PVZ_ZOMBIE_STATS.basic;
         }
 
+        function getRandomPvzPaletteName() {
+            return pvzZombiePaletteNames[Math.floor(Math.random() * pvzZombiePaletteNames.length)] || 'classic';
+        }
+
+        function getPvzZombiePalette(name = 'classic') {
+            return PVZ_ZOMBIE_PALETTES[name] || PVZ_ZOMBIE_PALETTES.classic;
+        }
+
         function getPvzShooterEffect(row) {
             const shooterType = getPvzShooterType(row);
             return { shooterType, ...(PVZ_SHOOTER_EFFECTS[shooterType] || PVZ_SHOOTER_EFFECTS.ice) };
@@ -2103,7 +2187,7 @@
             if (!it?.spriteEl) return;
 
             const stats = getPvzZombieStats(it.zombieType);
-            it.spriteEl.innerHTML = getPvzZombieSvg(it.zombieType);
+            it.spriteEl.innerHTML = getPvzZombieSvg(it.zombieType, it.zombiePalette);
             it.svgEl = it.element.querySelector('.pvz-zombie-svg');
             it.element.style.setProperty('--walk-duration', `${(stats.cadence + (Math.random() * 0.04 - 0.02)).toFixed(2)}s`);
             applyPvzEnemyPose(it);
@@ -2290,44 +2374,45 @@
             ], { duration: 280, easing: 'ease-out' });
         }
 
-        function getPvzZombieDebrisSvg(type) {
+        function getPvzZombieDebrisSvg(type, paletteName = 'classic') {
+            const palette = getPvzZombiePalette(paletteName);
             if (type === 'cone') {
                 return `
                     <svg viewBox="0 0 46 46" aria-hidden="true">
-                        <path d="M12 6 L39 20 L19 40 Z" fill="#f28c28" stroke="#713400" stroke-width="3"/>
-                        <path d="M17 15 L28 21" fill="none" stroke="#ffd180" stroke-width="3" stroke-linecap="round"/>
+                        <path d="M12 6 L39 20 L19 40 Z" fill="${palette.cone}" stroke="${palette.coneStroke}" stroke-width="3"/>
+                        <path d="M17 15 L28 21" fill="none" stroke="${palette.coneStripe}" stroke-width="3" stroke-linecap="round"/>
                     </svg>
                 `;
             }
             if (type === 'bucket') {
                 return `
                     <svg viewBox="0 0 46 46" aria-hidden="true">
-                        <path d="M9 10 H37 L33 36 H13 Z" fill="#b0bec5" stroke="#455a64" stroke-width="3"/>
-                        <path d="M7 12 H39" fill="none" stroke="#78909c" stroke-width="4" stroke-linecap="round"/>
+                        <path d="M9 10 H37 L33 36 H13 Z" fill="${palette.bucket}" stroke="${palette.bucketStroke}" stroke-width="3"/>
+                        <path d="M7 12 H39" fill="none" stroke="${palette.bucketRim}" stroke-width="4" stroke-linecap="round"/>
                     </svg>
                 `;
             }
             if (type === 'flag') {
                 return `
                     <svg viewBox="0 0 46 46" aria-hidden="true">
-                        <path d="M12 6 V40" fill="none" stroke="#6d4c41" stroke-width="4" stroke-linecap="round"/>
-                        <path d="M14 8 Q31 12 23 22 Q33 29 16 36 L12 36 Z" fill="#d84315" stroke="#7f1d1d" stroke-width="3"/>
+                        <path d="M12 6 V40" fill="none" stroke="${palette.flagPole}" stroke-width="4" stroke-linecap="round"/>
+                        <path d="M14 8 Q31 12 23 22 Q33 29 16 36 L12 36 Z" fill="${palette.flag}" stroke="${palette.flagStroke}" stroke-width="3"/>
                     </svg>
                 `;
             }
             if (type === 'shield') {
                 return `
                     <svg viewBox="0 0 46 46" aria-hidden="true">
-                        <rect x="9" y="6" width="28" height="34" rx="2" fill="rgba(230, 240, 235, 0.2)" stroke="#90a4ae" stroke-width="3"/>
-                        <path d="M23 6 V40 M9 17 H37 M9 28 H37" fill="none" stroke="#90a4ae" stroke-width="2"/>
+                        <rect x="9" y="6" width="28" height="34" rx="2" fill="${palette.shieldFill}" stroke="${palette.shieldStroke}" stroke-width="3"/>
+                        <path d="M23 6 V40 M9 17 H37 M9 28 H37" fill="none" stroke="${palette.shieldStroke}" stroke-width="2"/>
                     </svg>
                 `;
             }
             return '';
         }
 
-        function spawnPvzDebris(type, x, y) {
-            const markup = getPvzZombieDebrisSvg(type);
+        function spawnPvzDebris(type, x, y, paletteName = 'classic') {
+            const markup = getPvzZombieDebrisSvg(type, paletteName);
             if (!markup) return;
 
             const debris = document.createElement('div');
@@ -2484,17 +2569,18 @@
                 const row = Math.floor(Math.random() * 5);
                 const y = (row + 1) * (window.innerHeight / 6) - 50;
                 const zombieType = pvzZombieTypes[Math.floor(Math.random() * pvzZombieTypes.length)];
+                const zombiePalette = getRandomPvzPaletteName();
                 const zombieStats = getPvzZombieStats(zombieType);
                 const baseSpeed = (Math.random() * 1.2 + 1.2) * (speedMultiplier / 1.2);
                 div.className = 'game-item target-item target-item--pvz';
                 div.style.setProperty('--walk-duration', `${(zombieStats.cadence + (Math.random() * 0.08 - 0.04)).toFixed(2)}s`);
                 div.style.setProperty('--phase-delay', `${(-Math.random() * 1.2).toFixed(2)}s`);
-                div.innerHTML = `<div class="target-sprite">${getPvzZombieSvg(zombieType)}</div><div class="target-letter letter-pvz">${promptHTML}</div>`;
+                div.innerHTML = `<div class="target-sprite">${getPvzZombieSvg(zombieType, zombiePalette)}</div><div class="target-letter letter-pvz">${promptHTML}</div>`;
                 item.promptEl = div.querySelector('.target-letter');
                 item.spriteEl = div.querySelector('.target-sprite');
                 item.svgEl = div.querySelector('.pvz-zombie-svg');
                 div.style.left = `${window.innerWidth}px`; div.style.top = `${y - 8}px`;
-                item.x = window.innerWidth; item.y = y - 8; item.row = row; item.zombieType = zombieType;
+                item.x = window.innerWidth; item.y = y - 8; item.row = row; item.zombieType = zombieType; item.zombiePalette = zombiePalette;
                 item.baseSpeed = baseSpeed;
                 item.speed = baseSpeed * zombieStats.speed;
                 item.hp = zombieStats.hp;
@@ -2900,7 +2986,7 @@
                 ], { duration: 150, easing: 'ease-in', fill: 'forwards' });
                 setTimeout(() => it.element.remove(), 150);
             } else if (gameMode === 'pvz') {
-                spawnPvzDebris(it.zombieType, tx, ty);
+                spawnPvzDebris(it.zombieType, tx, ty, it.zombiePalette);
                 const deathTilt = Math.random() < 0.5 ? -14 : 14;
                 it.element.animate([
                     { transform: 'translate3d(0, 0, 0) scale(1) rotate(0deg)', opacity: 1, filter: 'brightness(1)' },
