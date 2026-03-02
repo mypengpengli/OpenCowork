@@ -236,6 +236,7 @@
             font-size: 0;
             filter: none;
             animation: none;
+            will-change: filter;
         }
         .target-item--pvz .target-letter {
             top: -10px;
@@ -244,6 +245,10 @@
             width: 118px;
             height: 118px;
             overflow: visible;
+            transform: translateX(-6px) scaleX(-1);
+            transform-origin: center;
+            transition: transform 0.08s linear, filter 0.08s linear;
+            will-change: transform, filter;
         }
         .pvz-zombie,
         .pvz-zombie * {
@@ -330,22 +335,22 @@
         }
         @keyframes pvz-zombie-shamble {
             0%, 100% { transform: translateY(0) translateX(0) rotate(calc(var(--lane-roll) - var(--threat-lean))); }
-            25% { transform: translateY(-2px) translateX(-1px) rotate(calc(-1.2deg + var(--lane-roll) - var(--threat-lean))); }
+            25% { transform: translateY(-3px) translateX(1px) rotate(calc(-2.2deg + var(--lane-roll) - var(--threat-lean))); }
             50% { transform: translateY(calc(1px + var(--threat-drop))) translateX(var(--threat-shift)) rotate(calc(0.8deg + var(--lane-roll) + var(--threat-lean))); }
-            75% { transform: translateY(-1px) translateX(1px) rotate(calc(-0.6deg + var(--lane-roll) - var(--threat-lean-soft))); }
+            75% { transform: translateY(-2px) translateX(-1px) rotate(calc(0.6deg + var(--lane-roll) - var(--threat-lean-soft))); }
         }
         @keyframes pvz-shadow-breathe {
-            0%, 100% { transform: scaleX(1); opacity: 0.28; }
-            50% { transform: scaleX(0.9); opacity: 0.18; }
+            0%, 100% { transform: scaleX(1); opacity: 0.32; }
+            50% { transform: scaleX(0.82); opacity: 0.16; }
         }
         @keyframes pvz-torso-sway {
             0%, 100% { transform: rotate(calc(-1deg - var(--threat-lean))) translateY(0); }
-            50% { transform: rotate(calc(2.2deg + var(--threat-lean))) translateY(-1px); }
+            50% { transform: rotate(calc(3.8deg + var(--threat-lean))) translateY(-2px); }
         }
         @keyframes pvz-head-bob {
-            0%, 100% { transform: rotate(calc(-2deg - var(--threat-lean-soft))) translateY(var(--head-drop)); }
-            35% { transform: rotate(calc(3deg + var(--threat-lean-soft))) translateY(calc(-2px + var(--head-drop))); }
-            70% { transform: rotate(calc(-4deg - var(--threat-lean))) translateY(calc(1px + var(--head-drop))); }
+            0%, 100% { transform: rotate(calc(-3deg - var(--threat-lean-soft))) translateY(var(--head-drop)); }
+            35% { transform: rotate(calc(4.5deg + var(--threat-lean-soft))) translateY(calc(-3px + var(--head-drop))); }
+            70% { transform: rotate(calc(-6deg - var(--threat-lean))) translateY(calc(2px + var(--head-drop))); }
         }
         @keyframes pvz-eye-blink {
             0%, 90%, 100% { transform: scaleY(1); }
@@ -353,23 +358,23 @@
         }
         @keyframes pvz-jaw-chomp {
             0%, 100% { transform: rotate(0deg) translateY(0); }
-            50% { transform: rotate(calc(8deg + var(--jaw-hunger))) translateY(2px); }
+            50% { transform: rotate(calc(10deg + var(--jaw-hunger))) translateY(3px); }
         }
         @keyframes pvz-arm-front {
-            0%, 100% { transform: rotate(calc(16deg + var(--arm-reach))) translateY(0); }
-            50% { transform: rotate(calc(-18deg + var(--arm-reach-soft))) translateY(2px); }
+            0%, 100% { transform: rotate(calc(22deg + var(--arm-reach))) translateY(0); }
+            50% { transform: rotate(calc(-22deg + var(--arm-reach-soft))) translateY(3px); }
         }
         @keyframes pvz-arm-back {
-            0%, 100% { transform: rotate(calc(-12deg + var(--arm-reach-back))) translateY(1px); }
-            50% { transform: rotate(calc(20deg + var(--arm-reach-soft))) translateY(-2px); }
+            0%, 100% { transform: rotate(calc(-16deg + var(--arm-reach-back))) translateY(1px); }
+            50% { transform: rotate(calc(24deg + var(--arm-reach-soft))) translateY(-2px); }
         }
         @keyframes pvz-leg-front {
-            0%, 100% { transform: rotate(calc(12deg - var(--threat-lean-tiny))) translateY(var(--drag-depth)); }
-            50% { transform: rotate(calc(-16deg - var(--threat-lean-tiny))) translateY(calc(2px + var(--drag-depth))); }
+            0%, 100% { transform: rotate(calc(14deg - var(--threat-lean-tiny))) translateY(var(--drag-depth)); }
+            50% { transform: rotate(calc(-20deg - var(--threat-lean-tiny))) translateY(calc(3px + var(--drag-depth))); }
         }
         @keyframes pvz-leg-back {
-            0%, 100% { transform: rotate(calc(-14deg - var(--threat-lean-tiny))) translateY(1px); }
-            50% { transform: rotate(calc(14deg - var(--threat-lean-tiny))) translateY(-1px); }
+            0%, 100% { transform: rotate(calc(-16deg - var(--threat-lean-tiny))) translateY(1px); }
+            50% { transform: rotate(calc(17deg - var(--threat-lean-tiny))) translateY(-2px); }
         }
         @keyframes pvz-gear-bounce {
             0%, 100% { transform: translateY(0) rotate(0deg); }
@@ -1384,21 +1389,32 @@
 
             const stageWidth = Math.max(window.innerWidth, 1);
             const progress = Math.min(1, Math.max(0, 1 - (it.x / stageWidth)));
-            const threat = Math.pow(progress, 1.35);
+            const threat = Math.pow(progress, 1.18);
             const laneRoll = (it.row - 2) * 0.45;
 
-            it.element.style.setProperty('--threat-lean', `${(4.8 * threat).toFixed(2)}deg`);
-            it.element.style.setProperty('--threat-lean-soft', `${(2.9 * threat).toFixed(2)}deg`);
-            it.element.style.setProperty('--threat-lean-tiny', `${(1.1 * threat).toFixed(2)}deg`);
-            it.element.style.setProperty('--threat-drop', `${(3.2 * threat).toFixed(2)}px`);
-            it.element.style.setProperty('--threat-shift', `${(-7.5 * threat).toFixed(2)}px`);
-            it.element.style.setProperty('--arm-reach', `${(12 * threat).toFixed(2)}deg`);
-            it.element.style.setProperty('--arm-reach-soft', `${(4.2 * threat).toFixed(2)}deg`);
-            it.element.style.setProperty('--arm-reach-back', `${(2.5 * threat).toFixed(2)}deg`);
-            it.element.style.setProperty('--jaw-hunger', `${(6 * threat).toFixed(2)}deg`);
-            it.element.style.setProperty('--head-drop', `${(5.5 * threat).toFixed(2)}px`);
-            it.element.style.setProperty('--drag-depth', `${(2.5 * threat).toFixed(2)}px`);
+            it.element.style.setProperty('--threat-lean', `${(7.4 * threat).toFixed(2)}deg`);
+            it.element.style.setProperty('--threat-lean-soft', `${(4.4 * threat).toFixed(2)}deg`);
+            it.element.style.setProperty('--threat-lean-tiny', `${(1.7 * threat).toFixed(2)}deg`);
+            it.element.style.setProperty('--threat-drop', `${(5.2 * threat).toFixed(2)}px`);
+            it.element.style.setProperty('--threat-shift', `${(9.5 * threat).toFixed(2)}px`);
+            it.element.style.setProperty('--arm-reach', `${(18 * threat).toFixed(2)}deg`);
+            it.element.style.setProperty('--arm-reach-soft', `${(7 * threat).toFixed(2)}deg`);
+            it.element.style.setProperty('--arm-reach-back', `${(4 * threat).toFixed(2)}deg`);
+            it.element.style.setProperty('--jaw-hunger', `${(9 * threat).toFixed(2)}deg`);
+            it.element.style.setProperty('--head-drop', `${(7.5 * threat).toFixed(2)}px`);
+            it.element.style.setProperty('--drag-depth', `${(4.2 * threat).toFixed(2)}px`);
             it.element.style.setProperty('--lane-roll', `${laneRoll.toFixed(2)}deg`);
+
+            if (it.svgEl) {
+                const spriteScale = 1 + threat * 0.08;
+                const spriteNudge = -6 - threat * 6;
+                it.svgEl.style.transform = `translateX(${spriteNudge.toFixed(2)}px) scaleX(-1) scale(${spriteScale.toFixed(3)})`;
+                it.svgEl.style.filter = `saturate(${(1 + threat * 0.18).toFixed(2)}) brightness(${(1 + threat * 0.12).toFixed(2)})`;
+            }
+
+            if (it.spriteEl) {
+                it.spriteEl.style.filter = `drop-shadow(0 12px 18px rgba(0, 0, 0, ${(0.18 + threat * 0.18).toFixed(2)}))`;
+            }
         }
 
         function applyVerticalTargetPose(it) {
@@ -1665,6 +1681,7 @@
                 state: 'falling',
                 promptEl: null,
                 spriteEl: null,
+                svgEl: null,
                 shadowEl: null,
                 poseSeed: Math.random() * Math.PI * 2
             };
@@ -1707,6 +1724,8 @@
                 div.style.setProperty('--phase-delay', `${(-Math.random() * 1.2).toFixed(2)}s`);
                 div.innerHTML = `<div class="target-sprite">${getPvzZombieSvg(zombieType)}</div><div class="target-letter letter-pvz">${promptHTML}</div>`;
                 item.promptEl = div.querySelector('.target-letter');
+                item.spriteEl = div.querySelector('.target-sprite');
+                item.svgEl = div.querySelector('.pvz-zombie-svg');
                 div.style.left = `${window.innerWidth}px`; div.style.top = `${y - 8}px`;
                 item.x = window.innerWidth; item.y = y - 8; item.row = row; item.zombieType = zombieType;
                 item.speed = ((Math.random() * 1.2 + 1.2) * zombieStats.speed) * (speedMultiplier / 1.2);
