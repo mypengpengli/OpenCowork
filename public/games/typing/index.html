@@ -1119,10 +1119,10 @@
         const pvzShooterTypes = ['ice', 'melon', 'corn', 'melon', 'ice'];
         const PVZ_ZOMBIE_STATS = {
             basic: { speed: 1, cadence: 0.86, hp: 1 },
-            cone: { speed: 1.06, cadence: 0.78, hp: 2, breakTo: 'basic' },
-            bucket: { speed: 0.9, cadence: 0.98, hp: 2, breakTo: 'basic' },
+            cone: { speed: 1.06, cadence: 0.78, hp: 1 },
+            bucket: { speed: 0.9, cadence: 0.98, hp: 1 },
             flag: { speed: 1.14, cadence: 0.72, hp: 1 },
-            shield: { speed: 0.84, cadence: 1.04, hp: 2, breakTo: 'basic' }
+            shield: { speed: 0.84, cadence: 1.04, hp: 1 }
         };
         const PVZ_SHOOTER_EFFECTS = {
             ice: { damage: 1, knockback: 14, slowFactor: 0.58, slowDuration: 1800, text: 'Freeze!' },
@@ -2475,48 +2475,6 @@
 
         function resolvePvzHit(it, tx, ty) {
             if (!it?.element || !it.element.isConnected) return;
-
-            const effect = getPvzShooterEffect(it.row);
-            const currentStats = getPvzZombieStats(it.zombieType);
-            const nextHp = (it.hp || currentStats.hp) - effect.damage;
-
-            if (nextHp > 0) {
-                const previousType = it.zombieType;
-                it.hp = nextHp;
-                it.state = 'falling';
-                it.x = Math.min(window.innerWidth + 24, it.x + effect.knockback);
-                it.element.style.left = `${it.x}px`;
-
-                if (effect.slowDuration) {
-                    it.slowUntil = Date.now() + effect.slowDuration;
-                    it.slowFactor = effect.slowFactor;
-                }
-                if (effect.stunDuration) {
-                    it.stunUntil = Date.now() + effect.stunDuration;
-                }
-
-                if (currentStats.breakTo) {
-                    spawnPvzDebris(previousType, tx, ty);
-                    it.zombieType = currentStats.breakTo;
-                    const downgradedStats = getPvzZombieStats(it.zombieType);
-                    it.speed = it.baseSpeed * downgradedStats.speed;
-                    refreshPvzEnemySprite(it);
-                }
-
-                createParticles(tx, ty, effect.shooterType === 'melon' ? '#ff7043' : (effect.shooterType === 'corn' ? '#ffe082' : '#b3e5fc'));
-                spawnCombatText(currentStats.breakTo ? 'Armor Break!' : effect.text, tx, ty, currentStats.breakTo ? '#fff3b0' : '#e1f5fe', currentStats.breakTo ? '#5d4037' : '#0d47a1');
-                it.element.animate([
-                    { transform: `${it.element.style.transform || 'translate3d(0, 0, 0)'}`, opacity: 1 },
-                    { transform: 'translate3d(-14px, -4px, 0) scale(1.04) rotate(-6deg)', opacity: 1 },
-                    { transform: `${it.element.style.transform || 'translate3d(0, 0, 0)'}`, opacity: 1 }
-                ], { duration: 240, easing: 'ease-out' });
-                applyPvzEnemyPose(it);
-                score += 4;
-                scoreEl.textContent = score;
-                playTone(effect.shooterType === 'melon' ? 720 : 520, 0.08, 'triangle', 0.08);
-                return;
-            }
-
             it.hp = 0;
             finishHit(it, items.indexOf(it), tx, ty);
         }
