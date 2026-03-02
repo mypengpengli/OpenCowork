@@ -640,6 +640,9 @@
             color: #ff4081; background: white; border: 3px solid #ff4081;
             padding: 2px 10px; border-radius: 10px; box-shadow: 2px 2px 0 #333;
             transform: translateZ(42px);
+            display: inline-flex;
+            align-items: center;
+            white-space: nowrap;
         }
         .letter-pvz { color: #2e7d32; border-color: #2e7d32; }
         .letter-snake {
@@ -647,8 +650,23 @@
             border-color: #00796b;
             background: linear-gradient(180deg, #ffffff 0%, #effff9 100%);
         }
-        .prompt-typed { color: #fff; background: #4caf50; padding: 0 4px; border-radius: 6px; }
-        .prompt-rest { opacity: 0.85; }
+        .prompt-text {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.04em;
+            font-kerning: none;
+            font-variant-ligatures: none;
+        }
+        .prompt-char {
+            min-width: 0.62em;
+            text-align: center;
+        }
+        .prompt-char--typed {
+            color: #fff;
+            background: #4caf50;
+            border-radius: 6px;
+            box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.14);
+        }
         .prompt-translation { margin-left: 6px; font-size: 0.8em; color: #37474f; white-space: nowrap; }
         .word-focus .target-letter { border-color: #ffeb3b; box-shadow: 0 0 0 4px rgba(255, 235, 59, 0.25), 2px 2px 0 #333; }
         .snake-targeted .target-letter {
@@ -1696,10 +1714,13 @@
         function renderPromptHTML(text, progress, translation = '') {
             if (!isWordMode()) return escapeHTML(text);
 
-            const done = progress > 0 ? `<span class="prompt-typed">${escapeHTML(text.slice(0, progress))}</span>` : '';
-            const rest = `<span class="prompt-rest">${escapeHTML(text.slice(progress))}</span>`;
+            const chars = Array.from(text).map((ch, index) => {
+                const classes = index < progress ? 'prompt-char prompt-char--typed' : 'prompt-char';
+                const charHTML = ch === ' ' ? '&nbsp;' : escapeHTML(ch);
+                return `<span class="${classes}">${charHTML}</span>`;
+            }).join('');
             const translationHTML = translation ? `<span class="prompt-translation">${escapeHTML(translation)}</span>` : '';
-            return `${done}${rest}${translationHTML}`;
+            return `<span class="prompt-text">${chars}</span>${translationHTML}`;
         }
 
         function setWordFocus(it) {
