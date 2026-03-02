@@ -152,6 +152,18 @@
             transform-box: fill-box;
         }
         .pvz-zombie {
+            --threat-lean: 0deg;
+            --threat-lean-soft: 0deg;
+            --threat-lean-tiny: 0deg;
+            --threat-drop: 0px;
+            --threat-shift: 0px;
+            --arm-reach: 0deg;
+            --arm-reach-soft: 0deg;
+            --arm-reach-back: 0deg;
+            --jaw-hunger: 0deg;
+            --head-drop: 0px;
+            --drag-depth: 0px;
+            --lane-roll: 0deg;
             transform-origin: 50% 100%;
             animation: pvz-zombie-shamble var(--walk-duration, 0.86s) infinite ease-in-out;
             animation-delay: var(--phase-delay, 0s);
@@ -219,23 +231,23 @@
             animation-delay: var(--phase-delay, 0s);
         }
         @keyframes pvz-zombie-shamble {
-            0%, 100% { transform: translateY(0) translateX(0) rotate(0deg); }
-            25% { transform: translateY(-2px) translateX(-1px) rotate(-1.2deg); }
-            50% { transform: translateY(1px) translateX(0) rotate(0.8deg); }
-            75% { transform: translateY(-1px) translateX(1px) rotate(-0.6deg); }
+            0%, 100% { transform: translateY(0) translateX(0) rotate(calc(var(--lane-roll) - var(--threat-lean))); }
+            25% { transform: translateY(-2px) translateX(-1px) rotate(calc(-1.2deg + var(--lane-roll) - var(--threat-lean))); }
+            50% { transform: translateY(calc(1px + var(--threat-drop))) translateX(var(--threat-shift)) rotate(calc(0.8deg + var(--lane-roll) + var(--threat-lean))); }
+            75% { transform: translateY(-1px) translateX(1px) rotate(calc(-0.6deg + var(--lane-roll) - var(--threat-lean-soft))); }
         }
         @keyframes pvz-shadow-breathe {
             0%, 100% { transform: scaleX(1); opacity: 0.28; }
             50% { transform: scaleX(0.9); opacity: 0.18; }
         }
         @keyframes pvz-torso-sway {
-            0%, 100% { transform: rotate(-1deg) translateY(0); }
-            50% { transform: rotate(2.2deg) translateY(-1px); }
+            0%, 100% { transform: rotate(calc(-1deg - var(--threat-lean))) translateY(0); }
+            50% { transform: rotate(calc(2.2deg + var(--threat-lean))) translateY(-1px); }
         }
         @keyframes pvz-head-bob {
-            0%, 100% { transform: rotate(-2deg) translateY(0); }
-            35% { transform: rotate(3deg) translateY(-2px); }
-            70% { transform: rotate(-4deg) translateY(1px); }
+            0%, 100% { transform: rotate(calc(-2deg - var(--threat-lean-soft))) translateY(var(--head-drop)); }
+            35% { transform: rotate(calc(3deg + var(--threat-lean-soft))) translateY(calc(-2px + var(--head-drop))); }
+            70% { transform: rotate(calc(-4deg - var(--threat-lean))) translateY(calc(1px + var(--head-drop))); }
         }
         @keyframes pvz-eye-blink {
             0%, 90%, 100% { transform: scaleY(1); }
@@ -243,23 +255,23 @@
         }
         @keyframes pvz-jaw-chomp {
             0%, 100% { transform: rotate(0deg) translateY(0); }
-            50% { transform: rotate(8deg) translateY(2px); }
+            50% { transform: rotate(calc(8deg + var(--jaw-hunger))) translateY(2px); }
         }
         @keyframes pvz-arm-front {
-            0%, 100% { transform: rotate(16deg) translateY(0); }
-            50% { transform: rotate(-18deg) translateY(2px); }
+            0%, 100% { transform: rotate(calc(16deg + var(--arm-reach))) translateY(0); }
+            50% { transform: rotate(calc(-18deg + var(--arm-reach-soft))) translateY(2px); }
         }
         @keyframes pvz-arm-back {
-            0%, 100% { transform: rotate(-12deg) translateY(1px); }
-            50% { transform: rotate(20deg) translateY(-2px); }
+            0%, 100% { transform: rotate(calc(-12deg + var(--arm-reach-back))) translateY(1px); }
+            50% { transform: rotate(calc(20deg + var(--arm-reach-soft))) translateY(-2px); }
         }
         @keyframes pvz-leg-front {
-            0%, 100% { transform: rotate(12deg) translateY(0); }
-            50% { transform: rotate(-16deg) translateY(2px); }
+            0%, 100% { transform: rotate(calc(12deg - var(--threat-lean-tiny))) translateY(var(--drag-depth)); }
+            50% { transform: rotate(calc(-16deg - var(--threat-lean-tiny))) translateY(calc(2px + var(--drag-depth))); }
         }
         @keyframes pvz-leg-back {
-            0%, 100% { transform: rotate(-14deg) translateY(1px); }
-            50% { transform: rotate(14deg) translateY(-1px); }
+            0%, 100% { transform: rotate(calc(-14deg - var(--threat-lean-tiny))) translateY(1px); }
+            50% { transform: rotate(calc(14deg - var(--threat-lean-tiny))) translateY(-1px); }
         }
         @keyframes pvz-gear-bounce {
             0%, 100% { transform: translateY(0) rotate(0deg); }
@@ -273,6 +285,20 @@
         @keyframes pvz-shield-rattle {
             0%, 100% { transform: rotate(3deg) translateX(0); }
             50% { transform: rotate(-4deg) translateX(-2px); }
+        }
+        .pvz-zombie-debris {
+            position: absolute;
+            width: 46px;
+            height: 46px;
+            pointer-events: none;
+            z-index: 32;
+            transform-origin: center;
+            filter: drop-shadow(2px 4px 0 rgba(0,0,0,0.18));
+        }
+        .pvz-zombie-debris svg {
+            width: 100%;
+            height: 100%;
+            overflow: visible;
         }
         .target-letter {
             position: absolute; top: -15px; font-size: 26px; font-weight: bold;
@@ -572,6 +598,13 @@
         const animals = ["🐱", "🐰", "🦊", "🐻", "🐼", "🐣", "🦁", "🐙", "🐵"];
         const pvzZombieTypes = ['basic', 'cone', 'bucket', 'flag', 'shield'];
         const pvzShooterTypes = ['ice', 'melon', 'corn', 'melon', 'ice'];
+        const PVZ_ZOMBIE_STATS = {
+            basic: { speed: 1, cadence: 0.86 },
+            cone: { speed: 1.06, cadence: 0.78 },
+            bucket: { speed: 0.9, cadence: 0.98 },
+            flag: { speed: 1.14, cadence: 0.72 },
+            shield: { speed: 0.84, cadence: 1.04 }
+        };
 
         const SETTINGS_KEY = 'typingGameSettings_v1';
         const settings = { timesTableOnKill: false, promptMode: 'letters', customWordsText: '' };
@@ -1185,6 +1218,93 @@
             `;
         }
 
+        function getPvzZombieStats(type = 'basic') {
+            return PVZ_ZOMBIE_STATS[type] || PVZ_ZOMBIE_STATS.basic;
+        }
+
+        function applyPvzEnemyPose(it) {
+            if (!it?.element) return;
+
+            const stageWidth = Math.max(window.innerWidth, 1);
+            const progress = Math.min(1, Math.max(0, 1 - (it.x / stageWidth)));
+            const threat = Math.pow(progress, 1.35);
+            const laneRoll = (it.row - 2) * 0.45;
+
+            it.element.style.setProperty('--threat-lean', `${(4.8 * threat).toFixed(2)}deg`);
+            it.element.style.setProperty('--threat-lean-soft', `${(2.9 * threat).toFixed(2)}deg`);
+            it.element.style.setProperty('--threat-lean-tiny', `${(1.1 * threat).toFixed(2)}deg`);
+            it.element.style.setProperty('--threat-drop', `${(3.2 * threat).toFixed(2)}px`);
+            it.element.style.setProperty('--threat-shift', `${(-7.5 * threat).toFixed(2)}px`);
+            it.element.style.setProperty('--arm-reach', `${(12 * threat).toFixed(2)}deg`);
+            it.element.style.setProperty('--arm-reach-soft', `${(4.2 * threat).toFixed(2)}deg`);
+            it.element.style.setProperty('--arm-reach-back', `${(2.5 * threat).toFixed(2)}deg`);
+            it.element.style.setProperty('--jaw-hunger', `${(6 * threat).toFixed(2)}deg`);
+            it.element.style.setProperty('--head-drop', `${(5.5 * threat).toFixed(2)}px`);
+            it.element.style.setProperty('--drag-depth', `${(2.5 * threat).toFixed(2)}px`);
+            it.element.style.setProperty('--lane-roll', `${laneRoll.toFixed(2)}deg`);
+        }
+
+        function getPvzZombieDebrisSvg(type) {
+            if (type === 'cone') {
+                return `
+                    <svg viewBox="0 0 46 46" aria-hidden="true">
+                        <path d="M12 6 L39 20 L19 40 Z" fill="#f28c28" stroke="#713400" stroke-width="3"/>
+                        <path d="M17 15 L28 21" fill="none" stroke="#ffd180" stroke-width="3" stroke-linecap="round"/>
+                    </svg>
+                `;
+            }
+            if (type === 'bucket') {
+                return `
+                    <svg viewBox="0 0 46 46" aria-hidden="true">
+                        <path d="M9 10 H37 L33 36 H13 Z" fill="#b0bec5" stroke="#455a64" stroke-width="3"/>
+                        <path d="M7 12 H39" fill="none" stroke="#78909c" stroke-width="4" stroke-linecap="round"/>
+                    </svg>
+                `;
+            }
+            if (type === 'flag') {
+                return `
+                    <svg viewBox="0 0 46 46" aria-hidden="true">
+                        <path d="M12 6 V40" fill="none" stroke="#6d4c41" stroke-width="4" stroke-linecap="round"/>
+                        <path d="M14 8 Q31 12 23 22 Q33 29 16 36 L12 36 Z" fill="#d84315" stroke="#7f1d1d" stroke-width="3"/>
+                    </svg>
+                `;
+            }
+            if (type === 'shield') {
+                return `
+                    <svg viewBox="0 0 46 46" aria-hidden="true">
+                        <rect x="9" y="6" width="28" height="34" rx="2" fill="rgba(230, 240, 235, 0.2)" stroke="#90a4ae" stroke-width="3"/>
+                        <path d="M23 6 V40 M9 17 H37 M9 28 H37" fill="none" stroke="#90a4ae" stroke-width="2"/>
+                    </svg>
+                `;
+            }
+            return '';
+        }
+
+        function spawnPvzDebris(type, x, y) {
+            const markup = getPvzZombieDebrisSvg(type);
+            if (!markup) return;
+
+            const debris = document.createElement('div');
+            const direction = Math.random() < 0.5 ? -1 : 1;
+            debris.className = 'pvz-zombie-debris';
+            debris.innerHTML = markup;
+            debris.style.left = `${x - 20}px`;
+            debris.style.top = `${y - 26}px`;
+            stage.appendChild(debris);
+
+            debris.animate([
+                { transform: 'translate3d(0, 0, 0) rotate(0deg) scale(1)', opacity: 1 },
+                { transform: `translate3d(${18 * direction}px, -20px, 0) rotate(${direction * 90}deg) scale(1.02)`, opacity: 1, offset: 0.45 },
+                { transform: `translate3d(${34 * direction}px, 16px, 0) rotate(${direction * 185}deg) scale(0.86)`, opacity: 0 }
+            ], {
+                duration: 420,
+                easing: 'cubic-bezier(0.2, 0.75, 0.25, 1)',
+                fill: 'forwards'
+            });
+
+            setTimeout(() => debris.remove(), 430);
+        }
+
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         function playTone(freq, duration, type = 'sine', vol = 0.1) {
             const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
@@ -1290,14 +1410,16 @@
                 const row = Math.floor(Math.random() * 5);
                 const y = (row + 1) * (window.innerHeight / 6) - 50;
                 const zombieType = pvzZombieTypes[Math.floor(Math.random() * pvzZombieTypes.length)];
+                const zombieStats = getPvzZombieStats(zombieType);
                 div.className = 'game-item target-item target-item--pvz';
-                div.style.setProperty('--walk-duration', `${(0.72 + Math.random() * 0.22).toFixed(2)}s`);
+                div.style.setProperty('--walk-duration', `${(zombieStats.cadence + (Math.random() * 0.08 - 0.04)).toFixed(2)}s`);
                 div.style.setProperty('--phase-delay', `${(-Math.random() * 1.2).toFixed(2)}s`);
                 div.innerHTML = `<div class="target-sprite">${getPvzZombieSvg(zombieType)}</div><div class="target-letter letter-pvz">${promptHTML}</div>`;
                 item.promptEl = div.querySelector('.target-letter');
                 div.style.left = `${window.innerWidth}px`; div.style.top = `${y - 8}px`;
                 item.x = window.innerWidth; item.y = y - 8; item.row = row; item.zombieType = zombieType;
-                item.speed = (Math.random() * 1.2 + 1.2) * (speedMultiplier / 1.2);
+                item.speed = ((Math.random() * 1.2 + 1.2) * zombieStats.speed) * (speedMultiplier / 1.2);
+                applyPvzEnemyPose(item);
             }
             stage.appendChild(div);
             return item;
@@ -1319,6 +1441,7 @@
                         if (it.y > window.innerHeight - 150) { if (wordFocusItem === it) setWordFocus(null); it.element.remove(); items.splice(i, 1); loseLife(); }
                     } else {
                         it.x -= it.speed; it.element.style.left = `${it.x}px`;
+                        if (gameMode === 'pvz') applyPvzEnemyPose(it);
                         if (it.x < (gameMode === 'pvz' ? 150 : 50)) { if (wordFocusItem === it) setWordFocus(null); it.element.remove(); items.splice(i, 1); loseLife(); }
                     }
                 } else if (it.state === 'inhaling') {
@@ -1563,6 +1686,7 @@
             score += 10; scoreEl.textContent = score;
             const realIdx = items.indexOf(it); if(realIdx !== -1) items.splice(realIdx, 1);
             if (gameMode === 'pvz') {
+                spawnPvzDebris(it.zombieType, tx, ty);
                 const deathTilt = Math.random() < 0.5 ? -14 : 14;
                 it.element.animate([
                     { transform: 'translate3d(0, 0, 0) scale(1) rotate(0deg)', opacity: 1, filter: 'brightness(1)' },
