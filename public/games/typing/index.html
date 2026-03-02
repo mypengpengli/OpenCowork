@@ -43,6 +43,14 @@
             background-position: 0 0, 0 0, 20px 20px, 70px 70px;
             box-shadow: inset 0 0 100px rgba(0,0,0,0.2);
         }
+        .bg-snake {
+            background:
+                radial-gradient(circle at 50% 42%, rgba(110, 255, 223, 0.14) 0%, rgba(110, 255, 223, 0) 36%),
+                radial-gradient(circle at 20% 25%, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0) 14%),
+                radial-gradient(circle at 78% 18%, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0) 12%),
+                linear-gradient(180deg, #082c36 0%, #0d4b5b 48%, #11796f 100%);
+            box-shadow: inset 0 0 120px rgba(0,0,0,0.18);
+        }
         /* 添加家门口的木地板感 */
         .bg-grass::before {
             content: '';
@@ -77,6 +85,7 @@
             font-size: 30px; color: #f50057; pointer-events: auto;
         }
         .stat-pvz { border-color: #2e7d32; color: #2e7d32; box-shadow: 0 6px 0 #1b5e20; }
+        .stat-snake { border-color: #00796b; color: #00796b; box-shadow: 0 6px 0 #004d40; }
 
         .ui-right {
             display: flex; align-items: center; gap: 14px;
@@ -95,6 +104,8 @@
         .settings-btn:active { transform: translateY(2px); box-shadow: 0 4px 0px #f50057; }
         .settings-btn.pvz { border-color: #2e7d32; color: #2e7d32; box-shadow: 0 6px 0 #1b5e20; }
         .settings-btn.pvz:active { box-shadow: 0 4px 0 #1b5e20; }
+        .settings-btn.snake { border-color: #00796b; color: #00796b; box-shadow: 0 6px 0 #004d40; }
+        .settings-btn.snake:active { box-shadow: 0 4px 0 #004d40; }
 
         .lives-container { font-size: 45px; filter: drop-shadow(3px 3px 0 #fff); }
 
@@ -178,6 +189,26 @@
                 radial-gradient(circle at 18% 44%, rgba(255,255,255,0.18) 0%, transparent 20%),
                 linear-gradient(180deg, rgba(255,255,255,0.1), transparent 38%);
             opacity: 0.45;
+        }
+        #game-stage[data-mode="snake"] {
+            perspective-origin: 50% 40%;
+        }
+        #game-stage[data-mode="snake"]::before {
+            background:
+                radial-gradient(circle at 50% 48%, rgba(132, 255, 225, 0.3) 0%, rgba(132, 255, 225, 0.08) 18%, rgba(132, 255, 225, 0) 40%),
+                linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0) 36%);
+            opacity: 0.9;
+        }
+        #game-stage[data-mode="snake"]::after {
+            inset: 16% 12% 8% 12%;
+            border-radius: 50%;
+            background:
+                radial-gradient(circle, rgba(5, 55, 54, 0.18) 0%, rgba(5, 55, 54, 0) 58%),
+                repeating-radial-gradient(circle, rgba(255,255,255,0.12) 0 2px, rgba(255,255,255,0) 2px 48px),
+                repeating-conic-gradient(from 0deg, rgba(255,255,255,0.06) 0deg 2deg, rgba(255,255,255,0) 2deg 18deg);
+            transform: rotateX(78deg) translateZ(-160px);
+            transform-origin: center center;
+            opacity: 0.58;
         }
 
         /* 通用元素 */
@@ -332,6 +363,59 @@
         }
         .target-item--pvz .target-letter {
             top: -10px;
+        }
+        .target-item--snake {
+            width: 126px;
+            height: 126px;
+        }
+        .target-item--snake .target-letter {
+            top: -10px;
+        }
+        .target-item--snake .target-sprite {
+            width: 86px;
+            height: 86px;
+            display: block;
+            font-size: 0;
+            animation: snake-food-pulse 1.08s infinite ease-in-out;
+            filter: drop-shadow(0 12px 18px rgba(0,0,0,0.24));
+        }
+        .target-sprite--snake {
+            position: relative;
+            border-radius: 50%;
+            background:
+                radial-gradient(circle at 34% 32%, #e9fff8 0%, #9ff8dc 26%, #35d5b7 58%, #00897b 100%);
+            border: 3px solid #004d40;
+            box-shadow:
+                inset 0 0 0 5px rgba(255,255,255,0.2),
+                0 0 0 6px rgba(103, 255, 219, 0.12);
+        }
+        .target-sprite--snake::before {
+            content: '';
+            position: absolute;
+            inset: -11px;
+            border-radius: 50%;
+            border: 2px dashed rgba(168, 255, 234, 0.42);
+            opacity: 0.72;
+            animation: snake-food-ring 1.9s linear infinite;
+        }
+        .target-sprite--snake::after {
+            content: '';
+            position: absolute;
+            inset: 13px 24px 34px 18px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.72);
+            filter: blur(1px);
+            transform: rotate(-22deg);
+        }
+        .snake-food-shadow {
+            position: absolute;
+            bottom: 18px;
+            width: 56px;
+            height: 14px;
+            border-radius: 50%;
+            background: rgba(5, 30, 33, 0.26);
+            filter: blur(2px);
+            transform: translateZ(-22px);
         }
         .pvz-zombie-svg {
             width: 118px;
@@ -504,10 +588,29 @@
             transform: translateZ(42px);
         }
         .letter-pvz { color: #2e7d32; border-color: #2e7d32; }
+        .letter-snake { color: #00796b; border-color: #00796b; }
         .prompt-typed { color: #fff; background: #4caf50; padding: 0 4px; border-radius: 6px; }
         .prompt-rest { opacity: 0.85; }
         .prompt-translation { margin-left: 6px; font-size: 0.8em; color: #37474f; white-space: nowrap; }
         .word-focus .target-letter { border-color: #ffeb3b; box-shadow: 0 0 0 4px rgba(255, 235, 59, 0.25), 2px 2px 0 #333; }
+        .snake-targeted .target-letter {
+            border-color: #a7ffeb;
+            color: #004d40;
+            box-shadow: 0 0 0 5px rgba(167, 255, 235, 0.24), 2px 2px 0 #003d35;
+        }
+        .snake-targeted .target-sprite--snake {
+            box-shadow:
+                inset 0 0 0 6px rgba(255,255,255,0.24),
+                0 0 0 10px rgba(126, 249, 211, 0.16),
+                0 0 28px rgba(126, 249, 211, 0.35);
+        }
+        @keyframes snake-food-pulse {
+            0%, 100% { transform: translateZ(36px) translateY(0) scale(1) rotate(0deg); }
+            50% { transform: translateZ(48px) translateY(-6px) scale(1.06) rotate(6deg); }
+        }
+        @keyframes snake-food-ring {
+            to { transform: rotate(360deg); }
+        }
 
         /* 豌豆与豆子 */
         .peashooter {
@@ -579,19 +682,135 @@
             color: #ff4081; font-weight: bold;
         }
         .btn-pvz { border-color: #2e7d32; color: #2e7d32; box-shadow: 4px 4px 0px #2e7d32; }
+        .btn-snake { border-color: #00796b; color: #00796b; box-shadow: 4px 4px 0px #00796b; }
         .btn.active { background: #ff4081; color: white; transform: translateY(2px); box-shadow: none; }
         .btn-pvz.active { background: #2e7d32; color: white; }
+        .btn-snake.active { background: #00796b; color: white; }
 
         #bottom-bar {
             background: rgba(255, 255, 255, 0.9); border-top: 6px solid #ff4081;
             padding: 10px; display: flex; justify-content: center; align-items: center; gap: 15px;
         }
         #bottom-bar.pvz-bar { border-color: #2e7d32; }
+        #bottom-bar.snake-bar { border-color: #00796b; }
 
         #kirby-container {
             position: absolute; z-index: 50; pointer-events: none;
             transition: left 0.5s, top 0.25s;
             transform-style: preserve-3d;
+        }
+        #snake-layer {
+            position: absolute;
+            inset: 0;
+            z-index: 44;
+            pointer-events: none;
+            display: none;
+            transform-style: preserve-3d;
+        }
+        #snake-layer::before,
+        #snake-layer::after {
+            content: '';
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            border-radius: 50%;
+            pointer-events: none;
+        }
+        #snake-layer::before {
+            width: 150px;
+            height: 150px;
+            background: radial-gradient(circle, rgba(167, 255, 235, 0.26) 0%, rgba(167, 255, 235, 0.08) 44%, rgba(167, 255, 235, 0) 78%);
+            filter: blur(3px);
+        }
+        #snake-layer::after {
+            width: 220px;
+            height: 220px;
+            border: 2px dashed rgba(167, 255, 235, 0.26);
+            opacity: 0.45;
+        }
+        #snake-body {
+            position: absolute;
+            inset: 0;
+            transform-style: preserve-3d;
+        }
+        .snake-segment,
+        #snake-head {
+            position: absolute;
+            left: 0;
+            top: 0;
+            border-radius: 999px;
+            transform-style: preserve-3d;
+            will-change: transform, width, height, filter;
+        }
+        .snake-segment {
+            background:
+                radial-gradient(circle at 35% 32%, #d8fff5 0%, #6ef9d3 24%, #11b39a 56%, #00695c 100%);
+            border: 3px solid #004d40;
+            box-shadow:
+                inset 0 0 0 4px rgba(255,255,255,0.16),
+                0 8px 18px rgba(0,0,0,0.24);
+        }
+        #snake-head {
+            width: 62px;
+            height: 54px;
+            z-index: 46;
+            background:
+                radial-gradient(circle at 35% 32%, #f5fff9 0%, #9ff8dc 22%, #18c2a5 54%, #006d61 100%);
+            border: 3px solid #003d35;
+            box-shadow:
+                inset 0 0 0 5px rgba(255,255,255,0.16),
+                0 14px 24px rgba(0,0,0,0.28);
+        }
+        #snake-head::before {
+            content: '';
+            position: absolute;
+            inset: 8px 10px 16px;
+            border-radius: 48% 48% 42% 42%;
+            background: linear-gradient(180deg, rgba(255,255,255,0.14), rgba(255,255,255,0));
+            opacity: 0.85;
+        }
+        .snake-eye {
+            position: absolute;
+            top: 14px;
+            width: 10px;
+            height: 12px;
+            border-radius: 50%;
+            background: #042f2d;
+            box-shadow: inset 0 0 0 2px rgba(255,255,255,0.12);
+        }
+        .snake-eye::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 3px;
+            height: 3px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.88);
+        }
+        .snake-eye--left { left: 16px; }
+        .snake-eye--right { right: 16px; }
+        .snake-mouth {
+            position: absolute;
+            left: 50%;
+            bottom: 12px;
+            width: 24px;
+            height: 10px;
+            border-bottom: 3px solid #003d35;
+            border-radius: 0 0 999px 999px;
+            transform: translateX(-50%);
+        }
+        .snake-tongue {
+            position: absolute;
+            left: 50%;
+            bottom: 6px;
+            width: 18px;
+            height: 4px;
+            border-radius: 999px;
+            background: linear-gradient(90deg, #ff8a80, #ff5252);
+            transform: translateX(-50%);
+            opacity: 0.9;
         }
         #kirby-svg {
             overflow: visible;
@@ -746,6 +965,7 @@
             <button class="btn active" id="mode-v" onclick="changeMode('vertical')">🔽 星星星下落</button>
             <button class="btn" id="mode-h" onclick="changeMode('horizontal')">◀️ 卡比大吸入</button>
             <button class="btn btn-pvz" id="mode-p" onclick="changeMode('pvz')">🧟 冰川豌豆&西瓜&玉米</button>
+            <button class="btn btn-snake" id="mode-s" onclick="changeMode('snake')">🐍 贪食蛇大作战</button>
         </div>
 
         <div id="game-stage">
@@ -771,6 +991,15 @@
                     <path id="mouth-closed" d="M46 62 Q50 68 54 62" fill="none" stroke="#880e4f" stroke-width="2"/>
                     <ellipse id="mouth-open" cx="50" cy="65" rx="10" ry="12" fill="#880e4f" style="display:none;"/>
                 </svg>
+            </div>
+            <div id="snake-layer" style="display:none;">
+                <div id="snake-body"></div>
+                <div id="snake-head">
+                    <div class="snake-eye snake-eye--left"></div>
+                    <div class="snake-eye snake-eye--right"></div>
+                    <div class="snake-mouth"></div>
+                    <div class="snake-tongue"></div>
+                </div>
             </div>
             <!-- 冰川豌豆射手/西瓜投手/玉米投手们（平时隐藏） -->
             <div id="pvz-layer" style="display:none;"></div>
@@ -839,6 +1068,10 @@
         const mouthClosed = document.getElementById('mouth-closed');
         const mouthOpen = document.getElementById('mouth-open');
         const hintText = document.getElementById('hint-text');
+        const snakeLayer = document.getElementById('snake-layer');
+        const snakeBody = document.getElementById('snake-body');
+        const snakeHeadEl = document.getElementById('snake-head');
+        const snakeTongueEl = document.querySelector('#snake-head .snake-tongue');
         const pvzLayer = document.getElementById('pvz-layer');
         const scoreCard = document.getElementById('score-card');
         const bottomBar = document.getElementById('bottom-bar');
@@ -858,6 +1091,21 @@
         let hintRestoreTimer = null;
         let learningToken = 0;
         let customWordEntries = [];
+        const SNAKE_MAX_ITEMS = 8;
+        const snakeState = {
+            headX: 0,
+            headY: 0,
+            vx: 0,
+            vy: 0,
+            angle: 0,
+            orbitAngle: 0,
+            bodyScale: 1,
+            segmentCount: 10,
+            segments: [],
+            segmentEls: [],
+            targetItem: null,
+            pulseUntil: 0
+        };
 
         const animals = ["🐱", "🐰", "🦊", "🐻", "🐼", "🐣", "🦁", "🐙", "🐵"];
         const pvzZombieTypes = ['basic', 'cone', 'bucket', 'flag', 'shield'];
@@ -939,18 +1187,20 @@
         }
 
         function isWordMode() {
-            return settings.promptMode !== 'letters';
+            return gameMode !== 'snake' && settings.promptMode !== 'letters';
         }
 
         function getModeHintText(mode) {
             if (isWordMode()) {
                 if (mode === 'vertical') return '按顺序打出单词，击碎星星！';
                 if (mode === 'horizontal') return '按顺序打出单词，吸入小动物！';
-                return '按顺序打出单词，指挥植物击退敌人！';
+                if (mode === 'pvz') return '按顺序打出单词，指挥植物击退敌人！';
+                return '按顺序打出单词，让贪食蛇冲出去吞掉目标！';
             }
             if (mode === 'vertical') return '按下对应字母击碎星星！';
             if (mode === 'horizontal') return '快按下对应字母吸入小动物！';
-            return '按下字母，指挥冰川豌豆射手、西瓜投手和玉米投手击退敌人！';
+            if (mode === 'pvz') return '按下字母，指挥冰川豌豆射手、西瓜投手和玉米投手击退敌人！';
+            return '按下对应字母，让贪食蛇冲出去吃掉外圈食物！';
         }
 
         function flashHint(text, durationMs = 2800) {
@@ -961,6 +1211,184 @@
                 if (gameMode !== modeAtTime) return;
                 hintText.textContent = getModeHintText(modeAtTime);
             }, durationMs);
+        }
+
+        function getStageMetrics() {
+            const width = stage.clientWidth || window.innerWidth;
+            const height = stage.clientHeight || Math.max(1, window.innerHeight - (bottomBar?.offsetHeight || 0));
+            return { width, height, centerX: width / 2, centerY: height / 2 };
+        }
+
+        function getSnakeDangerRadius() {
+            const metrics = getStageMetrics();
+            return Math.max(88, Math.min(metrics.width, metrics.height) * 0.14);
+        }
+
+        function clearSnakeTarget() {
+            if (wordFocusItem === snakeState.targetItem) setWordFocus(null);
+            if (snakeState.targetItem?.element) snakeState.targetItem.element.classList.remove('snake-targeted');
+            snakeState.targetItem = null;
+        }
+
+        function syncSnakeSegments() {
+            while (snakeState.segmentEls.length < snakeState.segmentCount) {
+                const seg = document.createElement('div');
+                seg.className = 'snake-segment';
+                snakeBody.appendChild(seg);
+                snakeState.segmentEls.push(seg);
+            }
+            while (snakeState.segmentEls.length > snakeState.segmentCount) {
+                const seg = snakeState.segmentEls.pop();
+                seg.remove();
+            }
+        }
+
+        function initSnakeStage() {
+            syncSnakeSegments();
+        }
+
+        function resetSnakeState() {
+            const metrics = getStageMetrics();
+            snakeState.bodyScale = 1;
+            snakeState.segmentCount = 10;
+            snakeState.orbitAngle = Math.random() * Math.PI * 2;
+            snakeState.angle = snakeState.orbitAngle + Math.PI / 2;
+            snakeState.vx = 0;
+            snakeState.vy = 0;
+            snakeState.pulseUntil = 0;
+            clearSnakeTarget();
+            syncSnakeSegments();
+
+            snakeState.headX = metrics.centerX + Math.cos(snakeState.orbitAngle) * 42;
+            snakeState.headY = metrics.centerY + Math.sin(snakeState.orbitAngle * 1.18) * 30;
+            snakeState.segments = [];
+            for (let i = 0; i < snakeState.segmentCount; i++) {
+                const dist = 18 + i * 15;
+                snakeState.segments.push({
+                    x: snakeState.headX - Math.cos(snakeState.angle) * dist,
+                    y: snakeState.headY - Math.sin(snakeState.angle) * dist
+                });
+            }
+            renderSnake(Date.now());
+        }
+
+        function renderSnake(now = Date.now()) {
+            const pulseFactor = snakeState.pulseUntil > now
+                ? 1 + ((snakeState.pulseUntil - now) / 420) * 0.08
+                : 1;
+            const total = Math.max(1, snakeState.segmentEls.length);
+
+            for (let i = 0; i < snakeState.segmentEls.length; i++) {
+                const segEl = snakeState.segmentEls[i];
+                const seg = snakeState.segments[i];
+                if (!seg) continue;
+
+                const leader = i === 0 ? { x: snakeState.headX, y: snakeState.headY } : snakeState.segments[i - 1];
+                const angle = Math.atan2(leader.y - seg.y, leader.x - seg.x);
+                const ratio = i / total;
+                const width = (42 - ratio * 22) * snakeState.bodyScale * pulseFactor;
+                const height = (34 - ratio * 18) * snakeState.bodyScale * pulseFactor;
+                const depth = 30 + (1 - ratio) * 24;
+
+                segEl.style.width = `${width.toFixed(2)}px`;
+                segEl.style.height = `${height.toFixed(2)}px`;
+                segEl.style.left = `${(seg.x - width / 2).toFixed(2)}px`;
+                segEl.style.top = `${(seg.y - height / 2).toFixed(2)}px`;
+                segEl.style.zIndex = `${18 + i}`;
+                segEl.style.transform = `translate3d(0, 0, ${depth.toFixed(2)}px) rotate(${angle.toFixed(4)}rad)`;
+                segEl.style.filter = `brightness(${(0.94 + (1 - ratio) * 0.18).toFixed(2)}) saturate(${(0.92 + (1 - ratio) * 0.22).toFixed(2)})`;
+            }
+
+            const headLift = snakeState.targetItem ? 1.04 : (1 + Math.sin(now / 170) * 0.03);
+            snakeHeadEl.style.left = `${(snakeState.headX - 31).toFixed(2)}px`;
+            snakeHeadEl.style.top = `${(snakeState.headY - 27).toFixed(2)}px`;
+            snakeHeadEl.style.transform = `translate3d(0, 0, 88px) rotate(${snakeState.angle.toFixed(4)}rad) scale(${(snakeState.bodyScale * headLift).toFixed(3)})`;
+            if (snakeTongueEl) {
+                const tongueScale = snakeState.targetItem ? 1.28 : (0.92 + Math.sin(now / 150) * 0.08);
+                snakeTongueEl.style.transform = `translateX(-50%) scaleX(${tongueScale.toFixed(3)})`;
+            }
+        }
+
+        function updateSnakeMovement(now) {
+            const metrics = getStageMetrics();
+            if (!snakeState.segmentEls.length) syncSnakeSegments();
+            if (snakeState.targetItem && (!items.includes(snakeState.targetItem) || snakeState.targetItem.state !== 'targeted')) clearSnakeTarget();
+
+            let goalX = metrics.centerX + Math.cos(snakeState.orbitAngle) * 42;
+            let goalY = metrics.centerY + Math.sin(snakeState.orbitAngle * 1.18) * 30;
+            let maxSpeed = 4.3;
+
+            if (snakeState.targetItem) {
+                goalX = snakeState.targetItem.x;
+                goalY = snakeState.targetItem.y;
+                maxSpeed = Math.min(14, 8.5 + snakeState.segmentCount * 0.12);
+            } else {
+                snakeState.orbitAngle += 0.046 * (speedMultiplier / 1.2);
+            }
+
+            const dx = goalX - snakeState.headX;
+            const dy = goalY - snakeState.headY;
+            const dist = Math.max(1, Math.hypot(dx, dy));
+            const desiredAngle = Math.atan2(dy, dx);
+            let delta = desiredAngle - snakeState.angle;
+            while (delta > Math.PI) delta -= Math.PI * 2;
+            while (delta < -Math.PI) delta += Math.PI * 2;
+            snakeState.angle += delta * (snakeState.targetItem ? 0.22 : 0.12);
+
+            const desiredSpeed = Math.min(maxSpeed, dist * 0.18 + 1.6);
+            const desiredVX = Math.cos(snakeState.angle) * desiredSpeed;
+            const desiredVY = Math.sin(snakeState.angle) * desiredSpeed;
+            snakeState.vx = snakeState.vx * 0.76 + desiredVX * 0.24;
+            snakeState.vy = snakeState.vy * 0.76 + desiredVY * 0.24;
+
+            snakeState.headX = Math.min(metrics.width - 36, Math.max(36, snakeState.headX + snakeState.vx));
+            snakeState.headY = Math.min(metrics.height - 36, Math.max(36, snakeState.headY + snakeState.vy));
+
+            let leaderX = snakeState.headX;
+            let leaderY = snakeState.headY;
+            for (let i = 0; i < snakeState.segments.length; i++) {
+                const seg = snakeState.segments[i];
+                const segDx = leaderX - seg.x;
+                const segDy = leaderY - seg.y;
+                const segDist = Math.max(0.001, Math.hypot(segDx, segDy));
+                const spacing = (14 + Math.max(0, 8 - i) * 0.6) * snakeState.bodyScale;
+                const pull = Math.max(0, segDist - spacing) * 0.46;
+                seg.x += (segDx / segDist) * pull;
+                seg.y += (segDy / segDist) * pull;
+                leaderX = seg.x;
+                leaderY = seg.y;
+            }
+
+            renderSnake(now);
+
+            if (snakeState.targetItem) {
+                const eatDist = Math.hypot(snakeState.targetItem.x - snakeState.headX, snakeState.targetItem.y - snakeState.headY);
+                if (eatDist < 34) finishHit(snakeState.targetItem, items.indexOf(snakeState.targetItem), snakeState.targetItem.x, snakeState.targetItem.y);
+            }
+        }
+
+        function applySnakeFoodPose(it, now = Date.now()) {
+            if (!it?.element) return;
+
+            const metrics = getStageMetrics();
+            const dangerRadius = getSnakeDangerRadius();
+            const outerRadius = Math.max(dangerRadius + 20, Math.min(metrics.width, metrics.height) * 0.44);
+            const dangerProgress = 1 - Math.min(1, Math.max(0, (it.radius - dangerRadius) / Math.max(outerRadius - dangerRadius, 1)));
+            const wobble = Math.sin(now / 180 + (it.poseSeed || 0)) * (it.state === 'targeted' ? 3.5 : 6);
+            const yaw = Math.cos(now / 240 + (it.poseSeed || 0)) * (6 + dangerProgress * 8);
+            const pitch = 12 + dangerProgress * 10;
+            const scale = 1 + dangerProgress * 0.18 + (it.state === 'targeted' ? 0.12 : 0);
+            const depth = 34 + dangerProgress * 62;
+
+            it.element.style.left = `${(it.x - 63).toFixed(2)}px`;
+            it.element.style.top = `${(it.y - 63).toFixed(2)}px`;
+            it.element.style.transform = `translate3d(0, ${wobble.toFixed(2)}px, ${depth.toFixed(2)}px) rotateX(${pitch.toFixed(2)}deg) rotateY(${yaw.toFixed(2)}deg) scale(${scale.toFixed(3)})`;
+
+            if (it.shadowEl) {
+                const shadowScale = 1 - dangerProgress * 0.2 + Math.cos(now / 180 + (it.poseSeed || 0)) * 0.04;
+                it.shadowEl.style.transform = `scaleX(${shadowScale.toFixed(3)})`;
+                it.shadowEl.style.opacity = `${(0.22 - dangerProgress * 0.06).toFixed(2)}`;
+            }
         }
 
         const CHAR_LIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
@@ -1157,6 +1585,16 @@
 
         function findBestTypeTarget(key) {
             let best = null;
+            if (gameMode === 'snake') {
+                let minRadius = Infinity;
+                for (const it of items) {
+                    if (it.state !== 'falling') continue;
+                    if (it.progress >= it.text.length) continue;
+                    if (getExpectedChar(it) !== key) continue;
+                    if (it.radius < minRadius) { minRadius = it.radius; best = it; }
+                }
+                return best;
+            }
             if (gameMode === 'vertical') {
                 let maxY = -Infinity;
                 for (const it of items) {
@@ -1764,10 +2202,11 @@
             document.querySelectorAll('.mode-switch .btn').forEach(b => b.classList.remove('active'));
             container.className = '';
             pvzLayer.style.display = 'none';
+            snakeLayer.style.display = 'none';
             kirbyCont.style.display = 'block';
-            scoreCard.classList.remove('stat-pvz');
-            bottomBar.classList.remove('pvz-bar');
-            settingsBtn.classList.toggle('pvz', mode === 'pvz');
+            scoreCard.classList.remove('stat-pvz', 'stat-snake');
+            bottomBar.classList.remove('pvz-bar', 'snake-bar');
+            settingsBtn.classList.remove('pvz', 'snake');
             setKirbyModeVisual(mode);
 
             if(mode === 'vertical') {
@@ -1778,15 +2217,26 @@
                 document.getElementById('mode-h').classList.add('active');
                 container.classList.add('bg-pink');
                 resetKirbyPosition();
-            } else {
+            } else if(mode === 'pvz') {
                 document.getElementById('mode-p').classList.add('active');
                 container.classList.add('bg-grass');
                 kirbyCont.style.display = 'none';
                 pvzLayer.style.display = 'block';
                 scoreCard.classList.add('stat-pvz');
                 bottomBar.classList.add('pvz-bar');
+                settingsBtn.classList.add('pvz');
                 initPvzStage();
+            } else {
+                document.getElementById('mode-s').classList.add('active');
+                container.classList.add('bg-snake');
+                kirbyCont.style.display = 'none';
+                snakeLayer.style.display = 'block';
+                scoreCard.classList.add('stat-snake');
+                bottomBar.classList.add('snake-bar');
+                settingsBtn.classList.add('snake');
+                initSnakeStage();
             }
+            hintText.style.color = mode === 'pvz' ? '#2e7d32' : (mode === 'snake' ? '#00796b' : '#ff4081');
             hintText.textContent = getModeHintText(mode);
             resetGame();
         }
@@ -1865,8 +2315,7 @@
                 item.x = window.innerWidth; item.y = y;
                 item.speed = (Math.random() * 1.5 + 1.5) * (speedMultiplier / 1.2);
                 applyHorizontalTargetPose(item);
-            } else {
-                // PVZ Mode
+            } else if (gameMode === 'pvz') {
                 const row = Math.floor(Math.random() * 5);
                 const y = (row + 1) * (window.innerHeight / 6) - 50;
                 const zombieType = pvzZombieTypes[Math.floor(Math.random() * pvzZombieTypes.length)];
@@ -1886,6 +2335,25 @@
                 item.hp = zombieStats.hp;
                 item.maxHp = zombieStats.hp;
                 applyPvzEnemyPose(item);
+            } else {
+                const metrics = getStageMetrics();
+                const safeRadius = getSnakeDangerRadius();
+                const spawnRadius = Math.max(safeRadius + 48, Math.min(metrics.width, metrics.height) * (0.34 + Math.random() * 0.12));
+                const angle = Math.random() * Math.PI * 2;
+                const ellipse = 0.72 + Math.random() * 0.18;
+                div.className = 'game-item target-item target-item--snake';
+                div.innerHTML = `<div class="snake-food-shadow"></div><div class="target-sprite target-sprite--snake"></div><div class="target-letter letter-snake">${promptHTML}</div>`;
+                item.promptEl = div.querySelector('.target-letter');
+                item.spriteEl = div.querySelector('.target-sprite');
+                item.shadowEl = div.querySelector('.snake-food-shadow');
+                item.angle = angle;
+                item.radius = spawnRadius;
+                item.ellipse = ellipse;
+                item.speed = (Math.random() * 0.42 + 0.42) * (speedMultiplier / 1.2);
+                item.orbitSpeed = (Math.random() * 0.012 + 0.006) * (Math.random() < 0.5 ? -1 : 1);
+                item.x = metrics.centerX + Math.cos(angle) * spawnRadius;
+                item.y = metrics.centerY + Math.sin(angle) * spawnRadius * ellipse;
+                applySnakeFoodPose(item);
             }
             stage.appendChild(div);
             return item;
@@ -1894,6 +2362,37 @@
         function update() {
             if (!gameActive) return;
             const now = Date.now();
+            if (gameMode === 'snake') {
+                if (now - lastSpawn > spawnInterval && items.length < SNAKE_MAX_ITEMS) {
+                    items.push(createItem());
+                    lastSpawn = now;
+                }
+
+                const metrics = getStageMetrics();
+                const dangerRadius = getSnakeDangerRadius();
+                for (let i = items.length - 1; i >= 0; i--) {
+                    const it = items[i];
+                    if (it.state !== 'falling' && it.state !== 'targeted') continue;
+
+                    it.radius -= it.state === 'targeted' ? it.speed * 0.15 : it.speed;
+                    it.angle += it.orbitSpeed;
+                    it.x = metrics.centerX + Math.cos(it.angle) * it.radius;
+                    it.y = metrics.centerY + Math.sin(it.angle) * it.radius * it.ellipse;
+                    applySnakeFoodPose(it, now);
+
+                    if (it.state === 'falling' && it.radius < dangerRadius) {
+                        if (wordFocusItem === it) setWordFocus(null);
+                        it.element.remove();
+                        items.splice(i, 1);
+                        loseLife();
+                    }
+                }
+
+                updateSnakeMovement(now);
+                animationFrameId = requestAnimationFrame(update);
+                return;
+            }
+
             if (now - lastSpawn > spawnInterval) {
                 items.push(createItem());
                 lastSpawn = now;
@@ -2022,7 +2521,7 @@
         }
 
         function updateLivesUI() {
-            const icon = gameMode === 'pvz' ? '🌻' : '🍓';
+            const icon = gameMode === 'pvz' ? '🌻' : (gameMode === 'snake' ? '🐍' : '🍓');
             livesBox.innerHTML = icon.repeat(lives) + '🔘'.repeat(Math.max(0, 5 - lives));
         }
 
@@ -2038,6 +2537,7 @@
             hintText.textContent = getModeHintText(gameMode);
             gameActive = true; score = 0; lives = 5; kirbyScale = 1.0;
             resetKirbyPosition();
+            if (gameMode === 'snake') resetSnakeState();
             mouthOpen.style.display = 'none';
             mouthClosed.style.display = 'block';
             scoreEl.textContent = '0'; updateLivesUI(); updateKirbyBody();
@@ -2049,7 +2549,7 @@
         }
 
         function updateKirbyBody() {
-            if (gameMode === 'pvz') return;
+            if (gameMode === 'pvz' || gameMode === 'snake') return;
             kirbyBody.setAttribute('r', 40 * kirbyScale);
             const offset = (kirbyScale - 1) * 15;
             document.getElementById('eyes').style.transform = `translateY(${-offset}px)`;
@@ -2111,12 +2611,13 @@
 
         function triggerAttack(it) {
             if (!it || it.state !== 'falling') return;
+            if (gameMode === 'snake' && snakeState.targetItem && snakeState.targetItem !== it) return;
 
             const rect = it.element.getBoundingClientRect();
             const tx = rect.left + rect.width / 2;
             const ty = rect.top + rect.height / 2;
 
-            handleKillLearning(it);
+            if (gameMode !== 'snake') handleKillLearning(it);
 
             if (gameMode === 'vertical') {
                 it.state = 'hit';
@@ -2142,6 +2643,21 @@
                     wind.style.transform = `rotate(${Math.atan2((Math.random() - 0.5) * 180, -150) * 180 / Math.PI}deg)`;
                     stage.appendChild(wind); setTimeout(() => wind.remove(), 400);
                 }
+                return;
+            }
+
+            if (gameMode === 'snake') {
+                clearSnakeTarget();
+                snakeState.targetItem = it;
+                it.state = 'targeted';
+                it.element.classList.add('snake-targeted');
+                snakeState.pulseUntil = Date.now() + 260;
+                playTone(620, 0.08, 'square', 0.08);
+                it.element.animate([
+                    { transform: `${it.element.style.transform || 'translate3d(0, 0, 0)'}` },
+                    { transform: 'translate3d(0, -8px, 68px) scale(1.12)' },
+                    { transform: `${it.element.style.transform || 'translate3d(0, 0, 0)'}` }
+                ], { duration: 220, easing: 'ease-out' });
                 return;
             }
 
@@ -2202,19 +2718,37 @@
             if (gameMode === 'horizontal') {
                 mouthOpen.style.display = 'none'; mouthClosed.style.display = 'block';
             }
+            if (gameMode === 'snake') {
+                handleKillLearning(it);
+                if (snakeState.targetItem === it) clearSnakeTarget();
+                const prevCount = snakeState.segmentCount;
+                snakeState.segmentCount = Math.min(26, snakeState.segmentCount + 2);
+                snakeState.bodyScale = Math.min(1.6, snakeState.bodyScale + 0.045);
+                const growth = snakeState.segmentCount - prevCount;
+                if (growth > 0) {
+                    snakeState.segments.push(...Array.from({ length: growth }, () => {
+                        const tail = snakeState.segments[snakeState.segments.length - 1] || { x: snakeState.headX, y: snakeState.headY };
+                        return { x: tail.x, y: tail.y };
+                    }));
+                }
+                syncSnakeSegments();
+                snakeState.pulseUntil = Date.now() + 420;
+            }
             container.classList.add('shake-hit'); setTimeout(() => container.classList.remove('shake-hit'), 100);
-            playTone(gameMode==='pvz'?1000:1300, 0.15);
+            playTone(gameMode==='pvz' ? 1000 : (gameMode === 'snake' ? 880 : 1300), 0.15);
 
             // 产生粒子效果
             const pColor = gameMode === 'pvz'
                 ? (getPvzShooterType(it.row) === 'melon' ? '#ff5252' : (getPvzShooterType(it.row) === 'corn' ? '#ffeb3b' : '#81d4fa'))
-                : '#fff';
+                : (gameMode === 'snake' ? '#7ef9d3' : '#fff');
             createParticles(tx, ty, pColor);
 
             const h = document.createElement('div'); h.className = 'hit-text';
             if (gameMode === 'pvz') {
                 const type = getPvzShooterType(it.row);
                 h.textContent = type === 'melon' ? "砸! 🍉" : (type === 'corn' ? "啪! 🌽" : "咔嚓! ❄️");
+            } else if (gameMode === 'snake') {
+                h.textContent = "Grow! 🐍";
             } else {
                 h.textContent = gameMode==='vertical'?"Poyo! ⭐":"真好吃! 😋";
             }
@@ -2222,6 +2756,9 @@
                 const type = getPvzShooterType(it.row);
                 h.style.color = type === 'melon' ? '#ffeb3b' : (type === 'corn' ? '#fff8e1' : '#e1f5fe');
                 h.style.webkitTextStroke = type === 'melon' ? '2px #1b5e20' : (type === 'corn' ? '2px #5d4037' : '2px #0d47a1');
+            } else if (gameMode === 'snake') {
+                h.style.color = '#d9fff6';
+                h.style.webkitTextStroke = '2px #004d40';
             }
             h.style.left = `${tx}px`; h.style.top = `${ty}px`;
             stage.appendChild(h); setTimeout(() => h.remove(), 500);
@@ -2249,6 +2786,18 @@
                     { transform: 'translate3d(0, 0, 0) scale(1) rotate(0deg)', opacity: 1, filter: 'brightness(1)' },
                     { transform: 'translate3d(-16px, 6px, 0) scale(1.02) rotate(-4deg)', opacity: 1, filter: 'brightness(1.18)', offset: 0.4 },
                     { transform: `translate3d(-36px, 24px, 0) scale(0.88) rotate(${deathTilt}deg)`, opacity: 0, filter: 'brightness(0.9)' }
+                ], { duration: 220, easing: 'cubic-bezier(0.2, 0.7, 0.2, 1)', fill: 'forwards' });
+                setTimeout(() => it.element.remove(), 220);
+            } else if (gameMode === 'snake') {
+                snakeHeadEl.animate([
+                    { transform: `translate3d(0, 0, 88px) rotate(${snakeState.angle.toFixed(4)}rad) scale(${snakeState.bodyScale.toFixed(3)})` },
+                    { transform: `translate3d(0, 0, 104px) rotate(${snakeState.angle.toFixed(4)}rad) scale(${(snakeState.bodyScale * 1.08).toFixed(3)}, ${(snakeState.bodyScale * 0.92).toFixed(3)})` },
+                    { transform: `translate3d(0, 0, 88px) rotate(${snakeState.angle.toFixed(4)}rad) scale(${snakeState.bodyScale.toFixed(3)})` }
+                ], { duration: 220, easing: 'ease-out' });
+                it.element.animate([
+                    { transform: `${it.element.style.transform || 'translate3d(0, 0, 0)'}`, opacity: 1 },
+                    { transform: 'translate3d(-8px, -12px, 92px) scale(0.56) rotate(16deg)', opacity: 0.9 },
+                    { transform: 'translate3d(-18px, -18px, 40px) scale(0.08) rotate(34deg)', opacity: 0 }
                 ], { duration: 220, easing: 'cubic-bezier(0.2, 0.7, 0.2, 1)', fill: 'forwards' });
                 setTimeout(() => it.element.remove(), 220);
             } else {
