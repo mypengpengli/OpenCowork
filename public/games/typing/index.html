@@ -1,0 +1,1315 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🌟 多模式打字大冒险 6.0</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&display=swap');
+
+        * {
+            margin: 0; padding: 0; box-sizing: border-box;
+            font-family: 'ZCOOL KuaiLe', cursive, 'Microsoft YaHei', sans-serif;
+        }
+
+        body {
+            background-color: #ffc1e3;
+            overflow: hidden; height: 100vh;
+            display: flex; flex-direction: column;
+        }
+
+        /* 游戏容器 */
+        #game-container {
+            flex: 1; position: relative; width: 100%; height: 100%;
+            display: flex; flex-direction: column;
+            background-size: 200px 200px;
+            transition: background 0.5s;
+        }
+
+        /* 背景风格 */
+        .bg-pink {
+            background-color: #ffc1e3;
+            background-image: radial-gradient(circle at 20% 30%, rgba(255, 255, 255, 0.4) 0%, transparent 10%),
+                              radial-gradient(circle at 80% 70%, rgba(255, 255, 255, 0.4) 0%, transparent 10%);
+        }
+        .bg-grass {
+            background: #4caf50;
+            background-image:
+                linear-gradient(90deg, transparent 95px, rgba(0,0,0,0.1) 95px, rgba(0,0,0,0.1) 100px, transparent 100px),
+                linear-gradient(0deg, transparent 95px, rgba(0,0,0,0.1) 95px, rgba(0,0,0,0.1) 100px, transparent 100px),
+                radial-gradient(#558b2f 10%, transparent 11%),
+                radial-gradient(#558b2f 10%, transparent 11%);
+            background-size: 100px 100px, 100px 100px, 100px 100px, 100px 100px;
+            background-position: 0 0, 0 0, 20px 20px, 70px 70px;
+            box-shadow: inset 0 0 100px rgba(0,0,0,0.2);
+        }
+        /* 添加家门口的木地板感 */
+        .bg-grass::before {
+            content: '';
+            position: absolute;
+            left: 0; top: 0; bottom: 0;
+            width: 140px;
+            background: #795548;
+            background-image: repeating-linear-gradient(90deg, transparent, transparent 38px, #5d4037 38px, #5d4037 40px);
+            border-right: 8px solid #3e2723;
+            z-index: 1;
+        }
+
+        /* 震动 */
+        .shake-hit { animation: shake-hit-anim 0.15s ease-in-out; }
+        @keyframes shake-hit-anim {
+            0% { transform: translate(0, 0); }
+            25% { transform: translate(8px, 8px); }
+            50% { transform: translate(-8px, -8px); }
+            75% { transform: translate(8px, -8px); }
+            100% { transform: translate(0, 0); }
+        }
+
+        #ui-layer {
+            position: absolute; top: 20px; left: 20px; right: 20px;
+            display: flex; justify-content: space-between; align-items: center;
+            z-index: 100; pointer-events: none;
+        }
+
+        .stat-card {
+            background: white; padding: 10px 25px; border: 4px solid #ff4081;
+            border-radius: 30px; box-shadow: 0 6px 0px #f50057;
+            font-size: 30px; color: #f50057; pointer-events: auto;
+        }
+        .stat-pvz { border-color: #2e7d32; color: #2e7d32; box-shadow: 0 6px 0 #1b5e20; }
+
+        .ui-right {
+            display: flex; align-items: center; gap: 14px;
+            pointer-events: auto;
+        }
+        .settings-btn {
+            pointer-events: auto;
+            background: white; border: 4px solid #ff4081;
+            border-radius: 26px; cursor: pointer;
+            box-shadow: 0 6px 0px #f50057;
+            color: #f50057; font-weight: bold;
+            font-size: 26px; line-height: 1;
+            padding: 8px 14px;
+            transition: transform 0.15s, box-shadow 0.15s;
+        }
+        .settings-btn:active { transform: translateY(2px); box-shadow: 0 4px 0px #f50057; }
+        .settings-btn.pvz { border-color: #2e7d32; color: #2e7d32; box-shadow: 0 6px 0 #1b5e20; }
+        .settings-btn.pvz:active { box-shadow: 0 4px 0 #1b5e20; }
+
+        .lives-container { font-size: 45px; filter: drop-shadow(3px 3px 0 #fff); }
+
+        #game-stage { flex: 1; position: relative; width: 100%; overflow: hidden; }
+
+        /* 通用元素 */
+        .game-item { position: absolute; z-index: 10; }
+
+        /* 卡比星星 */
+        .letter-star {
+            width: 80px; height: 80px; background: #fff;
+            clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+            display: flex; justify-content: center; align-items: center;
+        }
+        .letter-star span { font-size: 32px; font-weight: bold; color: #333; margin-top: 5px; }
+
+        /* 小动物/僵尸 */
+        .target-item {
+            width: 100px; height: 100px; display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            transition: transform 0.1s linear;
+        }
+        .target-sprite {
+            font-size: 60px;
+            filter: drop-shadow(3px 3px 0 rgba(0,0,0,0.2));
+            animation: target-bob 1s infinite ease-in-out;
+        }
+        @keyframes target-bob {
+            0%, 100% { transform: translateY(0) rotate(0deg); }
+            50% { transform: translateY(-10px) rotate(2deg); }
+        }
+        .target-letter {
+            position: absolute; top: -15px; font-size: 26px; font-weight: bold;
+            color: #ff4081; background: white; border: 3px solid #ff4081;
+            padding: 2px 10px; border-radius: 10px; box-shadow: 2px 2px 0 #333;
+        }
+        .letter-pvz { color: #2e7d32; border-color: #2e7d32; }
+        .prompt-typed { color: #fff; background: #4caf50; padding: 0 4px; border-radius: 6px; }
+        .prompt-rest { opacity: 0.85; }
+        .prompt-translation { margin-left: 6px; font-size: 0.8em; color: #37474f; white-space: nowrap; }
+        .word-focus .target-letter { border-color: #ffeb3b; box-shadow: 0 0 0 4px rgba(255, 235, 59, 0.25), 2px 2px 0 #333; }
+
+        /* 豌豆与豆子 */
+        .peashooter {
+            position: absolute; left: 40px; z-index: 50;
+            filter: drop-shadow(4px 4px 0 rgba(0,0,0,0.2));
+            animation: shooter-idle 2s infinite ease-in-out;
+        }
+        @keyframes shooter-idle {
+            0%, 100% { transform: scale(1) rotate(0deg); }
+            50% { transform: scale(1.05) rotate(2deg); }
+        }
+        .pea-bullet {
+            position: absolute; width: 32px; height: 32px;
+            background: #81d4fa; border: 3px solid #0d47a1; border-radius: 50%;
+            z-index: 40;
+            background-image: radial-gradient(circle at 30% 30%, #e1f5fe, transparent 60%);
+            box-shadow: 0 0 12px rgba(129, 212, 250, 0.9);
+            pointer-events: none;
+        }
+        .pea-bullet.melon {
+            width: 46px; height: 46px;
+            background: #2e7d32; border-color: #1b5e20;
+            background-image:
+                radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.6), transparent 60%),
+                repeating-linear-gradient(45deg, rgba(0,0,0,0) 0 8px, rgba(76, 175, 80, 0.9) 8px 12px);
+            box-shadow: 0 0 12px rgba(76, 175, 80, 0.7);
+            animation: melon-spin 0.4s linear infinite;
+        }
+        @keyframes melon-spin { to { transform: rotate(360deg); } }
+        .pea-bullet.corn {
+            width: 30px; height: 30px;
+            background: #ffd54f; border-color: #f57f17;
+            border-radius: 45% 55% 55% 45%;
+            background-image:
+                radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.8), transparent 60%),
+                repeating-linear-gradient(90deg, rgba(0,0,0,0) 0 6px, rgba(251, 192, 45, 0.9) 6px 8px);
+            box-shadow: 0 0 10px rgba(255, 213, 79, 0.9);
+            animation: corn-wobble 0.35s ease-in-out infinite;
+        }
+        @keyframes corn-wobble {
+            0%, 100% { transform: rotate(-10deg) translateY(0); }
+            50% { transform: rotate(10deg) translateY(-2px); }
+        }
+
+        /* 吸气流光 */
+        .inhale-wind {
+            position: absolute; height: 4px; background: rgba(255, 255, 255, 0.9);
+            border-radius: 5px; pointer-events: none; z-index: 45;
+            animation: wind-anim 0.4s ease-out forwards;
+        }
+        @keyframes wind-anim {
+            0% { width: 200px; opacity: 1; transform: scaleX(1.5); }
+            100% { width: 0; opacity: 0; transform: translateX(-200px) scaleX(0); }
+        }
+
+        /* 切换按钮 */
+        .mode-switch {
+            position: absolute; top: 100px; left: 20px;
+            display: flex; flex-direction: column; gap: 10px; z-index: 101;
+        }
+        .btn {
+            background: white; border: 3px solid #ff4081; padding: 6px 12px;
+            border-radius: 20px; cursor: pointer; font-size: 14px;
+            box-shadow: 4px 4px 0px #ff4081; transition: all 0.2s;
+            color: #ff4081; font-weight: bold;
+        }
+        .btn-pvz { border-color: #2e7d32; color: #2e7d32; box-shadow: 4px 4px 0px #2e7d32; }
+        .btn.active { background: #ff4081; color: white; transform: translateY(2px); box-shadow: none; }
+        .btn-pvz.active { background: #2e7d32; color: white; }
+
+        #bottom-bar {
+            background: rgba(255, 255, 255, 0.9); border-top: 6px solid #ff4081;
+            padding: 10px; display: flex; justify-content: center; align-items: center; gap: 15px;
+        }
+        #bottom-bar.pvz-bar { border-color: #2e7d32; }
+
+        #kirby-container {
+            position: absolute; z-index: 50; pointer-events: none;
+            transition: left 0.5s, top 0.25s;
+        }
+
+        #overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8); display: none; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 1000;
+        }
+        #modal {
+            background: #fff; padding: 40px; border-radius: 40px; border: 8px solid #ff4081;
+            text-align: center;
+        }
+        #settings-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8); display: none; justify-content: center; align-items: center;
+            z-index: 1100;
+        }
+        #settings-modal {
+            background: #fff; padding: 32px 34px; border-radius: 32px; border: 8px solid #ff4081;
+            width: min(600px, calc(100% - 40px)); max-height: calc(100% - 80px); overflow: auto;
+            box-shadow: 0 10px 0px #f50057;
+        }
+        #settings-modal h2 { margin: 0 0 18px; font-size: 38px; color: #f50057; text-align: center; }
+        .setting-row { display: flex; gap: 14px; align-items: flex-start; font-size: 22px; line-height: 1.3; }
+        .setting-row.setting-row-inline { align-items: center; }
+        .setting-label { min-width: 92px; font-weight: bold; color: #333; }
+        .setting-row input { margin-top: 6px; transform: scale(1.4); }
+        .setting-row select {
+            flex: 1;
+            font-size: 20px;
+            padding: 8px 12px;
+            border: 3px solid #ff4081;
+            border-radius: 18px;
+            background: #fff;
+            color: #333;
+        }
+        .setting-row select:focus { outline: none; box-shadow: 0 0 0 4px rgba(255, 64, 129, 0.22); }
+        .setting-sub { margin: 10px 0 0 38px; font-size: 18px; color: #555; }
+        .settings-textarea {
+            width: 100%;
+            min-height: 140px;
+            margin-top: 10px;
+            padding: 12px 14px;
+            border: 3px solid #ff4081;
+            border-radius: 20px;
+            font-size: 18px;
+            line-height: 1.5;
+            resize: vertical;
+            color: #333;
+        }
+        .settings-textarea:focus { outline: none; box-shadow: 0 0 0 4px rgba(255, 64, 129, 0.22); }
+        .settings-status {
+            margin-top: 10px;
+            font-size: 18px;
+            color: #546e7a;
+        }
+        .settings-actions { display: flex; justify-content: center; gap: 12px; margin-top: 20px; }
+
+        .hit-text {
+            position: absolute; font-size: 40px; color: #fff; font-weight: bold;
+            pointer-events: none; z-index: 20; animation: hit-float 0.5s ease-out forwards;
+            -webkit-text-stroke: 2px #ff4081;
+        }
+        /* 击中粒子 */
+        .particle {
+            position: absolute; pointer-events: none; z-index: 30;
+            border-radius: 50%; animation: particle-fade 0.6s ease-out forwards;
+        }
+        @keyframes particle-fade {
+            0% { transform: scale(1) translate(0, 0); opacity: 1; }
+            100% { transform: scale(0) translate(var(--dx), var(--dy)); opacity: 0; }
+        }
+        /* 击中粒子 */
+        .particle {
+            position: absolute; pointer-events: none; z-index: 30;
+            border-radius: 50%; animation: particle-fade 0.6s ease-out forwards;
+        }
+        @keyframes particle-fade {
+            0% { transform: scale(1) translate(0, 0); opacity: 1; }
+            100% { transform: scale(0) translate(var(--dx), var(--dy)); opacity: 0; }
+        }
+    </style>
+</head>
+<body class="bg-pink">
+
+    <div id="game-container" class="bg-pink">
+        <div id="ui-layer">
+            <div id="score-card" class="stat-card">积分: <span id="score-val">0</span></div>
+            <div class="ui-right">
+                <button id="settings-btn" class="settings-btn" onclick="openSettings()" title="设置">⚙️</button>
+                <div id="lives-box" class="lives-container"></div>
+            </div>
+        </div>
+
+        <div class="mode-switch">
+            <button class="btn active" id="mode-v" onclick="changeMode('vertical')">🔽 星星星下落</button>
+            <button class="btn" id="mode-h" onclick="changeMode('horizontal')">◀️ 卡比大吸入</button>
+            <button class="btn btn-pvz" id="mode-p" onclick="changeMode('pvz')">🧟 冰川豌豆&西瓜&玉米</button>
+        </div>
+
+        <div id="game-stage">
+            <!-- 卡比容器 -->
+            <div id="kirby-container" style="left: 50%; top: 80%; transform: translate(-50%, -50%);">
+                <svg id="kirby-svg" viewBox="0 0 100 100" width="140" height="140">
+                    <defs>
+                        <radialGradient id="bodyGrad" cx="50%" cy="50%" r="50%">
+                            <stop offset="0%" style="stop-color:#ffb2cf" />
+                            <stop offset="100%" style="stop-color:#ff80ab" />
+                        </radialGradient>
+                    </defs>
+                    <ellipse cx="30" cy="85" rx="18" ry="12" fill="#d50000" stroke="#880e4f"/>
+                    <ellipse cx="70" cy="85" rx="18" ry="12" fill="#d50000" stroke="#880e4f"/>
+                    <circle id="kirby-body" cx="50" cy="55" r="40" fill="url(#bodyGrad)" stroke="#f06292" stroke-width="2"/>
+                    <circle id="hand-l" cx="15" cy="60" r="12" fill="#ff80ab"/>
+                    <circle id="hand-r" cx="85" cy="60" r="12" fill="#ff80ab"/>
+                    <g id="eyes">
+                        <ellipse cx="42" cy="45" rx="4" ry="10" fill="#000"/><ellipse cx="58" cy="45" rx="4" ry="10" fill="#000"/>
+                        <circle cx="42" cy="40" r="1.5" fill="#fff"/><circle cx="58" cy="40" r="1.5" fill="#fff"/>
+                    </g>
+                    <ellipse cx="28" cy="58" rx="6" ry="3" fill="#ff4081" opacity="0.6"/><ellipse cx="72" cy="58" rx="6" ry="3" fill="#ff4081" opacity="0.6"/>
+                    <path id="mouth-closed" d="M46 62 Q50 68 54 62" fill="none" stroke="#880e4f" stroke-width="2"/>
+                    <ellipse id="mouth-open" cx="50" cy="65" rx="10" ry="12" fill="#880e4f" style="display:none;"/>
+                </svg>
+            </div>
+            <!-- 冰川豌豆射手/西瓜投手/玉米投手们（平时隐藏） -->
+            <div id="pvz-layer" style="display:none;"></div>
+        </div>
+
+        <div id="bottom-bar">
+            <button class="btn" onclick="setSpeed(0.4)">🐌 蜗牛级</button>
+            <button class="btn active" onclick="setSpeed(1.2)">🐢 慢速</button>
+            <button class="btn" onclick="setSpeed(2.5)">🏃 中速</button>
+            <button class="btn" onclick="setSpeed(4.5)">🚀 快速</button>
+            <span style="color:#ff4081; font-weight:bold; margin-left:10px;" id="hint-text">按下对应字母击碎星星！</span>
+        </div>
+    </div>
+
+    <div id="overlay">
+        <div id="modal">
+            <h2 id="msg-title">游戏结束！</h2>
+            <p style="font-size: 30px;">获得了 <span id="final-score">0</span> 积分！</p>
+            <button class="btn" style="margin-top:20px; padding:10px 30px;" onclick="resetGame()">再试一次</button>
+        </div>
+    </div>
+
+    <div id="settings-overlay">
+        <div id="settings-modal">
+            <h2>设置</h2>
+            <label class="setting-row setting-row-inline">
+                <span class="setting-label">打字内容</span>
+                <select id="setting-prompt-mode">
+                    <option value="letters">字母（单个）</option>
+                    <option value="words_easy">单词（初级）</option>
+                    <option value="words_medium">单词（中级）</option>
+                    <option value="words_hard">单词（高级）</option>
+                </select>
+            </label>
+            <div class="setting-sub">单词模式需要按顺序输入完整单词，完成后会朗读一遍并显示中文翻译。</div>
+            <div class="setting-row setting-row-inline" style="margin-top:18px;">
+                <span class="setting-label">自定义词库</span>
+            </div>
+            <div id="custom-words-status" class="settings-status">当前未添加自定义词。灰色示例只是格式参考，不会自动保存。</div>
+            <textarea id="setting-custom-words" class="settings-textarea" placeholder="一行一个，例如：&#10;cat=猫&#10;apple=苹果&#10;queue=队列=cue"></textarea>
+            <div class="setting-sub">格式是“单词=中文”或“单词=中文=朗读词”。保留已有行再往下加，就是追加。浏览器会直接朗读单词文本，若发音不理想，可填第三项覆盖朗读内容。</div>
+            <label class="setting-row">
+                <input type="checkbox" id="setting-times-table" />
+                <span>消灭目标后，随机念一句 9×9 乘法口诀</span>
+            </label>
+            <div class="setting-sub">开启后会显示口诀并尝试语音朗读（浏览器不支持时仅显示文字）。单词模式下会在读完单词后再读口诀。</div>
+            <div class="settings-actions">
+                <button class="btn" style="padding:10px 30px;" onclick="closeSettings()">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const container = document.getElementById('game-container');
+        const stage = document.getElementById('game-stage');
+        const scoreEl = document.getElementById('score-val');
+        const livesBox = document.getElementById('lives-box');
+        const overlay = document.getElementById('overlay');
+        const finalScoreEl = document.getElementById('final-score');
+        const kirbyCont = document.getElementById('kirby-container');
+        const kirbyBody = document.getElementById('kirby-body');
+        const mouthClosed = document.getElementById('mouth-closed');
+        const mouthOpen = document.getElementById('mouth-open');
+        const hintText = document.getElementById('hint-text');
+        const pvzLayer = document.getElementById('pvz-layer');
+        const scoreCard = document.getElementById('score-card');
+        const bottomBar = document.getElementById('bottom-bar');
+        const settingsBtn = document.getElementById('settings-btn');
+        const settingsOverlay = document.getElementById('settings-overlay');
+        const timesTableToggle = document.getElementById('setting-times-table');
+        const promptModeSelect = document.getElementById('setting-prompt-mode');
+        const customWordsTextarea = document.getElementById('setting-custom-words');
+        const customWordsStatus = document.getElementById('custom-words-status');
+
+        let score = 0, lives = 5, speedMultiplier = 1.2;
+        let gameActive = true, gameMode = 'vertical';
+        let items = [], lastSpawn = 0, spawnInterval = 1800, kirbyScale = 1.0;
+        let animationFrameId = null;
+        let wordFocusItem = null;
+        let pausedBySettings = false;
+        let hintRestoreTimer = null;
+        let learningToken = 0;
+        let customWordEntries = [];
+
+        const animals = ["🐱", "🐰", "🦊", "🐻", "🐼", "🐣", "🦁", "🐙", "🐵"];
+        const zombies = ["🧟", "🧛", "💀", "👻", "👹", "👽"];
+        const pvzShooterTypes = ['ice', 'melon', 'corn', 'melon', 'ice'];
+
+        const SETTINGS_KEY = 'typingGameSettings_v1';
+        const settings = { timesTableOnKill: false, promptMode: 'letters', customWordsText: '' };
+        const PROMPT_MODE_OPTIONS = ['letters', 'words_easy', 'words_medium', 'words_hard'];
+
+        function loadSettings() {
+            try {
+                const raw = localStorage.getItem(SETTINGS_KEY);
+                if (!raw) return;
+                const obj = JSON.parse(raw);
+                if (typeof obj.timesTableOnKill === 'boolean') settings.timesTableOnKill = obj.timesTableOnKill;
+                if (typeof obj.promptMode === 'string' && PROMPT_MODE_OPTIONS.includes(obj.promptMode)) settings.promptMode = obj.promptMode;
+                if (typeof obj.customWordsText === 'string') settings.customWordsText = obj.customWordsText;
+            } catch (e) {}
+        }
+        function saveSettings() {
+            try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
+        }
+
+        function updateCustomWordsStatus() {
+            const count = customWordEntries.length;
+            customWordsStatus.textContent = count > 0
+                ? `当前已保存 ${count} 条自定义词。保留已有行再继续新增，就是追加。`
+                : '当前未添加自定义词。灰色示例只是格式参考，不会自动保存。';
+        }
+
+        function openSettings() {
+            settingsOverlay.style.display = 'flex';
+            timesTableToggle.checked = settings.timesTableOnKill;
+            promptModeSelect.value = settings.promptMode;
+            customWordsTextarea.value = settings.customWordsText;
+            updateCustomWordsStatus();
+
+            pausedBySettings = gameActive;
+            if (gameActive) {
+                gameActive = false;
+                if (animationFrameId) cancelAnimationFrame(animationFrameId);
+            }
+        }
+
+        function closeSettings() {
+            settingsOverlay.style.display = 'none';
+            const prevPromptMode = settings.promptMode;
+            const prevCustomWordsText = settings.customWordsText;
+            settings.timesTableOnKill = !!timesTableToggle.checked;
+            settings.promptMode = PROMPT_MODE_OPTIONS.includes(promptModeSelect.value) ? promptModeSelect.value : 'letters';
+            settings.customWordsText = customWordsTextarea.value;
+            rebuildCustomWordEntries();
+            saveSettings();
+
+            const promptChanged = prevPromptMode !== settings.promptMode;
+            const customWordsChanged = prevCustomWordsText !== settings.customWordsText;
+            if ((promptChanged || customWordsChanged) && pausedBySettings) {
+                if (wordFocusItem?.element) wordFocusItem.element.classList.remove('word-focus');
+                wordFocusItem = null;
+                resetGame();
+            } else if (pausedBySettings && !gameActive) {
+                gameActive = true;
+                lastSpawn = Date.now();
+                update();
+            }
+            pausedBySettings = false;
+        }
+
+        function isWordMode() {
+            return settings.promptMode !== 'letters';
+        }
+
+        function getModeHintText(mode) {
+            if (isWordMode()) {
+                if (mode === 'vertical') return '按顺序打出单词，击碎星星！';
+                if (mode === 'horizontal') return '按顺序打出单词，吸入小动物！';
+                return '按顺序打出单词，指挥植物击退敌人！';
+            }
+            if (mode === 'vertical') return '按下对应字母击碎星星！';
+            if (mode === 'horizontal') return '快按下对应字母吸入小动物！';
+            return '按下字母，指挥冰川豌豆射手、西瓜投手和玉米投手击退敌人！';
+        }
+
+        function flashHint(text, durationMs = 2800) {
+            const modeAtTime = gameMode;
+            hintText.textContent = text;
+            if (hintRestoreTimer) clearTimeout(hintRestoreTimer);
+            hintRestoreTimer = setTimeout(() => {
+                if (gameMode !== modeAtTime) return;
+                hintText.textContent = getModeHintText(modeAtTime);
+            }, durationMs);
+        }
+
+        const CHAR_LIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+        const WORD_LISTS = {
+            easy: [
+                'cat', 'dog', 'sun', 'moon', 'star', 'rain', 'snow', 'milk', 'book', 'pen',
+                'fish', 'bird', 'tree', 'leaf', 'frog', 'duck', 'bear', 'lion', 'wolf', 'pink',
+                'blue', 'red', 'ball', 'kite', 'cake', 'game', 'play', 'home', 'jump', 'ship',
+                'door', 'hand', 'foot', 'nose', 'face', 'girl', 'boy'
+            ],
+            medium: [
+                'apple', 'grape', 'peach', 'smile', 'happy', 'panda', 'tiger', 'rabbit', 'planet', 'rocket',
+                'flower', 'garden', 'school', 'friend', 'family', 'little', 'orange', 'banana', 'cookie', 'pencil',
+                'camera', 'winter', 'summer', 'spring', 'autumn', 'zombie', 'peanut', 'potato', 'tomato', 'cherry',
+                'monkey', 'dragon'
+            ],
+            hard: [
+                'elephant', 'computer', 'keyboard', 'sunshine', 'rainbow', 'mountain', 'triangle', 'butterfly', 'chocolate', 'adventure',
+                'dinosaur', 'cucumber', 'strawberry', 'watermelon', 'pineapple', 'octopus', 'jellyfish', 'astronaut', 'happiness', 'wonderful'
+            ]
+        };
+        const WORD_TRANSLATIONS = {
+            cat: '猫',
+            dog: '狗',
+            sun: '太阳',
+            moon: '月亮',
+            star: '星星',
+            rain: '雨',
+            snow: '雪',
+            milk: '牛奶',
+            book: '书',
+            pen: '笔',
+            fish: '鱼',
+            bird: '鸟',
+            tree: '树',
+            leaf: '叶子',
+            frog: '青蛙',
+            duck: '鸭子',
+            bear: '熊',
+            lion: '狮子',
+            wolf: '狼',
+            pink: '粉色',
+            blue: '蓝色',
+            red: '红色',
+            ball: '球',
+            kite: '风筝',
+            cake: '蛋糕',
+            game: '游戏',
+            play: '玩',
+            home: '家',
+            jump: '跳',
+            ship: '船',
+            door: '门',
+            hand: '手',
+            foot: '脚',
+            nose: '鼻子',
+            face: '脸',
+            girl: '女孩',
+            boy: '男孩',
+            apple: '苹果',
+            grape: '葡萄',
+            peach: '桃子',
+            smile: '微笑',
+            happy: '开心',
+            panda: '熊猫',
+            tiger: '老虎',
+            rabbit: '兔子',
+            planet: '行星',
+            rocket: '火箭',
+            flower: '花',
+            garden: '花园',
+            school: '学校',
+            friend: '朋友',
+            family: '家庭',
+            little: '小的',
+            orange: '橙子',
+            banana: '香蕉',
+            cookie: '饼干',
+            pencil: '铅笔',
+            camera: '相机',
+            winter: '冬天',
+            summer: '夏天',
+            spring: '春天',
+            autumn: '秋天',
+            zombie: '僵尸',
+            peanut: '花生',
+            potato: '土豆',
+            tomato: '番茄',
+            cherry: '樱桃',
+            monkey: '猴子',
+            dragon: '龙',
+            elephant: '大象',
+            computer: '电脑',
+            keyboard: '键盘',
+            sunshine: '阳光',
+            rainbow: '彩虹',
+            mountain: '山',
+            triangle: '三角形',
+            butterfly: '蝴蝶',
+            chocolate: '巧克力',
+            adventure: '冒险',
+            dinosaur: '恐龙',
+            cucumber: '黄瓜',
+            strawberry: '草莓',
+            watermelon: '西瓜',
+            pineapple: '菠萝',
+            octopus: '章鱼',
+            jellyfish: '水母',
+            astronaut: '宇航员',
+            happiness: '幸福',
+            wonderful: '精彩'
+        };
+
+        function getWordTranslation(word) {
+            return WORD_TRANSLATIONS[String(word || '').toLowerCase()] || '';
+        }
+
+        function parseCustomWordEntries(rawText) {
+            const unique = new Map();
+            const lines = String(rawText || '').split(/\r?\n/);
+
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed || trimmed.startsWith('#')) continue;
+
+                const parts = trimmed.split('=');
+                const text = String(parts.shift() || '').trim().toLowerCase();
+                const translation = String(parts.shift() || '').trim();
+                const speech = parts.join('=').trim();
+
+                if (!/^[a-z][a-z'-]*$/i.test(text)) continue;
+                unique.set(text, {
+                    text,
+                    translation,
+                    speechText: speech || text
+                });
+            }
+
+            return Array.from(unique.values());
+        }
+
+        function rebuildCustomWordEntries() {
+            customWordEntries = parseCustomWordEntries(settings.customWordsText);
+            updateCustomWordsStatus();
+        }
+
+        function getWordPool(level) {
+            const baseWords = (WORD_LISTS[level] || WORD_LISTS.easy).map((word) => ({
+                text: word,
+                translation: getWordTranslation(word),
+                speechText: word
+            }));
+
+            const merged = new Map();
+            for (const entry of baseWords) merged.set(entry.text.toLowerCase(), entry);
+            for (const entry of customWordEntries) merged.set(entry.text.toLowerCase(), entry);
+            return Array.from(merged.values());
+        }
+
+        function getWordLevel() {
+            if (settings.promptMode === 'words_medium') return 'medium';
+            if (settings.promptMode === 'words_hard') return 'hard';
+            return 'easy';
+        }
+
+        function escapeHTML(str) {
+            return String(str).replace(/[&<>"']/g, (ch) => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            }[ch]));
+        }
+
+        function renderPromptHTML(text, progress, translation = '') {
+            if (!isWordMode()) return escapeHTML(text);
+
+            const done = progress > 0 ? `<span class="prompt-typed">${escapeHTML(text.slice(0, progress))}</span>` : '';
+            const rest = `<span class="prompt-rest">${escapeHTML(text.slice(progress))}</span>`;
+            const translationHTML = translation ? `<span class="prompt-translation">${escapeHTML(translation)}</span>` : '';
+            return `${done}${rest}${translationHTML}`;
+        }
+
+        function setWordFocus(it) {
+            if (wordFocusItem?.element) wordFocusItem.element.classList.remove('word-focus');
+            wordFocusItem = it;
+            if (wordFocusItem?.element) wordFocusItem.element.classList.add('word-focus');
+        }
+
+        function getExpectedChar(it) {
+            return (it.text?.[it.progress] || '').toLowerCase();
+        }
+
+        function findBestTypeTarget(key) {
+            let best = null;
+            if (gameMode === 'vertical') {
+                let maxY = -Infinity;
+                for (const it of items) {
+                    if (it.state !== 'falling') continue;
+                    if (it.progress >= it.text.length) continue;
+                    if (getExpectedChar(it) !== key) continue;
+                    if (it.y > maxY) { maxY = it.y; best = it; }
+                }
+                return best;
+            }
+
+            let minX = Infinity;
+            for (const it of items) {
+                if (it.state !== 'falling') continue;
+                if (it.progress >= it.text.length) continue;
+                if (getExpectedChar(it) !== key) continue;
+                if (it.x < minX) { minX = it.x; best = it; }
+            }
+            return best;
+        }
+
+        function updatePromptUI(it) {
+            const el = it.promptEl || it.element.querySelector('.target-letter');
+            if (!el) return;
+            it.promptEl = el;
+            el.innerHTML = renderPromptHTML(it.text, it.progress, it.translation);
+        }
+
+        function randomPromptData() {
+            if (!isWordMode()) {
+                return {
+                    text: CHAR_LIST[Math.floor(Math.random() * CHAR_LIST.length)],
+                    translation: '',
+                    speechText: ''
+                };
+            }
+
+            const pool = getWordPool(getWordLevel());
+            const picked = pool[Math.floor(Math.random() * pool.length)];
+            return picked || { text: 'cat', translation: '猫', speechText: 'cat' };
+        }
+
+        function numToCN(n) {
+            const cn = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+            if (n <= 9) return cn[n];
+            if (n === 10) return '十';
+            const tens = Math.floor(n / 10);
+            const ones = n % 10;
+            const tensPart = tens === 1 ? '十' : cn[tens] + '十';
+            return ones === 0 ? tensPart : tensPart + cn[ones];
+        }
+
+        function productToKoujueCN(n) {
+            // 口诀里常见写法：2×5=10 读作 “二五一十”
+            if (n === 10) return '一十';
+            return numToCN(n);
+        }
+
+        function randomTimesTableLine() {
+            const big = Math.floor(Math.random() * 9) + 1;
+            const small = Math.floor(Math.random() * big) + 1; // small <= big，符合“九九乘法表”顺序（小×大）
+            const result = small * big;
+
+            const left = `${numToCN(small)}${numToCN(big)}`;
+            const right = productToKoujueCN(result);
+            const koujue = result < 10 ? `${left}得${right}` : `${left}${right}`;
+
+            const numeric = `${small}×${big}=${result}`;
+            return { a: small, b: big, result, display: koujue, speak: koujue, numeric };
+        }
+
+        function speakText(text, opts = {}) {
+            const { lang = 'zh-CN', rate = 1.0 } = opts;
+            if (!('speechSynthesis' in window) || typeof SpeechSynthesisUtterance === 'undefined') return Promise.resolve(false);
+            return new Promise((resolve) => {
+                try {
+                    window.speechSynthesis.cancel();
+                    const u = new SpeechSynthesisUtterance(text);
+                    u.lang = lang;
+                    u.rate = rate;
+
+                    const voices = window.speechSynthesis.getVoices?.() || [];
+                    const langPrefix = String(lang).toLowerCase().split('-')[0];
+                    const picked = voices.find(v => String(v.lang || '').toLowerCase().startsWith(langPrefix));
+                    if (picked) u.voice = picked;
+
+                    let done = false;
+                    const finish = () => {
+                        if (done) return;
+                        done = true;
+                        resolve(true);
+                    };
+                    u.onend = finish;
+                    u.onerror = finish;
+
+                    const timeoutMs = Math.min(6000, 600 + String(text).length * 180);
+                    setTimeout(finish, timeoutMs);
+
+                    window.speechSynthesis.speak(u);
+                } catch (e) { resolve(false); }
+            });
+        }
+
+        function maybeReciteTimesTable() {
+            if (!settings.timesTableOnKill) return Promise.resolve(false);
+            const line = randomTimesTableLine();
+            flashHint(`口诀：${line.display}（${line.numeric}）`);
+            return speakText(line.speak, { lang: 'zh-CN', rate: 0.92 });
+        }
+
+        function handleKillLearning(it) {
+            const token = ++learningToken;
+            if (isWordMode()) {
+                flashHint(`单词：${it.text}${it.translation ? `（${it.translation}）` : ''}`, 1800);
+                return speakText(it.speechText || it.text, { lang: 'en-US', rate: 0.90 })
+                    .then(() => {
+                        if (token !== learningToken) return false;
+                        return settings.timesTableOnKill ? maybeReciteTimesTable() : false;
+                    });
+            }
+            return maybeReciteTimesTable();
+        }
+
+        loadSettings();
+        rebuildCustomWordEntries();
+        timesTableToggle.checked = settings.timesTableOnKill;
+        promptModeSelect.value = settings.promptMode;
+        timesTableToggle.addEventListener('change', () => {
+            settings.timesTableOnKill = !!timesTableToggle.checked;
+            saveSettings();
+        });
+        settingsOverlay.addEventListener('click', (e) => {
+            if (e.target === settingsOverlay) closeSettings();
+        });
+
+        function getPvzShooterType(row) {
+            return pvzShooterTypes[row] || 'ice';
+        }
+
+        function getPvzShooterSvg(type) {
+            if (type === 'melon') {
+                return `
+                    <svg viewBox="0 0 100 100" width="90" height="90">
+                        <!-- 叶子底座 -->
+                        <path d="M20 85 Q50 70 80 85 Q50 100 20 85" fill="#1b5e20" stroke="#000" stroke-width="2"/>
+                        <path d="M10 80 Q50 65 90 80 Q50 95 10 80" fill="#2e7d32" stroke="#000" stroke-width="2"/>
+                        <!-- 木质底座（带表情） -->
+                        <rect x="28" y="60" width="44" height="22" rx="8" fill="#8d6e63" stroke="#000" stroke-width="3"/>
+                        <circle cx="42" cy="70" r="3" fill="#000"/>
+                        <circle cx="58" cy="70" r="3" fill="#000"/>
+                        <path d="M44 76 Q50 80 56 76" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round"/>
+                        <!-- 弹弓臂 -->
+                        <path d="M35 62 Q50 32 65 62" fill="none" stroke="#5d4037" stroke-width="8" stroke-linecap="round"/>
+                        <!-- 勺子 -->
+                        <ellipse cx="50" cy="34" rx="16" ry="10" fill="#6d4c41" stroke="#000" stroke-width="3"/>
+                        <!-- 西瓜 -->
+                        <circle cx="50" cy="30" r="14" fill="#2e7d32" stroke="#000" stroke-width="3"/>
+                        <path d="M40 22 Q50 18 60 22" fill="none" stroke="#66bb6a" stroke-width="3" stroke-linecap="round"/>
+                        <path d="M38 30 Q50 26 62 30" fill="none" stroke="#66bb6a" stroke-width="3" stroke-linecap="round"/>
+                        <path d="M40 38 Q50 34 60 38" fill="none" stroke="#66bb6a" stroke-width="3" stroke-linecap="round"/>
+                        <circle cx="44" cy="26" r="2" fill="#e8f5e9" opacity="0.7"/>
+                    </svg>
+                `;
+            }
+
+            if (type === 'corn') {
+                return `
+                    <svg viewBox="0 0 100 100" width="90" height="90">
+                        <!-- 叶子底座 -->
+                        <path d="M20 85 Q50 70 80 85 Q50 100 20 85" fill="#1b5e20" stroke="#000" stroke-width="2"/>
+                        <path d="M10 80 Q50 65 90 80 Q50 95 10 80" fill="#2e7d32" stroke="#000" stroke-width="2"/>
+                        <!-- 木质底座（带表情） -->
+                        <rect x="28" y="60" width="44" height="22" rx="8" fill="#8d6e63" stroke="#000" stroke-width="3"/>
+                        <circle cx="42" cy="70" r="3" fill="#000"/>
+                        <circle cx="58" cy="70" r="3" fill="#000"/>
+                        <path d="M44 76 Q50 80 56 76" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round"/>
+                        <!-- 弹弓臂 -->
+                        <path d="M35 62 Q50 32 65 62" fill="none" stroke="#5d4037" stroke-width="8" stroke-linecap="round"/>
+                        <!-- 勺子 -->
+                        <ellipse cx="50" cy="34" rx="16" ry="10" fill="#6d4c41" stroke="#000" stroke-width="3"/>
+                        <!-- 玉米棒 -->
+                        <rect x="42" y="20" width="16" height="26" rx="8" fill="#ffd54f" stroke="#000" stroke-width="3"/>
+                        <g fill="#fbc02d" opacity="0.95">
+                            <circle cx="46" cy="26" r="1.5"/><circle cx="54" cy="26" r="1.5"/>
+                            <circle cx="46" cy="32" r="1.5"/><circle cx="54" cy="32" r="1.5"/>
+                            <circle cx="46" cy="38" r="1.5"/><circle cx="54" cy="38" r="1.5"/>
+                        </g>
+                        <!-- 玉米叶 -->
+                        <path d="M42 44 Q36 52 44 56" fill="#66bb6a" stroke="#000" stroke-width="2"/>
+                        <path d="M58 44 Q64 52 56 56" fill="#66bb6a" stroke="#000" stroke-width="2"/>
+                        <circle cx="46" cy="24" r="2" fill="#fffde7" opacity="0.7"/>
+                    </svg>
+                `;
+            }
+
+            // 冰川豌豆射手（默认）
+            return `
+                <svg viewBox="0 0 100 100" width="90" height="90">
+                    <!-- 叶子底座 -->
+                    <path d="M20 85 Q50 70 80 85 Q50 100 20 85" fill="#1b5e20" stroke="#000" stroke-width="2"/>
+                    <path d="M10 80 Q50 65 90 80 Q50 95 10 80" fill="#2e7d32" stroke="#000" stroke-width="2"/>
+                    <!-- 茎 -->
+                    <rect x="45" y="60" width="10" height="25" fill="#26c6da" stroke="#000" stroke-width="2"/>
+                    <!-- 头部 -->
+                    <circle cx="45" cy="45" r="25" fill="#90caf9" stroke="#000" stroke-width="3"/>
+                    <!-- 炮口 -->
+                    <path d="M65 35 L85 30 L90 60 L65 55 Z" fill="#64b5f6" stroke="#000" stroke-width="3"/>
+                    <ellipse cx="88" cy="45" rx="8" ry="15" fill="#1e88e5" stroke="#000" stroke-width="2"/>
+                    <!-- 眼睛 -->
+                    <ellipse cx="50" cy="38" rx="4" ry="6" fill="#fff" stroke="#000" stroke-width="1.5"/>
+                    <circle cx="52" cy="38" r="2" fill="#000"/>
+                    <!-- 后脑勺叶子 -->
+                    <path d="M25 35 Q10 20 20 45" fill="#4dd0e1" stroke="#000" stroke-width="2"/>
+                    <!-- 冰晶装饰 -->
+                    <g fill="#e1f5fe" stroke="#29b6f6" stroke-width="1.5" opacity="0.95">
+                        <polygon points="28 18 32 28 24 28"/>
+                        <polygon points="18 30 24 38 14 38"/>
+                        <polygon points="38 16 42 24 34 24"/>
+                    </g>
+                </svg>
+            `;
+        }
+
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function playTone(freq, duration, type = 'sine', vol = 0.1) {
+            const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+            osc.type = type; osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            osc.start(); osc.stop(audioCtx.currentTime + duration);
+        }
+
+        function changeMode(mode) {
+            gameMode = mode;
+            document.querySelectorAll('.mode-switch .btn').forEach(b => b.classList.remove('active'));
+            container.className = '';
+            pvzLayer.style.display = 'none';
+            kirbyCont.style.display = 'block';
+            scoreCard.classList.remove('stat-pvz');
+            bottomBar.classList.remove('pvz-bar');
+            settingsBtn.classList.toggle('pvz', mode === 'pvz');
+
+            if(mode === 'vertical') {
+                document.getElementById('mode-v').classList.add('active');
+                container.classList.add('bg-pink');
+                kirbyCont.style.left = '50%'; kirbyCont.style.top = '80%';
+            } else if(mode === 'horizontal') {
+                document.getElementById('mode-h').classList.add('active');
+                container.classList.add('bg-pink');
+                kirbyCont.style.left = '120px'; kirbyCont.style.top = '50%';
+            } else {
+                document.getElementById('mode-p').classList.add('active');
+                container.classList.add('bg-grass');
+                kirbyCont.style.display = 'none';
+                pvzLayer.style.display = 'block';
+                scoreCard.classList.add('stat-pvz');
+                bottomBar.classList.add('pvz-bar');
+                initPvzStage();
+            }
+            hintText.textContent = getModeHintText(mode);
+            resetGame();
+        }
+
+        function initPvzStage() {
+            pvzLayer.innerHTML = '';
+            // 5行射手（其中两行是西瓜投手，中间是玉米投手）
+            for(let i=0; i<5; i++) {
+                const y = (i + 1) * (window.innerHeight / 6) - 50;
+                const shooter = document.createElement('div');
+                shooter.className = 'peashooter';
+                shooter.style.top = `${y}px`;
+                shooter.id = `shooter-${i}`;
+                const type = getPvzShooterType(i);
+                shooter.dataset.shooterType = type;
+                shooter.innerHTML = getPvzShooterSvg(type);
+                pvzLayer.appendChild(shooter);
+            }
+        }
+
+        function setSpeed(s) {
+            speedMultiplier = s;
+            document.querySelectorAll('#bottom-bar .btn').forEach(b => b.classList.remove('active'));
+            event.target.classList.add('active');
+            spawnInterval = 2200 / (s / 1.2);
+        }
+
+        function createItem() {
+            const prompt = randomPromptData();
+            const promptHTML = renderPromptHTML(prompt.text, 0, prompt.translation);
+            const div = document.createElement('div');
+            let item = {
+                element: div,
+                text: prompt.text,
+                translation: prompt.translation,
+                speechText: prompt.speechText,
+                progress: 0,
+                state: 'falling',
+                promptEl: null
+            };
+
+            if (gameMode === 'vertical') {
+                const x = Math.random() * (window.innerWidth - 150) + 75;
+                if (isWordMode()) {
+                    div.className = 'game-item target-item';
+                    div.innerHTML = `<div class="target-sprite">⭐</div><div class="target-letter">${promptHTML}</div>`;
+                    item.promptEl = div.querySelector('.target-letter');
+                } else {
+                    div.className = 'game-item letter-star star-' + Math.floor(Math.random() * 4);
+                    div.innerHTML = `<span>${escapeHTML(prompt.text)}</span>`;
+                }
+                div.style.left = `${x}px`; div.style.top = `-100px`;
+                item.x = x; item.y = -100;
+                item.speed = (Math.random() * 0.8 + 0.8) * (speedMultiplier / 1.2);
+            } else if (gameMode === 'horizontal') {
+                const y = Math.random() * (window.innerHeight - 300) + 100;
+                const animal = animals[Math.floor(Math.random() * animals.length)];
+                div.className = 'game-item target-item';
+                div.innerHTML = `<div class="target-sprite">${animal}</div><div class="target-letter">${promptHTML}</div>`;
+                item.promptEl = div.querySelector('.target-letter');
+                div.style.left = `${window.innerWidth}px`; div.style.top = `${y}px`;
+                item.x = window.innerWidth; item.y = y;
+                item.speed = (Math.random() * 1.5 + 1.5) * (speedMultiplier / 1.2);
+            } else {
+                // PVZ Mode
+                const row = Math.floor(Math.random() * 5);
+                const y = (row + 1) * (window.innerHeight / 6) - 50;
+                const zombie = zombies[Math.floor(Math.random() * zombies.length)];
+                div.className = 'game-item target-item';
+                div.innerHTML = `<div class="target-sprite">${zombie}</div><div class="target-letter letter-pvz">${promptHTML}</div>`;
+                item.promptEl = div.querySelector('.target-letter');
+                div.style.left = `${window.innerWidth}px`; div.style.top = `${y}px`;
+                item.x = window.innerWidth; item.y = y; item.row = row;
+                item.speed = (Math.random() * 1.2 + 1.2) * (speedMultiplier / 1.2);
+            }
+            stage.appendChild(div);
+            return item;
+        }
+
+        function update() {
+            if (!gameActive) return;
+            const now = Date.now();
+            if (now - lastSpawn > spawnInterval) {
+                items.push(createItem());
+                lastSpawn = now;
+            }
+
+            for (let i = items.length - 1; i >= 0; i--) {
+                const it = items[i];
+                if (it.state === 'falling') {
+                    if (gameMode === 'vertical') {
+                        it.y += it.speed; it.element.style.top = `${it.y}px`;
+                        if (it.y > window.innerHeight - 150) { if (wordFocusItem === it) setWordFocus(null); it.element.remove(); items.splice(i, 1); loseLife(); }
+                    } else {
+                        it.x -= it.speed; it.element.style.left = `${it.x}px`;
+                        if (it.x < (gameMode === 'pvz' ? 150 : 50)) { if (wordFocusItem === it) setWordFocus(null); it.element.remove(); items.splice(i, 1); loseLife(); }
+                    }
+                } else if (it.state === 'inhaling') {
+                    const kRect = kirbyCont.getBoundingClientRect();
+                    const targetX = kRect.left + 70, targetY = kRect.top + 70;
+                    const dx = targetX - it.x, dy = targetY - it.y;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    if (dist < 30) { finishHit(it, i, it.x, it.y); }
+                    else {
+                        it.x += dx * 0.02; it.y += dy * 0.02;
+                        it.element.style.left = `${it.x}px`; it.element.style.top = `${it.y}px`;
+                        it.element.style.transform = `scale(${dist/200}) rotate(${dist}deg)`;
+                    }
+                }
+            }
+            animationFrameId = requestAnimationFrame(update);
+        }
+
+        function createParticles(x, y, color) {
+            for (let i = 0; i < 8; i++) {
+                const p = document.createElement('div');
+                p.className = 'particle';
+                const size = Math.random() * 10 + 5;
+                p.style.width = size + 'px';
+                p.style.height = size + 'px';
+                p.style.backgroundColor = color;
+                p.style.left = x + 'px';
+                p.style.top = y + 'px';
+                const angle = Math.random() * Math.PI * 2;
+                const dist = Math.random() * 50 + 20;
+                p.style.setProperty('--dx', Math.cos(angle) * dist + 'px');
+                p.style.setProperty('--dy', Math.sin(angle) * dist + 'px');
+                stage.appendChild(p);
+                setTimeout(() => p.remove(), 600);
+            }
+        }
+
+        function loseLife() {
+            lives--; playTone(150, 0.4, 'triangle', 0.2);
+            container.classList.add('shake-hit'); setTimeout(() => container.classList.remove('shake-hit'), 150);
+            updateLivesUI(); if (lives <= 0) gameOver();
+        }
+
+        function updateLivesUI() {
+            const icon = gameMode === 'pvz' ? '🌻' : '🍓';
+            livesBox.innerHTML = icon.repeat(lives) + '🔘'.repeat(Math.max(0, 5 - lives));
+        }
+
+        function gameOver() {
+            gameActive = false; cancelAnimationFrame(animationFrameId);
+            overlay.style.display = 'flex'; finalScoreEl.textContent = score;
+        }
+
+        function resetGame() {
+            setWordFocus(null);
+            if (hintRestoreTimer) { clearTimeout(hintRestoreTimer); hintRestoreTimer = null; }
+            try { window.speechSynthesis?.cancel?.(); } catch (e) {}
+            hintText.textContent = getModeHintText(gameMode);
+            gameActive = true; score = 0; lives = 5; kirbyScale = 1.0;
+            scoreEl.textContent = '0'; updateLivesUI(); updateKirbyBody();
+            overlay.style.display = 'none';
+            items.forEach(it => it.element.remove()); items = [];
+            lastSpawn = Date.now();
+            if(animationFrameId) cancelAnimationFrame(animationFrameId);
+            update();
+        }
+
+        function updateKirbyBody() {
+            if (gameMode === 'pvz') return;
+            kirbyBody.setAttribute('r', 40 * kirbyScale);
+            const offset = (kirbyScale - 1) * 15;
+            document.getElementById('eyes').style.transform = `translateY(${-offset}px)`;
+            mouthClosed.style.transform = `translateY(${-offset}px)`;
+            mouthOpen.style.transform = `translateY(${-offset}px)`;
+        }
+
+        function shootPea(row, tx, ty, callback) {
+            const pea = document.createElement('div');
+            const type = getPvzShooterType(row);
+            pea.className = type === 'melon' ? 'pea-bullet melon' : (type === 'corn' ? 'pea-bullet corn' : 'pea-bullet');
+
+            const shooter = document.getElementById(`shooter-${row}`);
+            const sRect = shooter ? shooter.getBoundingClientRect() : null;
+            const size = type === 'melon' ? 46 : (type === 'corn' ? 30 : 32);
+            const sx = sRect ? (sRect.left + sRect.width * (type === 'melon' ? 0.55 : (type === 'corn' ? 0.60 : 0.85))) : 130;
+            const sy = sRect ? (sRect.top + sRect.height * (type === 'melon' ? 0.35 : (type === 'corn' ? 0.34 : 0.45))) : ((row + 1) * (window.innerHeight / 6) - 40);
+
+            pea.style.left = `${sx - size / 2}px`; pea.style.top = `${sy - size / 2}px`;
+            stage.appendChild(pea);
+
+            const start = Date.now(), duration = type === 'melon' ? 700 : (type === 'corn' ? 650 : 600);
+            const distance = Math.hypot(tx - sx, ty - sy);
+            const arcHeight = type === 'melon'
+                ? Math.min(220, Math.max(120, distance * 0.25))
+                : (type === 'corn' ? Math.min(180, Math.max(90, distance * 0.22)) : 0);
+            function anim() {
+                const elapsed = Date.now() - start, progress = Math.min(elapsed / duration, 1);
+                const x = sx + (tx - sx) * progress;
+                let y = sy + (ty - sy) * progress;
+                if (type === 'melon' || type === 'corn') y -= 4 * arcHeight * progress * (1 - progress);
+                pea.style.left = `${x - size / 2}px`;
+                pea.style.top = `${y - size / 2}px`;
+                if (progress < 1) requestAnimationFrame(anim);
+                else { pea.remove(); callback(); }
+            }
+            anim();
+        }
+
+        function shootStar(tx, ty, callback) {
+            const p = document.createElement('div');
+            p.className = 'projectile-star';
+            const rect = kirbyCont.getBoundingClientRect();
+            const sx = rect.left + 70, sy = rect.top + 70;
+            p.style.left = `${sx}px`; p.style.top = `${sy}px`;
+            stage.appendChild(p);
+
+            const start = Date.now(), duration = 400;
+            function anim() {
+                const elapsed = Date.now() - start, progress = Math.min(elapsed / duration, 1);
+                p.style.left = `${sx + (tx - sx) * progress}px`;
+                p.style.top = `${sy + (ty - sy) * progress}px`;
+                if (progress < 1) requestAnimationFrame(anim);
+                else { p.remove(); callback(); }
+            }
+            anim();
+        }
+
+        function triggerAttack(it) {
+            if (!it || it.state !== 'falling') return;
+
+            const rect = it.element.getBoundingClientRect();
+            const tx = rect.left + rect.width / 2;
+            const ty = rect.top + rect.height / 2;
+
+            handleKillLearning(it);
+
+            if (gameMode === 'vertical') {
+                it.state = 'hit';
+                mouthOpen.style.display = 'block'; mouthClosed.style.display = 'none';
+                playTone(800, 0.1);
+                shootStar(tx, ty, () => {
+                    mouthOpen.style.display = 'none'; mouthClosed.style.display = 'block';
+                    finishHit(it, items.indexOf(it), tx, ty);
+                });
+                return;
+            }
+
+            if (gameMode === 'horizontal') {
+                mouthOpen.style.display = 'block'; mouthClosed.style.display = 'none';
+                kirbyCont.style.top = `${ty}px`;
+                playTone(400, 0.5);
+                it.state = 'inhaling';
+                for (let i = 0; i < 8; i++) {
+                    const wind = document.createElement('div'); wind.className = 'inhale-wind';
+                    wind.style.left = `${it.x}px`; wind.style.top = `${ty + (Math.random() - 0.5) * 180}px`;
+                    wind.style.transform = `rotate(${Math.atan2((Math.random() - 0.5) * 180, -150) * 180 / Math.PI}deg)`;
+                    stage.appendChild(wind); setTimeout(() => wind.remove(), 400);
+                }
+                return;
+            }
+
+            // PVZ Mode
+            it.state = 'hit';
+            playTone(600, 0.1, 'square');
+            const shooter = document.getElementById(`shooter-${it.row}`);
+            shooter.animate([
+                { transform: 'scale(1) translateX(0)' },
+                { transform: 'scale(1.2) translateX(-10px)' },
+                { transform: 'scale(1) translateX(0)' }
+            ], { duration: 200, easing: 'ease-out' });
+            shootPea(it.row, tx, ty, () => finishHit(it, items.indexOf(it), tx, ty));
+        }
+
+        window.addEventListener('keydown', (e) => {
+            if (settingsOverlay.style.display === 'flex') {
+                if (e.key === 'Escape') closeSettings();
+                return;
+            }
+            if (!gameActive) { if (e.key === 'Enter') resetGame(); return; }
+
+            const key = e.key.toLowerCase(); // 统一转为小写比较，实现按键不分大小写
+            if (key.length !== 1 || key < 'a' || key > 'z') return;
+
+            if (isWordMode()) {
+                if (wordFocusItem && (!items.includes(wordFocusItem) || wordFocusItem.state !== 'falling')) setWordFocus(null);
+
+                let target = wordFocusItem;
+                if (!target) {
+                    target = findBestTypeTarget(key);
+                    if (!target) return;
+                    setWordFocus(target);
+                }
+
+                if (getExpectedChar(target) !== key) {
+                    playTone(160, 0.05, 'square', 0.04);
+                    return;
+                }
+
+                target.progress += 1;
+                updatePromptUI(target);
+                playTone(520, 0.04, 'sine', 0.06);
+
+                if (target.progress < target.text.length) return;
+
+                setWordFocus(null);
+                triggerAttack(target);
+                return;
+            }
+
+            const target = findBestTypeTarget(key);
+            if (!target) return;
+            triggerAttack(target);
+        });
+
+        function finishHit(it, idx, tx, ty) {
+            if (gameMode === 'horizontal') {
+                mouthOpen.style.display = 'none'; mouthClosed.style.display = 'block';
+            }
+            container.classList.add('shake-hit'); setTimeout(() => container.classList.remove('shake-hit'), 100);
+            playTone(gameMode==='pvz'?1000:1300, 0.15);
+
+            // 产生粒子效果
+            const pColor = gameMode === 'pvz'
+                ? (getPvzShooterType(it.row) === 'melon' ? '#ff5252' : (getPvzShooterType(it.row) === 'corn' ? '#ffeb3b' : '#81d4fa'))
+                : '#fff';
+            createParticles(tx, ty, pColor);
+
+            const h = document.createElement('div'); h.className = 'hit-text';
+            if (gameMode === 'pvz') {
+                const type = getPvzShooterType(it.row);
+                h.textContent = type === 'melon' ? "砸! 🍉" : (type === 'corn' ? "啪! 🌽" : "咔嚓! ❄️");
+            } else {
+                h.textContent = gameMode==='vertical'?"Poyo! ⭐":"真好吃! 😋";
+            }
+            if(gameMode==='pvz') {
+                const type = getPvzShooterType(it.row);
+                h.style.color = type === 'melon' ? '#ffeb3b' : (type === 'corn' ? '#fff8e1' : '#e1f5fe');
+                h.style.webkitTextStroke = type === 'melon' ? '2px #1b5e20' : (type === 'corn' ? '2px #5d4037' : '2px #0d47a1');
+            }
+            h.style.left = `${tx}px`; h.style.top = `${ty}px`;
+            stage.appendChild(h); setTimeout(() => h.remove(), 500);
+            score += 10; scoreEl.textContent = score;
+            it.element.remove();
+            if (gameMode === 'horizontal') { kirbyScale += 0.04; if(kirbyScale > 2.0) kirbyScale = 2.0; updateKirbyBody(); }
+            const realIdx = items.indexOf(it); if(realIdx !== -1) items.splice(realIdx, 1);
+        }
+
+        changeMode('vertical');
+    </script>
+</body>
+</html>
