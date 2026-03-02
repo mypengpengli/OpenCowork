@@ -1266,7 +1266,7 @@
         }
 
         function isWordMode() {
-            return gameMode !== 'snake' && settings.promptMode !== 'letters';
+            return settings.promptMode !== 'letters';
         }
 
         function getModeHintText(mode) {
@@ -1431,11 +1431,17 @@
             let goalX = pointerActive ? snakeState.mouseX : metrics.centerX;
             let goalY = pointerActive ? snakeState.mouseY : metrics.centerY;
             let maxSpeed = 2.4;
+            let turnRate = 0.08;
+            let speedGain = 0.09;
+            let speedBase = 0.85;
 
             if (snakeState.targetItem) {
                 goalX = snakeState.targetItem.x;
                 goalY = snakeState.targetItem.y;
-                maxSpeed = Math.min(7.4, 4.8 + snakeState.segmentCount * 0.07);
+                maxSpeed = Math.min(10.8, 7.2 + snakeState.segmentCount * 0.10);
+                turnRate = 0.19;
+                speedGain = 0.16;
+                speedBase = 1.55;
             } else {
                 snakeState.orbitAngle += 0.015 * (speedMultiplier / 1.2);
                 const driftX = Math.cos(snakeState.orbitAngle) * (pointerActive ? 16 : 10);
@@ -1451,9 +1457,9 @@
             let delta = desiredAngle - snakeState.angle;
             while (delta > Math.PI) delta -= Math.PI * 2;
             while (delta < -Math.PI) delta += Math.PI * 2;
-            snakeState.angle += delta * (snakeState.targetItem ? 0.14 : 0.08);
+            snakeState.angle += delta * turnRate;
 
-            const desiredSpeed = Math.min(maxSpeed, dist * 0.09 + 0.85);
+            const desiredSpeed = Math.min(maxSpeed, dist * speedGain + speedBase);
             const desiredVX = Math.cos(snakeState.angle) * desiredSpeed;
             const desiredVY = Math.sin(snakeState.angle) * desiredSpeed;
             snakeState.vx = snakeState.vx * 0.82 + desiredVX * 0.18;
@@ -2501,7 +2507,7 @@
                     const it = items[i];
                     if (it.state !== 'falling' && it.state !== 'targeted') continue;
 
-                    it.x -= it.state === 'targeted' ? it.speed * 0.24 : it.speed;
+                    it.x -= it.state === 'targeted' ? it.speed * 0.12 : it.speed;
                     applySnakeFoodPose(it, now);
 
                     if (it.state === 'falling' && it.x < loseX) {
