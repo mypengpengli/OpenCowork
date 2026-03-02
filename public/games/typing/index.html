@@ -365,29 +365,34 @@
             top: -10px;
         }
         .target-item--snake {
-            width: 126px;
-            height: 126px;
+            width: 138px;
+            height: 138px;
         }
         .target-item--snake .target-letter {
-            top: -10px;
+            top: -18px;
+            min-width: 68px;
+            padding: 4px 14px;
+            font-size: 34px;
+            text-align: center;
+            box-shadow: 0 8px 18px rgba(0, 77, 64, 0.2), 2px 2px 0 #003d35;
         }
         .target-item--snake .target-sprite {
-            width: 86px;
-            height: 86px;
+            width: 92px;
+            height: 92px;
             display: block;
             font-size: 0;
-            animation: snake-food-pulse 1.08s infinite ease-in-out;
-            filter: drop-shadow(0 12px 18px rgba(0,0,0,0.24));
+            animation: snake-food-pulse 1.6s infinite ease-in-out;
+            filter: drop-shadow(0 14px 18px rgba(0,0,0,0.24));
         }
         .target-sprite--snake {
             position: relative;
             border-radius: 50%;
             background:
-                radial-gradient(circle at 34% 32%, #e9fff8 0%, #9ff8dc 26%, #35d5b7 58%, #00897b 100%);
-            border: 3px solid #004d40;
+                radial-gradient(circle at 34% 32%, #f7fffc 0%, #c8fff0 14%, #87f0d2 30%, #35d5b7 58%, #00897b 100%);
+            border: 4px solid #004d40;
             box-shadow:
-                inset 0 0 0 5px rgba(255,255,255,0.2),
-                0 0 0 6px rgba(103, 255, 219, 0.12);
+                inset 0 0 0 6px rgba(255,255,255,0.22),
+                0 0 0 8px rgba(103, 255, 219, 0.12);
         }
         .target-sprite--snake::before {
             content: '';
@@ -396,26 +401,44 @@
             border-radius: 50%;
             border: 2px dashed rgba(168, 255, 234, 0.42);
             opacity: 0.72;
-            animation: snake-food-ring 1.9s linear infinite;
+            animation: snake-food-ring 3.4s linear infinite;
         }
         .target-sprite--snake::after {
             content: '';
             position: absolute;
-            inset: 13px 24px 34px 18px;
+            inset: 10px 20px 38px 14px;
             border-radius: 999px;
-            background: rgba(255,255,255,0.72);
+            background: rgba(255,255,255,0.82);
             filter: blur(1px);
             transform: rotate(-22deg);
         }
         .snake-food-shadow {
             position: absolute;
-            bottom: 18px;
-            width: 56px;
-            height: 14px;
+            bottom: 20px;
+            width: 64px;
+            height: 16px;
             border-radius: 50%;
             background: rgba(5, 30, 33, 0.26);
             filter: blur(2px);
             transform: translateZ(-22px);
+        }
+        .snake-countdown {
+            position: absolute;
+            bottom: -10px;
+            left: 50%;
+            min-width: 74px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.95);
+            color: #00564c;
+            border: 3px solid rgba(0, 121, 107, 0.85);
+            box-shadow: 0 8px 18px rgba(0, 77, 64, 0.16);
+            font-size: 20px;
+            font-weight: bold;
+            line-height: 1;
+            text-align: center;
+            transform: translateX(-50%) translateZ(40px);
+            white-space: nowrap;
         }
         .pvz-zombie-svg {
             width: 118px;
@@ -588,7 +611,11 @@
             transform: translateZ(42px);
         }
         .letter-pvz { color: #2e7d32; border-color: #2e7d32; }
-        .letter-snake { color: #00796b; border-color: #00796b; }
+        .letter-snake {
+            color: #00564c;
+            border-color: #00796b;
+            background: linear-gradient(180deg, #ffffff 0%, #effff9 100%);
+        }
         .prompt-typed { color: #fff; background: #4caf50; padding: 0 4px; border-radius: 6px; }
         .prompt-rest { opacity: 0.85; }
         .prompt-translation { margin-left: 6px; font-size: 0.8em; color: #37474f; white-space: nowrap; }
@@ -596,7 +623,8 @@
         .snake-targeted .target-letter {
             border-color: #a7ffeb;
             color: #004d40;
-            box-shadow: 0 0 0 5px rgba(167, 255, 235, 0.24), 2px 2px 0 #003d35;
+            background: linear-gradient(180deg, #ffffff 0%, #d9fff4 100%);
+            box-shadow: 0 0 0 5px rgba(167, 255, 235, 0.24), 0 10px 22px rgba(0, 77, 64, 0.22), 2px 2px 0 #003d35;
         }
         .snake-targeted .target-sprite--snake {
             box-shadow:
@@ -604,9 +632,36 @@
                 0 0 0 10px rgba(126, 249, 211, 0.16),
                 0 0 28px rgba(126, 249, 211, 0.35);
         }
+        .snake-targeted .snake-countdown {
+            background: #004d40;
+            color: #ffffff;
+            border-color: #a7ffeb;
+            box-shadow: 0 0 0 6px rgba(167, 255, 235, 0.18), 0 10px 20px rgba(0, 77, 64, 0.28);
+        }
+        .snake-danger-main .target-letter {
+            border-color: #ffb300;
+            color: #5d2f00;
+            background: linear-gradient(180deg, #fffef7 0%, #fff3cf 100%);
+        }
+        .snake-danger-main .snake-countdown {
+            background: #fff3cf;
+            color: #7a3f00;
+            border-color: #ff9800;
+            box-shadow: 0 0 0 6px rgba(255, 152, 0, 0.18), 0 10px 18px rgba(122, 63, 0, 0.18);
+        }
+        .snake-danger-main .target-sprite--snake {
+            box-shadow:
+                inset 0 0 0 6px rgba(255,255,255,0.24),
+                0 0 0 10px rgba(255, 179, 0, 0.12),
+                0 0 28px rgba(255, 152, 0, 0.25);
+        }
+        .snake-danger-next .snake-countdown {
+            border-color: #ef6c00;
+            color: #8d3d00;
+        }
         @keyframes snake-food-pulse {
-            0%, 100% { transform: translateZ(36px) translateY(0) scale(1) rotate(0deg); }
-            50% { transform: translateZ(48px) translateY(-6px) scale(1.06) rotate(6deg); }
+            0%, 100% { transform: translateZ(32px) translateY(0) scale(1) rotate(0deg); }
+            50% { transform: translateZ(42px) translateY(-4px) scale(1.03) rotate(4deg); }
         }
         @keyframes snake-food-ring {
             to { transform: rotate(360deg); }
@@ -1098,7 +1153,7 @@
         let hintRestoreTimer = null;
         let learningToken = 0;
         let customWordEntries = [];
-        const SNAKE_MAX_ITEMS = 8;
+        const SNAKE_MAX_ITEMS = 6;
         const snakeState = {
             headX: 0,
             headY: 0,
@@ -1202,12 +1257,12 @@
                 if (mode === 'vertical') return '按顺序打出单词，击碎星星！';
                 if (mode === 'horizontal') return '按顺序打出单词，吸入小动物！';
                 if (mode === 'pvz') return '按顺序打出单词，指挥植物击退敌人！';
-                return '按顺序打出单词，让贪食蛇冲出去吞掉目标！';
+                return '按顺序打字，优先看 #1 倒计时，让贪食蛇冲出去吞掉目标！';
             }
             if (mode === 'vertical') return '按下对应字母击碎星星！';
             if (mode === 'horizontal') return '快按下对应字母吸入小动物！';
             if (mode === 'pvz') return '按下字母，指挥冰川豌豆射手、西瓜投手和玉米投手击退敌人！';
-            return '按下对应字母，让贪食蛇冲出去吃掉外圈食物！';
+            return '按下对应字母，优先看 #1 倒计时，让贪食蛇冲出去吃掉外圈食物！';
         }
 
         function flashHint(text, durationMs = 2800) {
@@ -1237,6 +1292,48 @@
             snakeState.targetItem = null;
         }
 
+        function formatSnakeCountdown(etaSec, priority) {
+            const safeEta = Math.max(0, etaSec);
+            const body = safeEta > 9.9
+                ? '10s+'
+                : (safeEta >= 3 ? `${Math.ceil(safeEta)}s` : `${safeEta.toFixed(1)}s`);
+            return priority ? `#${priority} ${body}` : body;
+        }
+
+        function updateSnakePriorityUI(dangerRadius) {
+            const ranked = items
+                .filter(it => it && it.element && (it.state === 'falling' || it.state === 'targeted'))
+                .map((it) => {
+                    const eta = (Math.max(0, it.radius - dangerRadius) / Math.max(it.speed * 58, 0.001));
+                    return { it, eta };
+                })
+                .sort((a, b) => a.eta - b.eta);
+
+            for (const { it } of ranked) {
+                it.element.classList.remove('snake-danger-main', 'snake-danger-next');
+                if (!it.timerEl) continue;
+
+                if (it.state === 'targeted') {
+                    it.timerEl.textContent = 'GO';
+                } else {
+                    it.timerEl.textContent = formatSnakeCountdown(
+                        (Math.max(0, it.radius - dangerRadius) / Math.max(it.speed * 58, 0.001)),
+                        0
+                    );
+                }
+            }
+
+            const urgent = ranked.filter(entry => entry.it.state === 'falling');
+            for (let i = 0; i < urgent.length; i++) {
+                const { it, eta } = urgent[i];
+                if (i === 0) it.element.classList.add('snake-danger-main');
+                else if (i === 1) it.element.classList.add('snake-danger-next');
+
+                if (!it.timerEl) continue;
+                it.timerEl.textContent = formatSnakeCountdown(eta, i < 3 ? i + 1 : 0);
+            }
+        }
+
         function syncSnakeSegments() {
             while (snakeState.segmentEls.length < snakeState.segmentCount) {
                 const seg = document.createElement('div');
@@ -1257,7 +1354,7 @@
         function resetSnakeState() {
             const metrics = getStageMetrics();
             snakeState.bodyScale = 1;
-            snakeState.segmentCount = 10;
+            snakeState.segmentCount = 9;
             snakeState.orbitAngle = Math.random() * Math.PI * 2;
             snakeState.angle = snakeState.orbitAngle + Math.PI / 2;
             snakeState.vx = 0;
@@ -1266,8 +1363,8 @@
             clearSnakeTarget();
             syncSnakeSegments();
 
-            snakeState.headX = metrics.centerX + Math.cos(snakeState.orbitAngle) * 42;
-            snakeState.headY = metrics.centerY + Math.sin(snakeState.orbitAngle * 1.18) * 30;
+            snakeState.headX = metrics.centerX + Math.cos(snakeState.orbitAngle) * 40;
+            snakeState.headY = metrics.centerY + Math.sin(snakeState.orbitAngle * 1.05) * 24;
             snakeState.segments = [];
             for (let i = 0; i < snakeState.segmentCount; i++) {
                 const dist = 18 + i * 15;
@@ -1306,7 +1403,7 @@
                 segEl.style.filter = `brightness(${(0.94 + (1 - ratio) * 0.18).toFixed(2)}) saturate(${(0.92 + (1 - ratio) * 0.22).toFixed(2)})`;
             }
 
-            const headLift = snakeState.targetItem ? 1.04 : (1 + Math.sin(now / 170) * 0.03);
+            const headLift = snakeState.targetItem ? 1.03 : (1 + Math.sin(now / 250) * 0.018);
             snakeHeadEl.style.left = `${(snakeState.headX - 31).toFixed(2)}px`;
             snakeHeadEl.style.top = `${(snakeState.headY - 27).toFixed(2)}px`;
             snakeHeadEl.style.transform = `translate3d(0, 0, 88px) rotate(${snakeState.angle.toFixed(4)}rad) scale(${(snakeState.bodyScale * headLift).toFixed(3)})`;
@@ -1321,16 +1418,16 @@
             if (!snakeState.segmentEls.length) syncSnakeSegments();
             if (snakeState.targetItem && (!items.includes(snakeState.targetItem) || snakeState.targetItem.state !== 'targeted')) clearSnakeTarget();
 
-            let goalX = metrics.centerX + Math.cos(snakeState.orbitAngle) * 42;
-            let goalY = metrics.centerY + Math.sin(snakeState.orbitAngle * 1.18) * 30;
-            let maxSpeed = 4.3;
+            let goalX = metrics.centerX + Math.cos(snakeState.orbitAngle) * 40;
+            let goalY = metrics.centerY + Math.sin(snakeState.orbitAngle * 1.05) * 24;
+            let maxSpeed = 2.4;
 
             if (snakeState.targetItem) {
                 goalX = snakeState.targetItem.x;
                 goalY = snakeState.targetItem.y;
-                maxSpeed = Math.min(14, 8.5 + snakeState.segmentCount * 0.12);
+                maxSpeed = Math.min(7.4, 4.8 + snakeState.segmentCount * 0.07);
             } else {
-                snakeState.orbitAngle += 0.046 * (speedMultiplier / 1.2);
+                snakeState.orbitAngle += 0.022 * (speedMultiplier / 1.2);
             }
 
             const dx = goalX - snakeState.headX;
@@ -1340,13 +1437,13 @@
             let delta = desiredAngle - snakeState.angle;
             while (delta > Math.PI) delta -= Math.PI * 2;
             while (delta < -Math.PI) delta += Math.PI * 2;
-            snakeState.angle += delta * (snakeState.targetItem ? 0.22 : 0.12);
+            snakeState.angle += delta * (snakeState.targetItem ? 0.14 : 0.08);
 
-            const desiredSpeed = Math.min(maxSpeed, dist * 0.18 + 1.6);
+            const desiredSpeed = Math.min(maxSpeed, dist * 0.09 + 0.85);
             const desiredVX = Math.cos(snakeState.angle) * desiredSpeed;
             const desiredVY = Math.sin(snakeState.angle) * desiredSpeed;
-            snakeState.vx = snakeState.vx * 0.76 + desiredVX * 0.24;
-            snakeState.vy = snakeState.vy * 0.76 + desiredVY * 0.24;
+            snakeState.vx = snakeState.vx * 0.82 + desiredVX * 0.18;
+            snakeState.vy = snakeState.vy * 0.82 + desiredVY * 0.18;
 
             snakeState.headX = Math.min(metrics.width - 36, Math.max(36, snakeState.headX + snakeState.vx));
             snakeState.headY = Math.min(metrics.height - 36, Math.max(36, snakeState.headY + snakeState.vy));
@@ -1381,18 +1478,18 @@
             const dangerRadius = getSnakeDangerRadius();
             const outerRadius = Math.max(dangerRadius + 20, Math.min(metrics.width, metrics.height) * 0.44);
             const dangerProgress = 1 - Math.min(1, Math.max(0, (it.radius - dangerRadius) / Math.max(outerRadius - dangerRadius, 1)));
-            const wobble = Math.sin(now / 180 + (it.poseSeed || 0)) * (it.state === 'targeted' ? 3.5 : 6);
-            const yaw = Math.cos(now / 240 + (it.poseSeed || 0)) * (6 + dangerProgress * 8);
-            const pitch = 12 + dangerProgress * 10;
-            const scale = 1 + dangerProgress * 0.18 + (it.state === 'targeted' ? 0.12 : 0);
-            const depth = 34 + dangerProgress * 62;
+            const wobble = Math.sin(now / 250 + (it.poseSeed || 0)) * (it.state === 'targeted' ? 2 : 3.6);
+            const yaw = Math.cos(now / 320 + (it.poseSeed || 0)) * (4 + dangerProgress * 6);
+            const pitch = 10 + dangerProgress * 8;
+            const scale = 1 + dangerProgress * 0.14 + (it.state === 'targeted' ? 0.08 : 0);
+            const depth = 30 + dangerProgress * 52;
 
-            it.element.style.left = `${(it.x - 63).toFixed(2)}px`;
-            it.element.style.top = `${(it.y - 63).toFixed(2)}px`;
+            it.element.style.left = `${(it.x - 69).toFixed(2)}px`;
+            it.element.style.top = `${(it.y - 69).toFixed(2)}px`;
             it.element.style.transform = `translate3d(0, ${wobble.toFixed(2)}px, ${depth.toFixed(2)}px) rotateX(${pitch.toFixed(2)}deg) rotateY(${yaw.toFixed(2)}deg) scale(${scale.toFixed(3)})`;
 
             if (it.shadowEl) {
-                const shadowScale = 1 - dangerProgress * 0.2 + Math.cos(now / 180 + (it.poseSeed || 0)) * 0.04;
+                const shadowScale = 1 - dangerProgress * 0.16 + Math.cos(now / 240 + (it.poseSeed || 0)) * 0.03;
                 it.shadowEl.style.transform = `scaleX(${shadowScale.toFixed(3)})`;
                 it.shadowEl.style.opacity = `${(0.22 - dangerProgress * 0.06).toFixed(2)}`;
             }
@@ -2284,6 +2381,7 @@
                 state: 'falling',
                 promptEl: null,
                 spriteEl: null,
+                timerEl: null,
                 svgEl: null,
                 shadowEl: null,
                 poseSeed: Math.random() * Math.PI * 2,
@@ -2345,19 +2443,20 @@
             } else {
                 const metrics = getStageMetrics();
                 const safeRadius = getSnakeDangerRadius();
-                const spawnRadius = Math.max(safeRadius + 48, Math.min(metrics.width, metrics.height) * (0.34 + Math.random() * 0.12));
+                const spawnRadius = Math.max(safeRadius + 72, Math.min(metrics.width, metrics.height) * (0.40 + Math.random() * 0.14));
                 const angle = Math.random() * Math.PI * 2;
-                const ellipse = 0.72 + Math.random() * 0.18;
+                const ellipse = 0.8 + Math.random() * 0.12;
                 div.className = 'game-item target-item target-item--snake';
-                div.innerHTML = `<div class="snake-food-shadow"></div><div class="target-sprite target-sprite--snake"></div><div class="target-letter letter-snake">${promptHTML}</div>`;
+                div.innerHTML = `<div class="snake-food-shadow"></div><div class="target-sprite target-sprite--snake"></div><div class="target-letter letter-snake">${promptHTML}</div><div class="snake-countdown">--</div>`;
                 item.promptEl = div.querySelector('.target-letter');
                 item.spriteEl = div.querySelector('.target-sprite');
                 item.shadowEl = div.querySelector('.snake-food-shadow');
+                item.timerEl = div.querySelector('.snake-countdown');
                 item.angle = angle;
                 item.radius = spawnRadius;
                 item.ellipse = ellipse;
-                item.speed = (Math.random() * 0.42 + 0.42) * (speedMultiplier / 1.2);
-                item.orbitSpeed = (Math.random() * 0.012 + 0.006) * (Math.random() < 0.5 ? -1 : 1);
+                item.speed = (Math.random() * 0.14 + 0.18) * (speedMultiplier / 1.2);
+                item.orbitSpeed = (Math.random() * 0.003 + 0.0015) * (Math.random() < 0.5 ? -1 : 1);
                 item.x = metrics.centerX + Math.cos(angle) * spawnRadius;
                 item.y = metrics.centerY + Math.sin(angle) * spawnRadius * ellipse;
                 applySnakeFoodPose(item);
@@ -2381,8 +2480,8 @@
                     const it = items[i];
                     if (it.state !== 'falling' && it.state !== 'targeted') continue;
 
-                    it.radius -= it.state === 'targeted' ? it.speed * 0.15 : it.speed;
-                    it.angle += it.orbitSpeed;
+                    it.radius -= it.state === 'targeted' ? it.speed * 0.04 : it.speed;
+                    it.angle += it.orbitSpeed * (it.state === 'targeted' ? 0.18 : 1);
                     it.x = metrics.centerX + Math.cos(it.angle) * it.radius;
                     it.y = metrics.centerY + Math.sin(it.angle) * it.radius * it.ellipse;
                     applySnakeFoodPose(it, now);
@@ -2395,6 +2494,7 @@
                     }
                 }
 
+                updateSnakePriorityUI(dangerRadius);
                 updateSnakeMovement(now);
                 animationFrameId = requestAnimationFrame(update);
                 return;
