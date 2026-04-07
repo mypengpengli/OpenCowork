@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OpenClaw Shell</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <div class="shell-background"></div>
+    <main class="shell-layout">
+      <aside class="sidebar">
+        <div class="brand-card">
+          <p class="brand-kicker">OpenCoWork Shell</p>
+          <h1>OpenClaw</h1>
+          <p class="brand-copy">
+            套壳层只负责界面和配置入口，不改后面的 agent runtime。
+          </p>
+          <button id="new-session-button" class="pill-button">新会话</button>
+        </div>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h2>会话</h2>
+            <button id="reload-sessions-button" class="ghost-button" type="button">刷新</button>
+          </div>
+          <div id="session-list" class="session-list"></div>
+        </section>
+      </aside>
+
+      <section class="chat-stage">
+        <header class="chat-header">
+          <div>
+            <p class="chat-kicker">智能体壳层</p>
+            <h2 id="chat-title">OpenClaw 会话</h2>
+          </div>
+          <div class="runtime-strip">
+            <span id="runtime-model" class="stat-chip">model</span>
+            <span id="runtime-permission" class="stat-chip">permission</span>
+          </div>
+        </header>
+
+        <section id="message-list" class="message-list"></section>
+
+        <form id="composer-form" class="composer-card">
+          <label class="sr-only" for="composer-input">输入</label>
+          <textarea
+            id="composer-input"
+            rows="4"
+            placeholder="让 OpenClaw 在现有 runtime 上工作。这里不会改你后面的核心逻辑。"
+          ></textarea>
+          <div class="composer-bar">
+            <p id="composer-status" class="composer-status">准备就绪</p>
+            <button id="send-button" class="pill-button pill-button--solid" type="submit">
+              发送
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <aside class="inspector">
+        <section class="panel">
+          <div class="panel-header">
+            <h2>API 设置</h2>
+          </div>
+          <form id="provider-form" class="stack-form">
+            <label>
+              <span>模型</span>
+              <input id="provider-model" name="model" type="text" />
+            </label>
+            <label>
+              <span>显示名称</span>
+              <input id="provider-name" name="name" type="text" />
+            </label>
+            <label>
+              <span>API Key Env</span>
+              <input id="provider-api-key-env" name="apiKeyEnv" type="text" />
+            </label>
+            <label>
+              <span>Base URL</span>
+              <input id="provider-base-url" name="baseUrl" type="text" />
+            </label>
+            <label>
+              <span>Base URL Env</span>
+              <input id="provider-base-url-env" name="baseUrlEnv" type="text" />
+            </label>
+            <label>
+              <span>Timeout Ms</span>
+              <input id="provider-timeout-ms" name="timeoutMs" type="number" min="1000" />
+            </label>
+            <button class="pill-button pill-button--solid" type="submit">保存 API 设置</button>
+          </form>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Skill</h2>
+            <span id="skill-count" class="meta-badge">0</span>
+          </div>
+          <form id="skill-form" class="stack-form">
+            <label>
+              <span>名称</span>
+              <input id="skill-name" type="text" />
+            </label>
+            <label>
+              <span>说明</span>
+              <input id="skill-description" type="text" />
+            </label>
+            <label>
+              <span>When To Use</span>
+              <input id="skill-when" type="text" />
+            </label>
+            <label>
+              <span>Allowed Tools</span>
+              <input id="skill-tools" type="text" placeholder="read_file, edit_file" />
+            </label>
+            <label>
+              <span>Paths</span>
+              <input id="skill-paths" type="text" placeholder="src/**, crates/**" />
+            </label>
+            <label>
+              <span>内容</span>
+              <textarea id="skill-content" rows="6"></textarea>
+            </label>
+            <button class="pill-button" type="submit">新增 Skill</button>
+          </form>
+          <div id="skill-list" class="mini-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h2>MCP</h2>
+            <span id="mcp-count" class="meta-badge">0</span>
+          </div>
+          <form id="mcp-form" class="stack-form">
+            <label>
+              <span>名称</span>
+              <input id="mcp-name" type="text" />
+            </label>
+            <label>
+              <span>Transport</span>
+              <select id="mcp-transport">
+                <option value="stdio">stdio</option>
+                <option value="http">http</option>
+                <option value="sse">sse</option>
+                <option value="ws">ws</option>
+              </select>
+            </label>
+            <label>
+              <span>Command</span>
+              <input id="mcp-command" type="text" placeholder="node server.js" />
+            </label>
+            <label>
+              <span>Args</span>
+              <input id="mcp-args" type="text" placeholder="arg1, arg2" />
+            </label>
+            <label>
+              <span>Endpoint</span>
+              <input id="mcp-endpoint" type="text" placeholder="http://127.0.0.1:3000/mcp" />
+            </label>
+            <label>
+              <span>Auth</span>
+              <select id="mcp-auth-type">
+                <option value="none">none</option>
+                <option value="bearer-env">bearer-env</option>
+                <option value="bearer-file">bearer-file</option>
+              </select>
+            </label>
+            <label>
+              <span>Token Env</span>
+              <input id="mcp-token-env" type="text" />
+            </label>
+            <label>
+              <span>Token Path</span>
+              <input id="mcp-token-path" type="text" />
+            </label>
+            <button class="pill-button" type="submit">保存 MCP</button>
+          </form>
+          <div id="mcp-list" class="mini-list"></div>
+        </section>
+      </aside>
+    </main>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
