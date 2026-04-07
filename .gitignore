@@ -11,6 +11,10 @@ node_modules
 dist
 dist-ssr
 *.local
+target
+.tmp
+.opencowork
+coverage
 
 # Editor directories and files
 .vscode/*

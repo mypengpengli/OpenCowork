@@ -1,0 +1,13 @@
+[package]
+name = "opencowork-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+opencowork-api = { path = "../api" }
+opencowork-mcp = { path = "../mcp" }

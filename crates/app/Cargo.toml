@@ -1,0 +1,16 @@
+[package]
+name = "opencowork-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+opencowork-api = { path = "../api" }
+opencowork-mcp = { path = "../mcp" }
+opencowork-plugins = { path = "../plugins" }
+opencowork-runtime = { path = "../runtime" }
+opencowork-skills = { path = "../skills" }
+opencowork-tools = { path = "../tools" }
