@@ -3,221 +3,369 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>OpenClaw Shell</title>
+    <title>OpenClaw</title>
     <link rel="stylesheet" href="/app.css" />
   </head>
   <body>
     <div class="shell-background"></div>
-    <div class="shell-glow shell-glow--coral"></div>
-    <div class="shell-glow shell-glow--jade"></div>
 
-    <main class="workspace-shell">
-      <aside class="left-rail">
-        <section class="panel brand-panel">
-          <p class="eyebrow">OpenCoWork Agent Shell</p>
+    <main class="shell-app">
+      <header class="topbar">
+        <button id="brand-home-button" class="brand-lockup" type="button">
+          <span class="eyebrow">OpenCoWork Agent Shell</span>
+          <span class="brand-title">OpenClaw</span>
+        </button>
+
+        <div class="topbar-status">
+          <span id="topbar-model" class="stat-chip">model</span>
+          <span id="topbar-permission" class="stat-chip">permission</span>
+          <span id="topbar-provider" class="stat-chip">provider</span>
+        </div>
+
+        <div class="topbar-actions">
+          <button id="topbar-settings-button" class="ghost-button" type="button">Settings</button>
+          <button id="topbar-workspace-button" class="pill-button pill-button--solid" type="button">
+            Workspace
+          </button>
+        </div>
+      </header>
+
+      <section id="landing-view" class="view landing-view">
+        <section class="panel hero-card">
+          <p class="eyebrow">Shell Layer Only</p>
           <h1>OpenClaw</h1>
-          <p class="brand-copy">
-            UI shell only. The runtime, context pipeline, tools, memory and session internals stay
-            untouched.
+          <p id="landing-copy" class="hero-copy">
+            A calmer shell for the existing runtime. Session orchestration, memory, tools and
+            context handling stay in the backend.
           </p>
-          <div class="action-row">
-            <button id="new-session-button" class="pill-button pill-button--solid" type="button">
-              New Session
+
+          <div class="hero-actions">
+            <button id="landing-open-workspace-button" class="pill-button pill-button--solid" type="button">
+              Open Workspace
             </button>
-            <button id="reload-sessions-button" class="ghost-button" type="button">
+            <button id="landing-new-session-button" class="ghost-button" type="button">
+              Start New Session
+            </button>
+            <button id="landing-settings-button" class="ghost-button" type="button">
+              Configure
+            </button>
+          </div>
+        </section>
+
+        <section class="landing-grid">
+          <article class="panel landing-card">
+            <div class="panel-header">
+              <h2>Workspace</h2>
+              <span id="landing-session-count" class="meta-badge">0</span>
+            </div>
+            <dl class="meta-grid">
+              <div class="meta-item">
+                <dt>Path</dt>
+                <dd id="landing-workspace-cwd">-</dd>
+              </div>
+              <div class="meta-item">
+                <dt>Settings</dt>
+                <dd id="landing-workspace-settings">-</dd>
+              </div>
+              <div class="meta-item">
+                <dt>Team Memory</dt>
+                <dd id="landing-team-memory-state">Not configured</dd>
+              </div>
+            </dl>
+          </article>
+
+          <article class="panel landing-card">
+            <div class="panel-header">
+              <h2>Provider</h2>
+              <span id="landing-provider-persisted" class="meta-badge">default</span>
+            </div>
+            <dl class="meta-grid">
+              <div class="meta-item">
+                <dt>Model</dt>
+                <dd id="landing-provider-model">-</dd>
+              </div>
+              <div class="meta-item">
+                <dt>Profile</dt>
+                <dd id="landing-provider-name">-</dd>
+              </div>
+              <div class="meta-item">
+                <dt>Base URL</dt>
+                <dd id="landing-provider-base-url">-</dd>
+              </div>
+            </dl>
+          </article>
+
+          <article class="panel landing-card">
+            <div class="panel-header">
+              <h2>Extensions</h2>
+              <span id="landing-skill-count" class="meta-badge">0</span>
+            </div>
+            <dl class="meta-grid">
+              <div class="meta-item">
+                <dt>Skills</dt>
+                <dd id="landing-skills-summary">0 installed</dd>
+              </div>
+              <div class="meta-item">
+                <dt>MCP</dt>
+                <dd id="landing-mcp-summary">0 configured</dd>
+              </div>
+              <div class="meta-item">
+                <dt>Last Active Session</dt>
+                <dd id="landing-last-session">Waiting for first turn</dd>
+              </div>
+            </dl>
+          </article>
+        </section>
+      </section>
+
+      <section id="workspace-view" class="view workspace-view is-hidden">
+        <aside class="panel rail-panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow eyebrow--compact">Sessions</p>
+              <h2>Workspace Sessions</h2>
+            </div>
+            <button id="new-session-button" class="ghost-button ghost-button--small" type="button">
+              New
+            </button>
+          </div>
+
+          <label class="search-field">
+            <span class="sr-only">Search sessions</span>
+            <input id="session-search" type="search" placeholder="Filter session ids" />
+          </label>
+
+          <div class="rail-actions">
+            <button id="reload-sessions-button" class="ghost-button ghost-button--small" type="button">
               Refresh
             </button>
-          </div>
-        </section>
-
-        <section class="panel workspace-panel">
-          <div class="panel-header">
-            <h2>Workspace Snapshot</h2>
-            <span id="session-count" class="meta-badge">0</span>
-          </div>
-          <dl class="meta-grid">
-            <div class="meta-item">
-              <dt>Workspace</dt>
-              <dd id="workspace-cwd">-</dd>
-            </div>
-            <div class="meta-item">
-              <dt>Settings</dt>
-              <dd id="workspace-settings">-</dd>
-            </div>
-            <div class="meta-item">
-              <dt>Team Memory</dt>
-              <dd id="team-memory-state">Not configured</dd>
-            </div>
-            <div class="meta-item">
-              <dt>Sync Detail</dt>
-              <dd id="team-memory-detail">No activity</dd>
-            </div>
-          </dl>
-        </section>
-
-        <section class="panel sessions-panel">
-          <div class="panel-header">
-            <h2>Sessions</h2>
-            <span id="session-meta" class="meta-badge">0 items</span>
-          </div>
-          <label class="search-input">
-            <span class="sr-only">Search sessions</span>
-            <input id="session-search" type="search" placeholder="Filter sessions by id" />
-          </label>
-          <div id="session-list" class="session-list"></div>
-        </section>
-      </aside>
-
-      <section class="main-stage">
-        <header class="panel hero-panel">
-          <div>
-            <p class="eyebrow">Agent Cockpit</p>
-            <h2 id="chat-title">OpenClaw Session</h2>
-            <p id="chat-subtitle" class="hero-copy">
-              Continue on the existing runtime without replacing the backend orchestration.
-            </p>
-          </div>
-          <div class="hero-stats">
-            <span id="runtime-model" class="stat-chip">model</span>
-            <span id="runtime-permission" class="stat-chip">permission</span>
-            <span id="provider-persisted" class="stat-chip">provider</span>
-          </div>
-        </header>
-
-        <section class="summary-grid">
-          <article class="summary-card">
-            <p class="summary-label">Messages</p>
-            <p id="summary-messages" class="summary-value">0</p>
-          </article>
-          <article class="summary-card">
-            <p class="summary-label">Tool Blocks</p>
-            <p id="summary-tools" class="summary-value">0</p>
-          </article>
-          <article class="summary-card">
-            <p class="summary-label">Session Tokens</p>
-            <p id="summary-tokens" class="summary-value">0</p>
-          </article>
-          <article class="summary-card">
-            <p class="summary-label">Current Memory</p>
-            <p id="summary-memory" class="summary-value summary-value--small">Not loaded</p>
-          </article>
-        </section>
-
-        <section class="conversation-grid">
-          <section class="panel thread-panel">
-            <div class="panel-header">
-              <h2>Message Stream</h2>
-              <div class="inline-actions">
-                <span id="message-count" class="meta-badge">0</span>
-                <button id="expand-all-button" class="ghost-button ghost-button--small" type="button">
-                  Expand All
-                </button>
-              </div>
-            </div>
-            <div id="message-list" class="message-list"></div>
-          </section>
-
-          <section class="panel activity-panel">
-            <div class="panel-header">
-              <h2>Turn Activity</h2>
-              <span id="event-count" class="meta-badge">0</span>
-            </div>
-
-            <div class="turn-stat-grid">
-              <article class="turn-stat-card">
-                <p class="turn-stat-label">Iterations</p>
-                <p id="turn-iterations" class="turn-stat-value">-</p>
-              </article>
-              <article class="turn-stat-card">
-                <p class="turn-stat-label">Prompt Est.</p>
-                <p id="turn-prompt-tokens" class="turn-stat-value">-</p>
-              </article>
-              <article class="turn-stat-card">
-                <p class="turn-stat-label">Compacted</p>
-                <p id="turn-compacted" class="turn-stat-value">-</p>
-              </article>
-              <article class="turn-stat-card">
-                <p class="turn-stat-label">Events</p>
-                <p id="turn-event-total" class="turn-stat-value">0</p>
-              </article>
-            </div>
-
-            <div id="event-list" class="event-list"></div>
-          </section>
-        </section>
-
-        <form id="composer-form" class="panel composer-panel">
-          <div class="composer-meta">
-            <span id="current-session-chip" class="stat-chip">No active session</span>
-            <span id="session-updated-chip" class="stat-chip">Waiting for first turn</span>
-          </div>
-          <label class="sr-only" for="composer-input">Input</label>
-          <textarea
-            id="composer-input"
-            rows="5"
-            placeholder="Continue working on the existing runtime. Ctrl + Enter to send."
-          ></textarea>
-          <div class="composer-bar">
-            <p id="composer-status" class="composer-status">Ready.</p>
-            <button id="send-button" class="pill-button pill-button--solid" type="submit">
-              Send
+            <button id="rail-settings-button" class="ghost-button ghost-button--small" type="button">
+              Settings
             </button>
+          </div>
+
+          <div id="session-list" class="session-list"></div>
+        </aside>
+
+        <section class="workbench">
+          <section class="panel banner-panel">
+            <div>
+              <p class="eyebrow eyebrow--compact">Session</p>
+              <h2 id="chat-title">OpenClaw Session</h2>
+              <p id="chat-subtitle" class="hero-copy">
+                Continue on the existing runtime without replacing the backend orchestration.
+              </p>
+            </div>
+            <div class="banner-chips">
+              <span id="current-session-chip" class="stat-chip">No active session</span>
+              <span id="session-updated-chip" class="stat-chip">Waiting for first turn</span>
+            </div>
+          </section>
+
+          <section class="metric-grid">
+            <article class="summary-card">
+              <p class="summary-label">Messages</p>
+              <p id="summary-messages" class="summary-value">0</p>
+            </article>
+            <article class="summary-card">
+              <p class="summary-label">Tool Blocks</p>
+              <p id="summary-tools" class="summary-value">0</p>
+            </article>
+            <article class="summary-card">
+              <p class="summary-label">Session Tokens</p>
+              <p id="summary-tokens" class="summary-value">0</p>
+            </article>
+            <article class="summary-card">
+              <p class="summary-label">Current Memory</p>
+              <p id="summary-memory" class="summary-value summary-value--small">Not loaded</p>
+            </article>
+          </section>
+
+          <section class="stage-grid">
+            <section class="panel thread-panel">
+              <div class="panel-header">
+                <h2>Conversation</h2>
+                <div class="inline-actions">
+                  <span id="message-count" class="meta-badge">0</span>
+                  <button id="expand-all-button" class="ghost-button ghost-button--small" type="button">
+                    Expand All
+                  </button>
+                </div>
+              </div>
+              <div id="message-list" class="message-list"></div>
+            </section>
+
+            <aside class="stage-side">
+              <section class="panel workspace-card">
+                <div class="panel-header">
+                  <h2>Workspace Snapshot</h2>
+                  <span id="session-meta" class="meta-badge">0 visible</span>
+                </div>
+                <dl class="meta-grid">
+                  <div class="meta-item">
+                    <dt>Workspace</dt>
+                    <dd id="workspace-cwd">-</dd>
+                  </div>
+                  <div class="meta-item">
+                    <dt>Settings</dt>
+                    <dd id="workspace-settings">-</dd>
+                  </div>
+                  <div class="meta-item">
+                    <dt>Team Memory</dt>
+                    <dd id="team-memory-state">Not configured</dd>
+                  </div>
+                  <div class="meta-item">
+                    <dt>Sync Detail</dt>
+                    <dd id="team-memory-detail">No activity</dd>
+                  </div>
+                </dl>
+              </section>
+
+              <section class="panel activity-panel">
+                <div class="panel-header">
+                  <h2>Turn Activity</h2>
+                  <span id="event-count" class="meta-badge">0</span>
+                </div>
+
+                <div class="turn-stat-grid">
+                  <article class="turn-stat-card">
+                    <p class="turn-stat-label">Iterations</p>
+                    <p id="turn-iterations" class="turn-stat-value">-</p>
+                  </article>
+                  <article class="turn-stat-card">
+                    <p class="turn-stat-label">Prompt Est.</p>
+                    <p id="turn-prompt-tokens" class="turn-stat-value">-</p>
+                  </article>
+                  <article class="turn-stat-card">
+                    <p class="turn-stat-label">Compacted</p>
+                    <p id="turn-compacted" class="turn-stat-value">-</p>
+                  </article>
+                  <article class="turn-stat-card">
+                    <p class="turn-stat-label">Events</p>
+                    <p id="turn-event-total" class="turn-stat-value">0</p>
+                  </article>
+                </div>
+
+                <div id="event-list" class="event-list"></div>
+              </section>
+            </aside>
+          </section>
+
+          <form id="composer-form" class="panel composer-panel">
+            <label class="sr-only" for="composer-input">Input</label>
+            <textarea
+              id="composer-input"
+              rows="6"
+              placeholder="Continue on the existing runtime. Ctrl + Enter to send."
+            ></textarea>
+            <div class="composer-bar">
+              <p id="composer-status" class="composer-status">Ready.</p>
+              <button id="send-button" class="pill-button pill-button--solid" type="submit">Send</button>
+            </div>
+          </form>
+        </section>
+      </section>
+    </main>
+
+    <div id="drawer-overlay" class="drawer-overlay is-hidden"></div>
+    <aside id="settings-drawer" class="settings-drawer is-hidden" aria-hidden="true">
+      <div class="drawer-header">
+        <div>
+          <p class="eyebrow">Settings</p>
+          <h2 id="drawer-title">API Settings</h2>
+          <p class="drawer-copy">Manage API profiles, local skills and MCP shell configuration.</p>
+        </div>
+        <div class="inline-actions">
+          <button id="drawer-home-button" class="ghost-button ghost-button--small" type="button">
+            Home
+          </button>
+          <button id="close-drawer-button" class="ghost-button ghost-button--small" type="button">
+            Close
+          </button>
+        </div>
+      </div>
+
+      <section class="drawer-summary-grid">
+        <article class="summary-tile">
+          <p class="summary-label">Model</p>
+          <p id="drawer-provider-model" class="summary-value summary-value--small">-</p>
+        </article>
+        <article class="summary-tile">
+          <p class="summary-label">Skills</p>
+          <p id="drawer-skill-count" class="summary-value">0</p>
+        </article>
+        <article class="summary-tile">
+          <p class="summary-label">MCP</p>
+          <p id="drawer-mcp-count" class="summary-value">0</p>
+        </article>
+      </section>
+
+      <div class="tab-row" role="tablist" aria-label="Shell settings">
+        <button class="tab-button is-active" type="button" data-tab="api">API</button>
+        <button class="tab-button" type="button" data-tab="skills">Skills</button>
+        <button class="tab-button" type="button" data-tab="mcp">MCP</button>
+      </div>
+
+      <p id="drawer-status" class="drawer-status">Ready.</p>
+
+      <section class="tab-panel" data-panel="api">
+        <div class="tab-intro">
+          <h3>API Profile</h3>
+          <p>Keep the runtime the same, but control the provider shell config from here.</p>
+        </div>
+
+        <form id="provider-form" class="stack-form">
+          <label>
+            <span>Model</span>
+            <input id="provider-model" name="model" type="text" />
+          </label>
+          <label>
+            <span>Provider Label</span>
+            <input id="provider-name" name="name" type="text" />
+          </label>
+          <label>
+            <span>API Key Env</span>
+            <input id="provider-api-key-env" name="apiKeyEnv" type="text" />
+          </label>
+          <label>
+            <span>Base URL</span>
+            <input id="provider-base-url" name="baseUrl" type="text" />
+          </label>
+          <label>
+            <span>Base URL Env</span>
+            <input id="provider-base-url-env" name="baseUrlEnv" type="text" />
+          </label>
+          <label>
+            <span>Timeout Ms</span>
+            <input id="provider-timeout-ms" name="timeoutMs" type="number" min="1000" />
+          </label>
+          <div class="editor-actions">
+            <button class="pill-button pill-button--solid" type="submit">Save API Settings</button>
+            <button id="reset-provider-button" class="ghost-button" type="button">Use Defaults</button>
           </div>
         </form>
       </section>
 
-      <aside class="right-rail">
-        <section class="panel inspector-panel">
-          <div class="panel-header">
-            <h2>Control Console</h2>
-            <span id="active-tab-label" class="meta-badge">API</span>
-          </div>
+      <section class="tab-panel is-hidden" data-panel="skills">
+        <div class="tab-intro">
+          <h3>Skill Library</h3>
+          <p>Create local skills and edit project-owned ones without touching runtime discovery.</p>
+        </div>
 
-          <div class="tab-row" role="tablist" aria-label="OpenClaw settings">
-            <button class="tab-button is-active" type="button" data-tab="api">API</button>
-            <button class="tab-button" type="button" data-tab="skills">Skills</button>
-            <button class="tab-button" type="button" data-tab="mcp">MCP</button>
-          </div>
-
-          <section class="tab-panel" data-panel="api">
-            <div class="tab-intro">
-              <h3>Provider Settings</h3>
-              <p>Switch model, env vars, base URL and timeout without touching the backend loop.</p>
+        <div class="editor-shell">
+          <section class="browser-column">
+            <div class="browser-toolbar">
+              <span id="skill-count" class="meta-badge">0</span>
+              <button id="new-skill-button" class="ghost-button ghost-button--small" type="button">
+                New Skill
+              </button>
             </div>
-            <form id="provider-form" class="stack-form">
-              <label>
-                <span>Model</span>
-                <input id="provider-model" name="model" type="text" />
-              </label>
-              <label>
-                <span>Provider Label</span>
-                <input id="provider-name" name="name" type="text" />
-              </label>
-              <label>
-                <span>API Key Env</span>
-                <input id="provider-api-key-env" name="apiKeyEnv" type="text" />
-              </label>
-              <label>
-                <span>Base URL</span>
-                <input id="provider-base-url" name="baseUrl" type="text" />
-              </label>
-              <label>
-                <span>Base URL Env</span>
-                <input id="provider-base-url-env" name="baseUrlEnv" type="text" />
-              </label>
-              <label>
-                <span>Timeout Ms</span>
-                <input id="provider-timeout-ms" name="timeoutMs" type="number" min="1000" />
-              </label>
-              <button class="pill-button pill-button--solid" type="submit">Save API Settings</button>
-            </form>
+            <div id="skill-list" class="mini-list"></div>
           </section>
 
-          <section class="tab-panel is-hidden" data-panel="skills">
-            <div class="tab-intro">
-              <h3>Skill Authoring</h3>
-              <p>Write directly into `.opencowork/skills` and let the existing runtime discover it.</p>
-            </div>
+          <section class="editor-column">
+            <p id="skill-editor-state" class="section-note">Create a new project skill.</p>
+
             <form id="skill-form" class="stack-form">
               <label>
                 <span>Name</span>
@@ -232,31 +380,75 @@
                 <input id="skill-when" type="text" />
               </label>
               <label>
+                <span>Argument Hint</span>
+                <input id="skill-argument-hint" type="text" />
+              </label>
+              <label>
                 <span>Allowed Tools</span>
                 <input id="skill-tools" type="text" placeholder="read_file, edit_file" />
               </label>
               <label>
                 <span>Paths</span>
-                <input id="skill-paths" type="text" placeholder="src/**, crates/**" />
+                <input id="skill-paths" type="text" placeholder="crates/**, src/**" />
+              </label>
+              <label>
+                <span>Context</span>
+                <select id="skill-context">
+                  <option value="">default</option>
+                  <option value="current">current</option>
+                  <option value="fork">fork</option>
+                </select>
+              </label>
+              <label>
+                <span>Version</span>
+                <input id="skill-version" type="text" />
+              </label>
+              <label>
+                <span>Agent</span>
+                <input id="skill-agent" type="text" />
+              </label>
+              <label>
+                <span>Model</span>
+                <input id="skill-model" type="text" />
+              </label>
+              <label>
+                <span>Effort</span>
+                <input id="skill-effort" type="text" />
               </label>
               <label>
                 <span>Body</span>
-                <textarea id="skill-content" rows="7"></textarea>
+                <textarea id="skill-content" rows="10"></textarea>
               </label>
-              <button class="pill-button" type="submit">Create Skill</button>
+              <div class="editor-actions">
+                <button class="pill-button pill-button--solid" type="submit">Save Skill</button>
+                <button id="reset-skill-button" class="ghost-button" type="button">Reset</button>
+                <button id="delete-skill-button" class="ghost-button" type="button">Delete</button>
+              </div>
             </form>
-            <div class="section-footer">
-              <span class="meta-badge">Count</span>
-              <span id="skill-count" class="meta-badge">0</span>
+          </section>
+        </div>
+      </section>
+
+      <section class="tab-panel is-hidden" data-panel="mcp">
+        <div class="tab-intro">
+          <h3>MCP Configuration</h3>
+          <p>Keep the MCP runtime intact while managing transport and auth settings from the shell.</p>
+        </div>
+
+        <div class="editor-shell">
+          <section class="browser-column">
+            <div class="browser-toolbar">
+              <span id="mcp-count" class="meta-badge">0</span>
+              <button id="new-mcp-button" class="ghost-button ghost-button--small" type="button">
+                New Server
+              </button>
             </div>
-            <div id="skill-list" class="mini-list"></div>
+            <div id="mcp-list" class="mini-list"></div>
           </section>
 
-          <section class="tab-panel is-hidden" data-panel="mcp">
-            <div class="tab-intro">
-              <h3>MCP Servers</h3>
-              <p>Control transport and auth shell config without rewriting MCP internals.</p>
-            </div>
+          <section class="editor-column">
+            <p id="mcp-editor-state" class="section-note">Create a new MCP server entry.</p>
+
             <form id="mcp-form" class="stack-form">
               <label>
                 <span>Name</span>
@@ -284,6 +476,10 @@
                 <input id="mcp-endpoint" type="text" placeholder="http://127.0.0.1:3000/mcp" />
               </label>
               <label>
+                <span>Timeout Ms</span>
+                <input id="mcp-timeout-ms" type="number" min="1000" />
+              </label>
+              <label>
                 <span>Auth</span>
                 <select id="mcp-auth-type">
                   <option value="none">none</option>
@@ -299,17 +495,16 @@
                 <span>Token Path</span>
                 <input id="mcp-token-path" type="text" />
               </label>
-              <button class="pill-button" type="submit">Save MCP</button>
+              <div class="editor-actions">
+                <button class="pill-button pill-button--solid" type="submit">Save MCP</button>
+                <button id="reset-mcp-button" class="ghost-button" type="button">Reset</button>
+                <button id="delete-mcp-button" class="ghost-button" type="button">Delete</button>
+              </div>
             </form>
-            <div class="section-footer">
-              <span class="meta-badge">Count</span>
-              <span id="mcp-count" class="meta-badge">0</span>
-            </div>
-            <div id="mcp-list" class="mini-list"></div>
           </section>
-        </section>
-      </aside>
-    </main>
+        </div>
+      </section>
+    </aside>
 
     <script src="/app.js" type="module"></script>
   </body>

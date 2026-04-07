@@ -144,6 +144,7 @@ struct SkillUpsertRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct McpUpsertRequest {
+    original_name: Option<String>,
     name: String,
     transport: String,
     command: Option<String>,
@@ -172,6 +173,13 @@ impl ApiError {
     fn internal(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: message.into(),
+        }
+    }
+
+    fn not_found(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
             message: message.into(),
         }
     }
@@ -204,12 +212,17 @@ async fn main() -> anyhow::Result<()> {
         .route("/app.css", get(app_css))
         .route("/app.js", get(app_js))
         .route("/api/bootstrap", get(get_bootstrap))
-        .route("/api/provider", get(get_provider).post(save_provider))
+        .route(
+            "/api/provider",
+            get(get_provider).post(save_provider).delete(reset_provider),
+        )
         .route("/api/sessions", get(list_sessions))
         .route("/api/sessions/:id", get(get_session))
         .route("/api/chat", post(run_chat))
         .route("/api/skills", get(list_skills).post(save_skill))
+        .route("/api/skills/:slug", get(get_skill).delete(delete_skill))
         .route("/api/mcp", get(list_mcp).post(save_mcp))
+        .route("/api/mcp/:name", axum::routing::delete(delete_mcp))
         .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
@@ -341,6 +354,19 @@ async fn save_provider(
     Ok(Json(provider_view(&config, &model)))
 }
 
+async fn reset_provider(
+    State(state): State<ShellState>,
+) -> Result<Json<ProviderSettingsView>, ApiError> {
+    let mut settings = read_settings(&state.cwd)?;
+    let root = object_mut(&mut settings);
+    root.remove("provider");
+    write_settings(&state.cwd, &settings)?;
+
+    let config = load_config(&state)?;
+    let model = config.model().unwrap_or("gpt-5.4-mini").to_string();
+    Ok(Json(provider_view(&config, &model)))
+}
+
 async fn list_sessions(
     State(state): State<ShellState>,
 ) -> Result<Json<Vec<SessionListItem>>, ApiError> {
@@ -408,6 +434,21 @@ async fn list_skills(State(state): State<ShellState>) -> Result<Json<Vec<SkillVi
     Ok(Json(skill_views(&state)))
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillDetailView {
+    #[serde(flatten)]
+    skill: SkillView,
+    content: String,
+}
+
+async fn get_skill(
+    State(state): State<ShellState>,
+    AxumPath(slug): AxumPath<String>,
+) -> Result<Json<SkillDetailView>, ApiError> {
+    Ok(Json(skill_detail(&state, &slug)?))
+}
+
 async fn save_skill(
     State(state): State<ShellState>,
     Json(payload): Json<SkillUpsertRequest>,
@@ -434,6 +475,21 @@ async fn save_skill(
     Ok(Json(skill_views(&state)))
 }
 
+async fn delete_skill(
+    State(state): State<ShellState>,
+    AxumPath(slug): AxumPath<String>,
+) -> Result<Json<Vec<SkillView>>, ApiError> {
+    validate_slug(&slug)?;
+    let skill_root = state.cwd.join(".opencowork").join("skills").join(&slug);
+    if !skill_root.exists() {
+        return Err(ApiError::not_found(format!(
+            "project skill `{slug}` was not found"
+        )));
+    }
+    fs::remove_dir_all(&skill_root).map_err(internal_error)?;
+    Ok(Json(skill_views(&state)))
+}
+
 async fn list_mcp(State(state): State<ShellState>) -> Result<Json<Vec<McpServerView>>, ApiError> {
     let config = load_config(&state)?;
     Ok(Json(mcp_views(&config)))
@@ -455,6 +511,16 @@ async fn save_mcp(
         .entry("mcpServers".to_string())
         .or_insert_with(|| Value::Object(Map::new()));
     let mcp_object = object_mut(mcp_servers);
+    if let Some(original_name) = payload
+        .original_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if original_name != payload.name {
+            mcp_object.remove(original_name);
+        }
+    }
 
     let mut server = Map::new();
     server.insert(
@@ -499,6 +565,26 @@ async fn save_mcp(
     }
 
     mcp_object.insert(payload.name, Value::Object(server));
+    write_settings(&state.cwd, &settings)?;
+    let config = load_config(&state)?;
+    Ok(Json(mcp_views(&config)))
+}
+
+async fn delete_mcp(
+    State(state): State<ShellState>,
+    AxumPath(name): AxumPath<String>,
+) -> Result<Json<Vec<McpServerView>>, ApiError> {
+    let mut settings = read_settings(&state.cwd)?;
+    let root = object_mut(&mut settings);
+    let Some(mcp_servers) = root.get_mut("mcpServers") else {
+        return Err(ApiError::not_found("no MCP servers are configured"));
+    };
+    let removed = object_mut(mcp_servers).remove(&name);
+    if removed.is_none() {
+        return Err(ApiError::not_found(format!(
+            "MCP server `{name}` was not found"
+        )));
+    }
     write_settings(&state.cwd, &settings)?;
     let config = load_config(&state)?;
     Ok(Json(mcp_views(&config)))
@@ -549,6 +635,21 @@ fn skill_views(state: &ShellState) -> Vec<SkillView> {
         .iter()
         .map(skill_view)
         .collect()
+}
+
+fn skill_detail(state: &ShellState, slug: &str) -> Result<SkillDetailView, ApiError> {
+    validate_slug(slug)?;
+    let catalog = SkillCatalog::discover(&skill_roots(&state.cwd, &state.config_home));
+    let summary = catalog
+        .skills()
+        .iter()
+        .find(|summary| skill_slug(summary).as_deref() == Some(slug))
+        .ok_or_else(|| ApiError::not_found(format!("skill `{slug}` was not found")))?;
+    let raw = fs::read_to_string(&summary.path).map_err(internal_error)?;
+    Ok(SkillDetailView {
+        skill: skill_view(summary),
+        content: strip_skill_frontmatter(&raw),
+    })
 }
 
 fn skill_view(summary: &SkillSummary) -> SkillView {
@@ -604,6 +705,37 @@ fn mcp_views(config: &opencowork_runtime::RuntimeConfig) -> Vec<McpServerView> {
             },
         })
         .collect()
+}
+
+fn validate_slug(slug: &str) -> Result<(), ApiError> {
+    let trimmed = slug.trim();
+    if trimmed.is_empty()
+        || trimmed.contains("..")
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+    {
+        return Err(ApiError::bad_request("invalid skill slug"));
+    }
+    Ok(())
+}
+
+fn skill_slug(summary: &SkillSummary) -> Option<String> {
+    summary
+        .path
+        .parent()
+        .and_then(|path| path.file_name())
+        .and_then(|name| name.to_str())
+        .map(ToOwned::to_owned)
+}
+
+fn strip_skill_frontmatter(raw: &str) -> String {
+    let normalized = raw.replace("\r\n", "\n");
+    if let Some(rest) = normalized.strip_prefix("---\n") {
+        if let Some(index) = rest.find("\n---\n") {
+            return rest[index + 5..].trim().to_string();
+        }
+    }
+    normalized.trim().to_string()
 }
 
 fn load_config(state: &ShellState) -> Result<opencowork_runtime::RuntimeConfig, ApiError> {
