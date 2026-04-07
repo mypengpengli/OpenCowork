@@ -217,7 +217,7 @@ async fn main() -> anyhow::Result<()> {
             get(get_provider).post(save_provider).delete(reset_provider),
         )
         .route("/api/sessions", get(list_sessions))
-        .route("/api/sessions/:id", get(get_session))
+        .route("/api/sessions/:id", get(get_session).delete(delete_session))
         .route("/api/chat", post(run_chat))
         .route("/api/skills", get(list_skills).post(save_skill))
         .route("/api/skills/:slug", get(get_skill).delete(delete_skill))
@@ -380,6 +380,23 @@ async fn get_session(
     let store = SessionStore::new(state.config_home.join("sessions"));
     let session = store.load(&session_id).map_err(internal_error)?;
     Ok(Json(session))
+}
+
+async fn delete_session(
+    State(state): State<ShellState>,
+    AxumPath(session_id): AxumPath<String>,
+) -> Result<Json<Vec<SessionListItem>>, ApiError> {
+    let path = state
+        .config_home
+        .join("sessions")
+        .join(format!("{session_id}.json"));
+    if !path.exists() {
+        return Err(ApiError::not_found(format!(
+            "session `{session_id}` was not found"
+        )));
+    }
+    fs::remove_file(path).map_err(internal_error)?;
+    Ok(Json(session_items(&state)?))
 }
 
 async fn run_chat(
