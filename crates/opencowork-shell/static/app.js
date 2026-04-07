@@ -5,6 +5,13 @@ const state = {
   currentTab: 'api',
   sending: false,
   lastEvents: [],
+  sessionFilter: '',
+  expandedBlocks: new Set(),
+  turnStats: {
+    iterations: null,
+    estimatedPromptTokens: null,
+    compacted: null,
+  },
 }
 
 const els = {
@@ -14,6 +21,7 @@ const els = {
   teamMemoryDetail: document.querySelector('#team-memory-detail'),
   sessionCount: document.querySelector('#session-count'),
   sessionMeta: document.querySelector('#session-meta'),
+  sessionSearch: document.querySelector('#session-search'),
   sessionList: document.querySelector('#session-list'),
   messageList: document.querySelector('#message-list'),
   messageCount: document.querySelector('#message-count'),
@@ -26,10 +34,19 @@ const els = {
   providerPersisted: document.querySelector('#provider-persisted'),
   currentSessionChip: document.querySelector('#current-session-chip'),
   sessionUpdatedChip: document.querySelector('#session-updated-chip'),
+  summaryMessages: document.querySelector('#summary-messages'),
+  summaryTools: document.querySelector('#summary-tools'),
+  summaryTokens: document.querySelector('#summary-tokens'),
+  summaryMemory: document.querySelector('#summary-memory'),
+  turnIterations: document.querySelector('#turn-iterations'),
+  turnPromptTokens: document.querySelector('#turn-prompt-tokens'),
+  turnCompacted: document.querySelector('#turn-compacted'),
+  turnEventTotal: document.querySelector('#turn-event-total'),
   composerForm: document.querySelector('#composer-form'),
   composerInput: document.querySelector('#composer-input'),
   composerStatus: document.querySelector('#composer-status'),
   sendButton: document.querySelector('#send-button'),
+  expandAllButton: document.querySelector('#expand-all-button'),
   newSessionButton: document.querySelector('#new-session-button'),
   reloadSessionsButton: document.querySelector('#reload-sessions-button'),
   providerForm: document.querySelector('#provider-form'),
@@ -88,7 +105,7 @@ function setStatus(message, isError = false) {
 }
 
 function toLocaleTimestamp(value) {
-  if (!value) return '刚刚'
+  if (!value) return 'Just now'
   return new Date(Number(value)).toLocaleString('zh-CN', {
     month: 'short',
     day: 'numeric',
@@ -103,7 +120,7 @@ function compactText(value, maxLength = 54) {
   if (text.length <= maxLength) return text
   const head = Math.max(18, Math.floor(maxLength / 2) - 2)
   const tail = Math.max(14, Math.floor(maxLength / 2) - 4)
-  return `${text.slice(0, head)} … ${text.slice(-tail)}`
+  return `${text.slice(0, head)} ... ${text.slice(-tail)}`
 }
 
 function safeCount(value) {
@@ -115,13 +132,55 @@ function currentSessionDescriptor() {
   return sessions.find((session) => session.id === state.currentSessionId) || null
 }
 
+function computeSessionMetrics(session) {
+  const metrics = {
+    messageCount: 0,
+    toolBlockCount: 0,
+    totalTokens: 0,
+    hasMemory: false,
+  }
+
+  if (!session) {
+    return metrics
+  }
+
+  metrics.messageCount = safeCount(session.messages)
+  metrics.hasMemory = Boolean(session.currentSessionMemory)
+
+  ;(session.messages || []).forEach((message) => {
+    ;(message.blocks || []).forEach((block) => {
+      if (block.type === 'tool_use' || block.type === 'tool_result') {
+        metrics.toolBlockCount += 1
+      }
+    })
+
+    const usage = message.usage || {}
+    metrics.totalTokens += Number(getValue(usage, 'input_tokens', 'inputTokens') || 0)
+    metrics.totalTokens += Number(getValue(usage, 'output_tokens', 'outputTokens') || 0)
+    metrics.totalTokens += Number(
+      getValue(usage, 'cache_creation_input_tokens', 'cacheCreationInputTokens') || 0,
+    )
+    metrics.totalTokens += Number(
+      getValue(usage, 'cache_read_input_tokens', 'cacheReadInputTokens') || 0,
+    )
+  })
+
+  return metrics
+}
+
+function shouldCollapseBlock(content) {
+  const text = String(content || '')
+  const lineCount = text.split('\n').length
+  return text.length > 500 || lineCount > 12
+}
+
 function renderWorkspaceMeta() {
   const bootstrap = state.bootstrap
   if (!bootstrap) return
 
   const sessions = bootstrap.sessions || []
   els.sessionCount.textContent = String(sessions.length)
-  els.sessionMeta.textContent = `${sessions.length} 条`
+  els.sessionMeta.textContent = `${sessions.length} items`
 
   els.workspaceCwd.textContent = compactText(bootstrap.cwd)
   els.workspaceCwd.title = bootstrap.cwd || ''
@@ -136,21 +195,21 @@ function renderWorkspaceMeta() {
   const filesPushed = Number(getValue(teamMemory, 'files_pushed') || 0)
 
   if (lastError) {
-    els.teamMemoryState.textContent = '异常'
+    els.teamMemoryState.textContent = 'Error'
     els.teamMemoryDetail.textContent = compactText(lastError, 48)
     els.teamMemoryDetail.title = String(lastError)
   } else if (running) {
-    els.teamMemoryState.textContent = pending ? '同步中' : '运行中'
+    els.teamMemoryState.textContent = pending ? 'Syncing' : 'Running'
     els.teamMemoryDetail.textContent = `pull ${filesPulled} / push ${filesPushed}`
     els.teamMemoryDetail.title = els.teamMemoryDetail.textContent
   } else if (bootstrap.teamMemorySync?.endpoint) {
-    els.teamMemoryState.textContent = '已配置'
-    els.teamMemoryDetail.textContent = '尚未启动'
-    els.teamMemoryDetail.title = '尚未启动'
+    els.teamMemoryState.textContent = 'Configured'
+    els.teamMemoryDetail.textContent = 'Idle'
+    els.teamMemoryDetail.title = 'Idle'
   } else {
-    els.teamMemoryState.textContent = '未配置'
-    els.teamMemoryDetail.textContent = '暂无活动'
-    els.teamMemoryDetail.title = '暂无活动'
+    els.teamMemoryState.textContent = 'Not configured'
+    els.teamMemoryDetail.textContent = 'No activity'
+    els.teamMemoryDetail.title = 'No activity'
   }
 }
 
@@ -172,25 +231,33 @@ function renderProvider() {
 
 function renderSessions() {
   const sessions = state.bootstrap?.sessions || []
-  els.sessionList.innerHTML = ''
+  const query = state.sessionFilter.trim().toLowerCase()
+  const visibleSessions = query
+    ? sessions.filter((session) => session.id.toLowerCase().includes(query))
+    : sessions
 
-  if (!sessions.length) {
-    els.sessionList.innerHTML =
-      '<div class="empty-state">还没有保存的会话。直接在中间输入内容，第一条消息会自动创建新会话。</div>'
+  els.sessionList.innerHTML = ''
+  els.sessionMeta.textContent = `${visibleSessions.length} visible`
+
+  if (!visibleSessions.length) {
+    els.sessionList.innerHTML = query
+      ? '<div class="empty-state">No sessions match the current filter.</div>'
+      : '<div class="empty-state">No saved sessions yet. The first message will create one automatically.</div>'
     return
   }
 
-  sessions.forEach((session) => {
+  visibleSessions.forEach((session) => {
     const button = document.createElement('button')
     button.type = 'button'
     button.className = `session-button${state.currentSessionId === session.id ? ' is-active' : ''}`
+
     const title = document.createElement('span')
     title.className = 'session-title'
     title.textContent = session.id
 
     const meta = document.createElement('span')
     meta.className = 'session-meta'
-    meta.textContent = `${session.messageCount} 条消息 · ${toLocaleTimestamp(session.updatedAtUnixMs)}`
+    meta.textContent = `${session.messageCount} messages · ${toLocaleTimestamp(session.updatedAtUnixMs)}`
 
     button.appendChild(title)
     button.appendChild(meta)
@@ -229,42 +296,94 @@ function renderMessages() {
   const messages = state.currentSession?.messages || []
   els.messageCount.textContent = String(messages.length)
   els.messageList.innerHTML = ''
+  const collapsibleKeys = []
 
   if (!messages.length) {
+    els.expandAllButton.disabled = true
+    els.expandAllButton.textContent = 'Expand All'
     els.messageList.innerHTML =
-      '<div class="empty-state">这里显示会话消息。左侧切换会话，中间继续对话，右侧维护 API、Skill 和 MCP。</div>'
+      '<div class="empty-state">Messages for the current session will appear here. Use the left rail to switch sessions and the right rail to manage API, skills and MCP.</div>'
     return
   }
 
-  messages.forEach((message) => {
+  messages.forEach((message, messageIndex) => {
     const card = document.createElement('article')
     card.className = 'message-card'
     card.dataset.role = String(message.role || '').toLowerCase()
 
     const header = document.createElement('div')
     header.className = 'message-header'
-    header.innerHTML = `
-      <p class="message-role">${String(message.role || 'unknown')}</p>
-      <span class="message-block-count">${safeCount(message.blocks)} blocks</span>
-    `
+
+    const role = document.createElement('p')
+    role.className = 'message-role'
+    role.textContent = String(message.role || 'unknown')
+
+    const blockCount = document.createElement('span')
+    blockCount.className = 'message-block-count'
+    blockCount.textContent = `${safeCount(message.blocks)} blocks`
+
+    header.appendChild(role)
+    header.appendChild(blockCount)
     card.appendChild(header)
 
     const body = document.createElement('div')
     body.className = 'message-body'
 
-    ;(message.blocks || []).forEach((block) => {
+    ;(message.blocks || []).forEach((block, blockIndex) => {
       const blockNode = document.createElement('div')
       blockNode.className = 'message-block'
+
+      const blockHeader = document.createElement('div')
+      blockHeader.className = 'message-block-header'
 
       const tag = document.createElement('span')
       tag.className = 'message-block-tag'
       tag.textContent = blockLabel(block)
-      blockNode.appendChild(tag)
 
-      const content = document.createElement('div')
-      content.className = 'message-block-content'
-      content.textContent = blockContent(block)
-      blockNode.appendChild(content)
+      const content = blockContent(block)
+      const contentId = `${messageIndex}:${blockIndex}`
+      const collapseCandidate = shouldCollapseBlock(content)
+      const isExpanded = state.expandedBlocks.has(contentId)
+      if (collapseCandidate) {
+        collapsibleKeys.push(contentId)
+      }
+
+      const meta = document.createElement('span')
+      meta.className = 'message-block-meta'
+      meta.textContent = `${String(content).length} chars`
+
+      blockHeader.appendChild(tag)
+
+      const rightSide = document.createElement('div')
+      rightSide.className = 'inline-actions'
+      rightSide.appendChild(meta)
+
+      if (collapseCandidate) {
+        const toggle = document.createElement('button')
+        toggle.type = 'button'
+        toggle.className = 'message-expand-button'
+        toggle.textContent = isExpanded ? 'Collapse' : 'Expand'
+        toggle.addEventListener('click', () => {
+          if (state.expandedBlocks.has(contentId)) {
+            state.expandedBlocks.delete(contentId)
+          } else {
+            state.expandedBlocks.add(contentId)
+          }
+          renderMessages()
+        })
+        rightSide.appendChild(toggle)
+      }
+
+      blockHeader.appendChild(rightSide)
+      blockNode.appendChild(blockHeader)
+
+      const contentNode = document.createElement('div')
+      contentNode.className = 'message-block-content'
+      if (collapseCandidate && !isExpanded) {
+        contentNode.classList.add('is-collapsed')
+      }
+      contentNode.textContent = content
+      blockNode.appendChild(contentNode)
 
       body.appendChild(blockNode)
     })
@@ -273,6 +392,10 @@ function renderMessages() {
     els.messageList.appendChild(card)
   })
 
+  const allExpanded =
+    collapsibleKeys.length > 0 && collapsibleKeys.every((key) => state.expandedBlocks.has(key))
+  els.expandAllButton.disabled = collapsibleKeys.length === 0
+  els.expandAllButton.textContent = allExpanded ? 'Collapse All' : 'Expand All'
   els.messageList.scrollTop = els.messageList.scrollHeight
 }
 
@@ -297,11 +420,11 @@ function normalizeEvents(events) {
 function eventTitle(event) {
   switch (event.type) {
     case 'assistant_text_delta':
-      return 'Assistant 输出'
+      return 'Assistant Output'
     case 'tool_call':
-      return getValue(event, 'name') || '工具调用'
+      return getValue(event, 'name') || 'Tool Call'
     case 'tool_result':
-      return getValue(event, 'tool_name', 'toolName') || '工具结果'
+      return getValue(event, 'tool_name', 'toolName') || 'Tool Result'
     case 'usage':
       return 'Token Usage'
     case 'message_stop':
@@ -314,11 +437,11 @@ function eventTitle(event) {
 function eventBody(event) {
   switch (event.type) {
     case 'assistant_text_delta':
-      return (getValue(event, 'text') || '').trim() || '模型正在增量输出文本。'
+      return (getValue(event, 'text') || '').trim() || 'Model is streaming text.'
     case 'tool_call':
-      return getValue(event, 'input') || '未提供输入'
+      return getValue(event, 'input') || 'No tool input.'
     case 'tool_result':
-      return getValue(event, 'output') || '未提供输出'
+      return getValue(event, 'output') || 'No tool output.'
     case 'usage': {
       const usage = getValue(event, 'usage') || {}
       const inputTokens = Number(getValue(usage, 'input_tokens', 'inputTokens') || 0)
@@ -333,7 +456,7 @@ function eventBody(event) {
       return `input ${inputTokens} · output ${outputTokens} · cache read ${cacheRead} · cache create ${cacheCreate} · total ${total}`
     }
     case 'message_stop':
-      return '这一轮消息已经结束。'
+      return 'Current assistant message finished.'
     default:
       return JSON.stringify(event, null, 2)
   }
@@ -342,24 +465,39 @@ function eventBody(event) {
 function renderEvents() {
   const events = normalizeEvents(state.lastEvents)
   els.eventCount.textContent = String(events.length)
+  els.turnEventTotal.textContent = String(events.length)
   els.eventList.innerHTML = ''
 
   if (!events.length) {
     els.eventList.innerHTML =
-      '<div class="empty-state">这里显示最近一轮的工具调用、增量输出和 usage 事件。</div>'
+      '<div class="empty-state">Recent turn events, tool calls and usage updates will appear here.</div>'
     return
   }
 
   events.forEach((event) => {
     const card = document.createElement('article')
     card.className = 'event-card'
-    card.innerHTML = `
-      <div class="event-title-row">
-        <h3 class="event-title">${escapeHtml(eventTitle(event))}</h3>
-        <span class="event-type">${escapeHtml(event.type || 'event')}</span>
-      </div>
-      <div class="event-body">${escapeHtml(eventBody(event))}</div>
-    `
+
+    const titleRow = document.createElement('div')
+    titleRow.className = 'event-title-row'
+
+    const title = document.createElement('h3')
+    title.className = 'event-title'
+    title.textContent = eventTitle(event)
+
+    const type = document.createElement('span')
+    type.className = 'event-type'
+    type.textContent = event.type || 'event'
+
+    titleRow.appendChild(title)
+    titleRow.appendChild(type)
+
+    const body = document.createElement('div')
+    body.className = 'event-body'
+    body.textContent = eventBody(event)
+
+    card.appendChild(titleRow)
+    card.appendChild(body)
     els.eventList.appendChild(card)
   })
 }
@@ -370,26 +508,38 @@ function renderSkills() {
   els.skillList.innerHTML = ''
 
   if (!skills.length) {
-    els.skillList.innerHTML = '<div class="empty-state">还没有自定义 Skill。可以直接从右侧表单写入。</div>'
+    els.skillList.innerHTML =
+      '<div class="empty-state">No custom skills yet. Create one from the form above.</div>'
     return
   }
 
   skills.forEach((skill) => {
-    const tools = skill.allowedTools?.length
-      ? `<span>${escapeHtml(skill.allowedTools.join(', '))}</span>`
-      : ''
-    const paths = skill.paths?.length ? `<span>${escapeHtml(skill.paths.join(', '))}</span>` : ''
     const card = document.createElement('article')
     card.className = 'mini-card'
-    card.innerHTML = `
-      <h3>${escapeHtml(skill.name)}</h3>
-      <p>${escapeHtml(skill.description || '没有描述')}</p>
-      <div class="mini-meta">
-        <span>${escapeHtml(skill.origin || 'skills')}</span>
-        ${tools}
-        ${paths}
-      </div>
-    `
+
+    const title = document.createElement('h3')
+    title.textContent = skill.name
+
+    const description = document.createElement('p')
+    description.textContent = skill.description || 'No description'
+
+    const meta = document.createElement('div')
+    meta.className = 'mini-meta'
+
+    const chips = [skill.origin || 'skills']
+      .concat(skill.allowedTools || [])
+      .concat(skill.paths || [])
+      .slice(0, 6)
+
+    chips.forEach((chip) => {
+      const span = document.createElement('span')
+      span.textContent = chip
+      meta.appendChild(span)
+    })
+
+    card.appendChild(title)
+    card.appendChild(description)
+    card.appendChild(meta)
     els.skillList.appendChild(card)
   })
 }
@@ -400,22 +550,35 @@ function renderMcp() {
   els.mcpList.innerHTML = ''
 
   if (!servers.length) {
-    els.mcpList.innerHTML = '<div class="empty-state">还没有 MCP 服务。可以先从 http 或 stdio 开始。</div>'
+    els.mcpList.innerHTML =
+      '<div class="empty-state">No MCP servers yet. Start with a simple http or stdio setup.</div>'
     return
   }
 
   servers.forEach((server) => {
     const card = document.createElement('article')
     card.className = 'mini-card'
-    card.innerHTML = `
-      <h3>${escapeHtml(server.name)}</h3>
-      <p>${escapeHtml(server.command || server.endpoint || '未配置 command / endpoint')}</p>
-      <div class="mini-meta">
-        <span>${escapeHtml(server.transport || 'unknown')}</span>
-        <span>${escapeHtml(server.authType || 'none')}</span>
-        ${server.timeoutMs ? `<span>${escapeHtml(`${server.timeoutMs} ms`)}</span>` : ''}
-      </div>
-    `
+
+    const title = document.createElement('h3')
+    title.textContent = server.name
+
+    const description = document.createElement('p')
+    description.textContent = server.command || server.endpoint || 'No command or endpoint'
+
+    const meta = document.createElement('div')
+    meta.className = 'mini-meta'
+
+    ;[server.transport || 'unknown', server.authType || 'none', server.timeoutMs ? `${server.timeoutMs} ms` : null]
+      .filter(Boolean)
+      .forEach((value) => {
+        const span = document.createElement('span')
+        span.textContent = value
+        meta.appendChild(span)
+      })
+
+    card.appendChild(title)
+    card.appendChild(description)
+    card.appendChild(meta)
     els.mcpList.appendChild(card)
   })
 }
@@ -423,23 +586,39 @@ function renderMcp() {
 function renderSessionSummary() {
   const descriptor = currentSessionDescriptor()
   const session = state.currentSession
+  const metrics = computeSessionMetrics(session)
+
+  els.summaryMessages.textContent = String(metrics.messageCount)
+  els.summaryTools.textContent = String(metrics.toolBlockCount)
+  els.summaryTokens.textContent = String(metrics.totalTokens)
+  els.summaryMemory.textContent = metrics.hasMemory ? 'Loaded' : 'Not loaded'
 
   if (!state.currentSessionId || !session) {
-    els.chatTitle.textContent = 'OpenClaw 会话'
-    els.chatSubtitle.textContent = '准备创建新会话。输入第一条消息后，系统会自动分配会话 ID。'
-    els.currentSessionChip.textContent = '未开始'
-    els.sessionUpdatedChip.textContent = '等待第一条消息'
-    els.messageCount.textContent = '0'
+    els.chatTitle.textContent = 'OpenClaw Session'
+    els.chatSubtitle.textContent =
+      'Ready to create a new session. The first prompt will allocate a session id.'
+    els.currentSessionChip.textContent = 'No active session'
+    els.sessionUpdatedChip.textContent = 'Waiting for first turn'
     return
   }
 
-  els.chatTitle.textContent = `OpenClaw 会话 · ${state.currentSessionId}`
-  els.chatSubtitle.textContent = `当前会话包含 ${session.messages.length} 条消息，继续对话时仍走原有 runtime。`
+  els.chatTitle.textContent = `OpenClaw Session · ${state.currentSessionId}`
+  els.chatSubtitle.textContent = `This session has ${metrics.messageCount} messages and continues on the existing runtime.`
   els.currentSessionChip.textContent = state.currentSessionId
   els.sessionUpdatedChip.textContent = descriptor
-    ? `更新于 ${toLocaleTimestamp(descriptor.updatedAtUnixMs)}`
-    : '已加载当前会话'
-  els.messageCount.textContent = String(session.messages.length)
+    ? `Updated ${toLocaleTimestamp(descriptor.updatedAtUnixMs)}`
+    : 'Loaded from current state'
+}
+
+function renderTurnStats() {
+  els.turnIterations.textContent =
+    state.turnStats.iterations === null ? '-' : String(state.turnStats.iterations)
+  els.turnPromptTokens.textContent =
+    state.turnStats.estimatedPromptTokens === null
+      ? '-'
+      : String(state.turnStats.estimatedPromptTokens)
+  els.turnCompacted.textContent =
+    state.turnStats.compacted === null ? '-' : state.turnStats.compacted ? 'Yes' : 'No'
 }
 
 function setActiveTab(tab) {
@@ -479,6 +658,7 @@ async function loadBootstrap({ allowAutoSelect = true } = {}) {
   }
 
   renderSessionSummary()
+  renderTurnStats()
   renderMessages()
   renderEvents()
 }
@@ -487,11 +667,18 @@ async function loadSession(sessionId, rerenderSessions = true) {
   state.currentSession = await request(`/api/sessions/${encodeURIComponent(sessionId)}`)
   state.currentSessionId = sessionId
   state.lastEvents = []
+  state.turnStats = {
+    iterations: null,
+    estimatedPromptTokens: null,
+    compacted: null,
+  }
 
   if (rerenderSessions) {
     renderSessions()
   }
+
   renderSessionSummary()
+  renderTurnStats()
   renderMessages()
   renderEvents()
 }
@@ -503,13 +690,13 @@ async function submitChat(event) {
 
   const input = els.composerInput.value.trim()
   if (!input) {
-    setStatus('先输入一点内容。', true)
+    setStatus('Enter some input first.', true)
     return
   }
 
   state.sending = true
   els.sendButton.disabled = true
-  setStatus('正在调用现有 runtime …')
+  setStatus('Calling the existing runtime ...')
 
   try {
     const response = await request('/api/chat', {
@@ -524,15 +711,23 @@ async function submitChat(event) {
     state.currentSessionId = response.sessionId
     state.currentSession = response.session
     state.lastEvents = response.events || []
+    state.turnStats = {
+      iterations: response.iterations ?? null,
+      estimatedPromptTokens: response.estimatedPromptTokens ?? null,
+      compacted: response.compacted ?? null,
+    }
     els.composerInput.value = ''
 
     await loadBootstrap({ allowAutoSelect: false })
     renderSessionSummary()
+    renderTurnStats()
     renderMessages()
     renderEvents()
-    setStatus(`完成，${response.iterations} 轮。估算 prompt ${response.estimatedPromptTokens} tokens。`)
+    setStatus(
+      `Done. ${response.iterations} iteration(s), prompt estimate ${response.estimatedPromptTokens}.`,
+    )
   } catch (error) {
-    setStatus(error.message || '发送失败。', true)
+    setStatus(error.message || 'Send failed.', true)
   } finally {
     state.sending = false
     els.sendButton.disabled = false
@@ -557,9 +752,9 @@ async function submitProvider(event) {
 
     state.bootstrap.provider = provider
     renderProvider()
-    setStatus('API 设置已保存。')
+    setStatus('API settings saved.')
   } catch (error) {
-    setStatus(error.message || '保存 API 设置失败。', true)
+    setStatus(error.message || 'Saving API settings failed.', true)
   }
 }
 
@@ -582,9 +777,9 @@ async function submitSkill(event) {
     state.bootstrap.skills = skills
     renderSkills()
     els.skillForm.reset()
-    setStatus('Skill 已写入 .opencowork/skills。')
+    setStatus('Skill saved into .opencowork/skills.')
   } catch (error) {
-    setStatus(error.message || '保存 Skill 失败。', true)
+    setStatus(error.message || 'Saving skill failed.', true)
   }
 }
 
@@ -609,9 +804,9 @@ async function submitMcp(event) {
     state.bootstrap.mcpServers = servers
     renderMcp()
     els.mcpForm.reset()
-    setStatus('MCP 配置已保存。')
+    setStatus('MCP settings saved.')
   } catch (error) {
-    setStatus(error.message || '保存 MCP 失败。', true)
+    setStatus(error.message || 'Saving MCP failed.', true)
   }
 }
 
@@ -626,21 +821,44 @@ function startNewSession() {
   state.currentSessionId = null
   state.currentSession = null
   state.lastEvents = []
+  state.turnStats = {
+    iterations: null,
+    estimatedPromptTokens: null,
+    compacted: null,
+  }
+  state.expandedBlocks.clear()
   els.composerInput.value = ''
   renderSessions()
   renderSessionSummary()
+  renderTurnStats()
   renderMessages()
   renderEvents()
-  setStatus('新会话已就绪。')
+  setStatus('New session ready.')
 }
 
-function escapeHtml(value) {
-  return String(value || '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;')
+function toggleExpandAll() {
+  const session = state.currentSession
+  if (!session) return
+
+  const keys = []
+  ;(session.messages || []).forEach((message, messageIndex) => {
+    ;(message.blocks || []).forEach((block, blockIndex) => {
+      const key = `${messageIndex}:${blockIndex}`
+      if (shouldCollapseBlock(blockContent(block))) {
+        keys.push(key)
+      }
+    })
+  })
+
+  const allExpanded = keys.length > 0 && keys.every((key) => state.expandedBlocks.has(key))
+  if (allExpanded) {
+    keys.forEach((key) => state.expandedBlocks.delete(key))
+  } else {
+    keys.forEach((key) => state.expandedBlocks.add(key))
+  }
+
+  els.expandAllButton.textContent = allExpanded ? 'Expand All' : 'Collapse All'
+  renderMessages()
 }
 
 els.composerForm.addEventListener('submit', submitChat)
@@ -657,10 +875,15 @@ els.newSessionButton.addEventListener('click', startNewSession)
 els.reloadSessionsButton.addEventListener('click', async () => {
   try {
     await loadBootstrap({ allowAutoSelect: true })
-    setStatus('会话列表已刷新。')
+    setStatus('Session list refreshed.')
   } catch (error) {
-    setStatus(error.message || '刷新失败。', true)
+    setStatus(error.message || 'Refreshing failed.', true)
   }
+})
+els.expandAllButton.addEventListener('click', toggleExpandAll)
+els.sessionSearch.addEventListener('input', (event) => {
+  state.sessionFilter = event.target.value || ''
+  renderSessions()
 })
 els.tabButtons.forEach((button) => {
   button.addEventListener('click', () => setActiveTab(button.dataset.tab))
@@ -669,5 +892,5 @@ els.tabButtons.forEach((button) => {
 setActiveTab(state.currentTab)
 
 loadBootstrap({ allowAutoSelect: true }).catch((error) => {
-  setStatus(error.message || '初始化失败。', true)
+  setStatus(error.message || 'Initialization failed.', true)
 })

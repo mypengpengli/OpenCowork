@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -17,48 +17,53 @@
           <p class="eyebrow">OpenCoWork Agent Shell</p>
           <h1>OpenClaw</h1>
           <p class="brand-copy">
-            这里只负责界面和配置入口，不改你后面的 runtime、会话压缩、工具系统和记忆逻辑。
+            UI shell only. The runtime, context pipeline, tools, memory and session internals stay
+            untouched.
           </p>
           <div class="action-row">
             <button id="new-session-button" class="pill-button pill-button--solid" type="button">
-              新会话
+              New Session
             </button>
             <button id="reload-sessions-button" class="ghost-button" type="button">
-              刷新
+              Refresh
             </button>
           </div>
         </section>
 
         <section class="panel workspace-panel">
           <div class="panel-header">
-            <h2>工作区快照</h2>
+            <h2>Workspace Snapshot</h2>
             <span id="session-count" class="meta-badge">0</span>
           </div>
           <dl class="meta-grid">
             <div class="meta-item">
-              <dt>目录</dt>
+              <dt>Workspace</dt>
               <dd id="workspace-cwd">-</dd>
             </div>
             <div class="meta-item">
-              <dt>配置</dt>
+              <dt>Settings</dt>
               <dd id="workspace-settings">-</dd>
             </div>
             <div class="meta-item">
               <dt>Team Memory</dt>
-              <dd id="team-memory-state">未配置</dd>
+              <dd id="team-memory-state">Not configured</dd>
             </div>
             <div class="meta-item">
-              <dt>同步状态</dt>
-              <dd id="team-memory-detail">暂无活动</dd>
+              <dt>Sync Detail</dt>
+              <dd id="team-memory-detail">No activity</dd>
             </div>
           </dl>
         </section>
 
         <section class="panel sessions-panel">
           <div class="panel-header">
-            <h2>会话</h2>
-            <span id="session-meta" class="meta-badge">0 条</span>
+            <h2>Sessions</h2>
+            <span id="session-meta" class="meta-badge">0 items</span>
           </div>
+          <label class="search-input">
+            <span class="sr-only">Search sessions</span>
+            <input id="session-search" type="search" placeholder="Filter sessions by id" />
+          </label>
           <div id="session-list" class="session-list"></div>
         </section>
       </aside>
@@ -67,9 +72,9 @@
         <header class="panel hero-panel">
           <div>
             <p class="eyebrow">Agent Cockpit</p>
-            <h2 id="chat-title">OpenClaw 会话</h2>
+            <h2 id="chat-title">OpenClaw Session</h2>
             <p id="chat-subtitle" class="hero-copy">
-              在现有 runtime 上工作，保留原有上下文编排和工具链，只做可视化外壳。
+              Continue on the existing runtime without replacing the backend orchestration.
             </p>
           </div>
           <div class="hero-stats">
@@ -79,39 +84,83 @@
           </div>
         </header>
 
+        <section class="summary-grid">
+          <article class="summary-card">
+            <p class="summary-label">Messages</p>
+            <p id="summary-messages" class="summary-value">0</p>
+          </article>
+          <article class="summary-card">
+            <p class="summary-label">Tool Blocks</p>
+            <p id="summary-tools" class="summary-value">0</p>
+          </article>
+          <article class="summary-card">
+            <p class="summary-label">Session Tokens</p>
+            <p id="summary-tokens" class="summary-value">0</p>
+          </article>
+          <article class="summary-card">
+            <p class="summary-label">Current Memory</p>
+            <p id="summary-memory" class="summary-value summary-value--small">Not loaded</p>
+          </article>
+        </section>
+
         <section class="conversation-grid">
           <section class="panel thread-panel">
             <div class="panel-header">
-              <h2>消息流</h2>
-              <span id="message-count" class="meta-badge">0</span>
+              <h2>Message Stream</h2>
+              <div class="inline-actions">
+                <span id="message-count" class="meta-badge">0</span>
+                <button id="expand-all-button" class="ghost-button ghost-button--small" type="button">
+                  Expand All
+                </button>
+              </div>
             </div>
             <div id="message-list" class="message-list"></div>
           </section>
 
           <section class="panel activity-panel">
             <div class="panel-header">
-              <h2>本轮事件</h2>
+              <h2>Turn Activity</h2>
               <span id="event-count" class="meta-badge">0</span>
             </div>
+
+            <div class="turn-stat-grid">
+              <article class="turn-stat-card">
+                <p class="turn-stat-label">Iterations</p>
+                <p id="turn-iterations" class="turn-stat-value">-</p>
+              </article>
+              <article class="turn-stat-card">
+                <p class="turn-stat-label">Prompt Est.</p>
+                <p id="turn-prompt-tokens" class="turn-stat-value">-</p>
+              </article>
+              <article class="turn-stat-card">
+                <p class="turn-stat-label">Compacted</p>
+                <p id="turn-compacted" class="turn-stat-value">-</p>
+              </article>
+              <article class="turn-stat-card">
+                <p class="turn-stat-label">Events</p>
+                <p id="turn-event-total" class="turn-stat-value">0</p>
+              </article>
+            </div>
+
             <div id="event-list" class="event-list"></div>
           </section>
         </section>
 
         <form id="composer-form" class="panel composer-panel">
           <div class="composer-meta">
-            <span id="current-session-chip" class="stat-chip">未开始</span>
-            <span id="session-updated-chip" class="stat-chip">等待第一条消息</span>
+            <span id="current-session-chip" class="stat-chip">No active session</span>
+            <span id="session-updated-chip" class="stat-chip">Waiting for first turn</span>
           </div>
-          <label class="sr-only" for="composer-input">输入</label>
+          <label class="sr-only" for="composer-input">Input</label>
           <textarea
             id="composer-input"
             rows="5"
-            placeholder="让 OpenClaw 在现有 runtime 上继续工作。Ctrl + Enter 发送。"
+            placeholder="Continue working on the existing runtime. Ctrl + Enter to send."
           ></textarea>
           <div class="composer-bar">
-            <p id="composer-status" class="composer-status">准备就绪</p>
+            <p id="composer-status" class="composer-status">Ready.</p>
             <button id="send-button" class="pill-button pill-button--solid" type="submit">
-              发送
+              Send
             </button>
           </div>
         </form>
@@ -120,11 +169,11 @@
       <aside class="right-rail">
         <section class="panel inspector-panel">
           <div class="panel-header">
-            <h2>控制台</h2>
+            <h2>Control Console</h2>
             <span id="active-tab-label" class="meta-badge">API</span>
           </div>
 
-          <div class="tab-row" role="tablist" aria-label="OpenClaw 设置">
+          <div class="tab-row" role="tablist" aria-label="OpenClaw settings">
             <button class="tab-button is-active" type="button" data-tab="api">API</button>
             <button class="tab-button" type="button" data-tab="skills">Skills</button>
             <button class="tab-button" type="button" data-tab="mcp">MCP</button>
@@ -132,16 +181,16 @@
 
           <section class="tab-panel" data-panel="api">
             <div class="tab-intro">
-              <h3>Provider 设置</h3>
-              <p>可以直接切模型、API 环境变量、Base URL 和超时，不动后端逻辑。</p>
+              <h3>Provider Settings</h3>
+              <p>Switch model, env vars, base URL and timeout without touching the backend loop.</p>
             </div>
             <form id="provider-form" class="stack-form">
               <label>
-                <span>模型</span>
+                <span>Model</span>
                 <input id="provider-model" name="model" type="text" />
               </label>
               <label>
-                <span>显示名称</span>
+                <span>Provider Label</span>
                 <input id="provider-name" name="name" type="text" />
               </label>
               <label>
@@ -160,22 +209,22 @@
                 <span>Timeout Ms</span>
                 <input id="provider-timeout-ms" name="timeoutMs" type="number" min="1000" />
               </label>
-              <button class="pill-button pill-button--solid" type="submit">保存 API 设置</button>
+              <button class="pill-button pill-button--solid" type="submit">Save API Settings</button>
             </form>
           </section>
 
           <section class="tab-panel is-hidden" data-panel="skills">
             <div class="tab-intro">
-              <h3>Skills</h3>
-              <p>从这里直接写入 `.opencowork/skills`，后面 runtime 会照原逻辑发现和加载。</p>
+              <h3>Skill Authoring</h3>
+              <p>Write directly into `.opencowork/skills` and let the existing runtime discover it.</p>
             </div>
             <form id="skill-form" class="stack-form">
               <label>
-                <span>名称</span>
+                <span>Name</span>
                 <input id="skill-name" type="text" />
               </label>
               <label>
-                <span>说明</span>
+                <span>Description</span>
                 <input id="skill-description" type="text" />
               </label>
               <label>
@@ -191,13 +240,13 @@
                 <input id="skill-paths" type="text" placeholder="src/**, crates/**" />
               </label>
               <label>
-                <span>内容</span>
+                <span>Body</span>
                 <textarea id="skill-content" rows="7"></textarea>
               </label>
-              <button class="pill-button" type="submit">新增 Skill</button>
+              <button class="pill-button" type="submit">Create Skill</button>
             </form>
             <div class="section-footer">
-              <span class="meta-badge">数量</span>
+              <span class="meta-badge">Count</span>
               <span id="skill-count" class="meta-badge">0</span>
             </div>
             <div id="skill-list" class="mini-list"></div>
@@ -206,11 +255,11 @@
           <section class="tab-panel is-hidden" data-panel="mcp">
             <div class="tab-intro">
               <h3>MCP Servers</h3>
-              <p>这里管壳层配置，不改变原有 MCP transport、auth、工具注册流程。</p>
+              <p>Control transport and auth shell config without rewriting MCP internals.</p>
             </div>
             <form id="mcp-form" class="stack-form">
               <label>
-                <span>名称</span>
+                <span>Name</span>
                 <input id="mcp-name" type="text" />
               </label>
               <label>
@@ -250,10 +299,10 @@
                 <span>Token Path</span>
                 <input id="mcp-token-path" type="text" />
               </label>
-              <button class="pill-button" type="submit">保存 MCP</button>
+              <button class="pill-button" type="submit">Save MCP</button>
             </form>
             <div class="section-footer">
-              <span class="meta-badge">数量</span>
+              <span class="meta-badge">Count</span>
               <span id="mcp-count" class="meta-badge">0</span>
             </div>
             <div id="mcp-list" class="mini-list"></div>
