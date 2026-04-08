@@ -6,8 +6,11 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use opencowork_api::default_openai_profile_for_model;
 use opencowork_app::{AppEvent, AppRuntime};
+use opencowork_commands::{handle_command, specs as slash_specs, SlashCommand};
 use opencowork_mcp::{McpAuthConfig, McpTransport};
-use opencowork_runtime::{default_config_home, ConfigLoader, Session, SessionStore};
+use opencowork_runtime::{
+    default_config_home, ConfigLoader, ConversationMessage, MessageRole, Session, SessionStore,
+};
 use opencowork_skills::{SkillCatalog, SkillExecutionContext, SkillOrigin, SkillSummary};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -35,6 +38,8 @@ struct BootstrapResponse {
     model: String,
     permission_mode: String,
     provider: ProviderSettingsView,
+    provider_profiles: Vec<ProviderProfileView>,
+    active_provider_profile_id: Option<String>,
     team_memory_sync: serde_json::Value,
     sessions: Vec<SessionListItem>,
     skills: Vec<SkillView>,
@@ -43,9 +48,27 @@ struct BootstrapResponse {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct SlashCommandSpecView {
+    name: String,
+    summary: String,
+    argument_hint: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ToolManifestEntryView {
+    name: String,
+    description: String,
+    permission: String,
+    source: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ProviderSettingsView {
     model: String,
     name: String,
+    api_key: String,
     api_key_env: String,
     base_url: String,
     base_url_env: Option<String>,
@@ -55,8 +78,42 @@ struct ProviderSettingsView {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct ProviderProfileView {
+    id: String,
+    label: String,
+    model: String,
+    name: String,
+    api_key: String,
+    has_api_key: bool,
+    api_key_env: String,
+    base_url: String,
+    base_url_env: Option<String>,
+    timeout_ms: u64,
+    active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderProfileRecord {
+    id: String,
+    label: String,
+    model: String,
+    name: String,
+    #[serde(default)]
+    api_key: String,
+    api_key_env: String,
+    base_url: String,
+    base_url_env: Option<String>,
+    timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct SessionListItem {
     id: String,
+    title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preview: Option<String>,
     message_count: usize,
     updated_at_unix_ms: u128,
 }
@@ -114,13 +171,56 @@ struct ChatResponse {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct SlashExecuteRequest {
+    input: String,
+    session_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SlashExecuteResponse {
+    title: String,
+    output: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ProviderUpdateRequest {
     model: Option<String>,
     name: String,
-    api_key_env: String,
+    api_key: Option<String>,
+    api_key_env: Option<String>,
     base_url: String,
     base_url_env: Option<String>,
     timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderProfileUpsertRequest {
+    id: Option<String>,
+    label: String,
+    model: String,
+    name: String,
+    api_key: Option<String>,
+    api_key_env: Option<String>,
+    clear_api_key: Option<bool>,
+    base_url: String,
+    base_url_env: Option<String>,
+    timeout_ms: Option<u64>,
+    activate: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PermissionModeUpdateRequest {
+    permission_mode: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PermissionModeView {
+    value: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -205,6 +305,7 @@ async fn main() -> anyhow::Result<()> {
         .ok()
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or(33211);
+    ensure_shell_defaults(&cwd).map_err(|error| anyhow::anyhow!(error.message))?;
     let state = ShellState { cwd, config_home };
 
     let app = Router::new()
@@ -212,9 +313,28 @@ async fn main() -> anyhow::Result<()> {
         .route("/app.css", get(app_css))
         .route("/app.js", get(app_js))
         .route("/api/bootstrap", get(get_bootstrap))
+        .route("/api/slash-specs", get(list_slash_specs))
+        .route("/api/tool-manifest", get(get_tool_manifest))
+        .route("/api/slash", post(run_slash_command))
+        .route(
+            "/api/permission",
+            get(get_permission_mode).post(save_permission_mode),
+        )
         .route(
             "/api/provider",
             get(get_provider).post(save_provider).delete(reset_provider),
+        )
+        .route(
+            "/api/provider-profiles",
+            get(list_provider_profiles).post(save_provider_profile),
+        )
+        .route(
+            "/api/provider-profiles/:id/activate",
+            post(activate_provider_profile),
+        )
+        .route(
+            "/api/provider-profiles/:id",
+            axum::routing::delete(delete_provider_profile),
         )
         .route("/api/sessions", get(list_sessions))
         .route("/api/sessions/:id", get(get_session).delete(delete_session))
@@ -261,6 +381,9 @@ async fn get_bootstrap(
 ) -> Result<Json<BootstrapResponse>, ApiError> {
     let config = load_config(&state)?;
     let model = config.model().unwrap_or("gpt-5.4-mini").to_string();
+    let settings = read_settings(&state.cwd)?;
+    let (provider_profiles, active_provider_profile_id) =
+        provider_profile_views(&settings, &provider_view(&config, &model));
     let sync_status = tokio::task::spawn_blocking({
         let cwd = state.cwd.clone();
         move || {
@@ -277,13 +400,15 @@ async fn get_bootstrap(
         cwd: state.cwd.display().to_string(),
         settings_file: shell_settings_path(&state.cwd).display().to_string(),
         model: model.clone(),
-        permission_mode: format!(
-            "{:?}",
+        permission_mode: permission_mode_label(
             config
                 .permission_mode()
-                .unwrap_or(opencowork_runtime::PermissionMode::WorkspaceWrite)
-        ),
+                .unwrap_or(opencowork_runtime::PermissionMode::DangerFullAccess),
+        )
+        .to_string(),
         provider: provider_view(&config, &model),
+        provider_profiles,
+        active_provider_profile_id,
         team_memory_sync: serde_json::to_value(sync_status).map_err(internal_error)?,
         sessions: session_items(&state)?,
         skills: skill_views(&state),
@@ -299,15 +424,125 @@ async fn get_provider(
     Ok(Json(provider_view(&config, &model)))
 }
 
+async fn list_slash_specs() -> Json<Vec<SlashCommandSpecView>> {
+    Json(
+        slash_specs()
+            .iter()
+            .map(|spec| SlashCommandSpecView {
+                name: spec.name.to_string(),
+                summary: spec.summary.to_string(),
+                argument_hint: spec.argument_hint.map(ToOwned::to_owned),
+            })
+            .collect(),
+    )
+}
+
+async fn get_tool_manifest(
+    State(state): State<ShellState>,
+) -> Result<Json<Vec<ToolManifestEntryView>>, ApiError> {
+    let cwd = state.cwd.clone();
+    let mut tools = tokio::task::spawn_blocking(move || {
+        let app = AppRuntime::load(&cwd).map_err(|error| error.to_string())?;
+        let mut items = app
+            .tool_manifest()
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(|(name, description, permission, _schema)| ToolManifestEntryView {
+                source: infer_tool_source(&name).to_string(),
+                permission: permission_mode_label(permission).to_string(),
+                name,
+                description,
+            })
+            .collect::<Vec<_>>();
+        items.sort_by(|left, right| left.name.cmp(&right.name));
+        Ok::<_, String>(items)
+    })
+    .await
+    .map_err(internal_error)?
+    .map_err(ApiError::internal)?;
+    tools.shrink_to_fit();
+    Ok(Json(tools))
+}
+
+async fn run_slash_command(
+    State(state): State<ShellState>,
+    Json(payload): Json<SlashExecuteRequest>,
+) -> Result<Json<SlashExecuteResponse>, ApiError> {
+    let input = payload.input.trim().to_string();
+    let Some(command) = SlashCommand::parse(&input) else {
+        return Err(ApiError::bad_request("slash input must start with `/`"));
+    };
+
+    let cwd = state.cwd.clone();
+    let config_home = state.config_home.clone();
+    let session_id = payload.session_id.clone();
+    let input_for_worker = input.clone();
+    let response = tokio::task::spawn_blocking(move || {
+        let app = AppRuntime::load(&cwd).map_err(|error| error.to_string())?;
+        let store = SessionStore::new(config_home.join("sessions"));
+        let session = session_id
+            .as_deref()
+            .and_then(|id| store.load(id).ok())
+            .unwrap_or_else(Session::new);
+        let title = format!(
+            "/{}",
+            input_for_worker
+                .trim_start_matches('/')
+                .split_whitespace()
+                .next()
+                .unwrap_or("help")
+        );
+        let output = handle_command(&command, &session, app.permission_mode())
+            .unwrap_or_else(|| {
+                format!(
+                    "Unknown slash command: {}\n\n{}",
+                    input_for_worker,
+                    opencowork_commands::render_help()
+                )
+            });
+        Ok::<_, String>(SlashExecuteResponse { title, output })
+    })
+    .await
+    .map_err(internal_error)?
+    .map_err(ApiError::internal)?;
+
+    Ok(Json(response))
+}
+
+async fn get_permission_mode(
+    State(state): State<ShellState>,
+) -> Result<Json<PermissionModeView>, ApiError> {
+    let config = load_config(&state)?;
+    Ok(Json(PermissionModeView {
+        value: permission_mode_label(
+            config
+                .permission_mode()
+                .unwrap_or(opencowork_runtime::PermissionMode::DangerFullAccess),
+        )
+        .to_string(),
+    }))
+}
+
+async fn save_permission_mode(
+    State(state): State<ShellState>,
+    Json(payload): Json<PermissionModeUpdateRequest>,
+) -> Result<Json<PermissionModeView>, ApiError> {
+    let label = normalize_permission_mode_label(&payload.permission_mode)?;
+    let mut settings = read_settings(&state.cwd)?;
+    let root = object_mut(&mut settings);
+    root.insert("permissionMode".to_string(), Value::String(label.to_string()));
+    write_settings(&state.cwd, &settings)?;
+    Ok(Json(PermissionModeView {
+        value: label.to_string(),
+    }))
+}
+
 async fn save_provider(
     State(state): State<ShellState>,
     Json(payload): Json<ProviderUpdateRequest>,
 ) -> Result<Json<ProviderSettingsView>, ApiError> {
     if payload.name.trim().is_empty() {
         return Err(ApiError::bad_request("provider name must not be empty"));
-    }
-    if payload.api_key_env.trim().is_empty() {
-        return Err(ApiError::bad_request("apiKeyEnv must not be empty"));
     }
     if payload.base_url.trim().is_empty() {
         return Err(ApiError::bad_request("baseUrl must not be empty"));
@@ -324,13 +559,29 @@ async fn save_provider(
         root.insert("model".to_string(), Value::String(model.to_string()));
     }
 
+    let api_key_env = payload
+        .api_key_env
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| {
+            let model = payload
+                .model
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("gpt-5.4-mini");
+            default_openai_profile_for_model(model).api_key_env
+        });
+
     let mut provider = Map::new();
     provider.insert(
         "kind".to_string(),
         Value::String("openai-compatible".to_string()),
     );
     provider.insert("name".to_string(), Value::String(payload.name));
-    provider.insert("apiKeyEnv".to_string(), Value::String(payload.api_key_env));
+    provider.insert("apiKeyEnv".to_string(), Value::String(api_key_env.clone()));
     provider.insert("baseUrl".to_string(), Value::String(payload.base_url));
     if let Some(base_url_env) = payload
         .base_url_env
@@ -347,11 +598,167 @@ async fn save_provider(
         provider.insert("timeoutMs".to_string(), Value::Number(timeout_ms.into()));
     }
     root.insert("provider".to_string(), Value::Object(provider));
+    {
+        let shell = shell_mut(root);
+        if let Some(api_key) = payload
+            .api_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            shell.insert(
+                "inlineProviderApiKey".to_string(),
+                Value::String(api_key.to_string()),
+            );
+            shell.insert("inlineProviderApiKeyEnv".to_string(), Value::String(api_key_env));
+        } else {
+            shell.remove("inlineProviderApiKey");
+            shell.remove("inlineProviderApiKeyEnv");
+        }
+    }
     write_settings(&state.cwd, &settings)?;
 
     let config = load_config(&state)?;
     let model = config.model().unwrap_or("gpt-5.4-mini").to_string();
     Ok(Json(provider_view(&config, &model)))
+}
+
+async fn list_provider_profiles(
+    State(state): State<ShellState>,
+) -> Result<Json<Vec<ProviderProfileView>>, ApiError> {
+    let config = load_config(&state)?;
+    let model = config.model().unwrap_or("gpt-5.4-mini").to_string();
+    let settings = read_settings(&state.cwd)?;
+    let (profiles, _) = provider_profile_views(&settings, &provider_view(&config, &model));
+    Ok(Json(profiles))
+}
+
+async fn save_provider_profile(
+    State(state): State<ShellState>,
+    Json(payload): Json<ProviderProfileUpsertRequest>,
+) -> Result<Json<Vec<ProviderProfileView>>, ApiError> {
+    if payload.label.trim().is_empty() {
+        return Err(ApiError::bad_request("provider profile label must not be empty"));
+    }
+    if payload.model.trim().is_empty() {
+        return Err(ApiError::bad_request("provider profile model must not be empty"));
+    }
+    if payload.name.trim().is_empty() {
+        return Err(ApiError::bad_request("provider profile name must not be empty"));
+    }
+    if payload.base_url.trim().is_empty() {
+        return Err(ApiError::bad_request(
+            "provider profile baseUrl must not be empty",
+        ));
+    }
+
+    let api_key_env = payload
+        .api_key_env
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| default_openai_profile_for_model(payload.model.trim()).api_key_env);
+
+    let mut settings = read_settings(&state.cwd)?;
+    let (mut profiles, active_id) = read_provider_profiles(&settings);
+    let requested_id = payload
+        .id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let next_id = requested_id.unwrap_or_else(|| unique_provider_profile_id(&profiles, &payload.label));
+    let mut record = ProviderProfileRecord {
+        id: next_id.clone(),
+        label: payload.label.trim().to_string(),
+        model: payload.model.trim().to_string(),
+        name: payload.name.trim().to_string(),
+        api_key: payload
+            .api_key
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_string(),
+        api_key_env,
+        base_url: payload.base_url.trim().to_string(),
+        base_url_env: payload
+            .base_url_env
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned),
+        timeout_ms: payload.timeout_ms.unwrap_or(90_000),
+    };
+
+    if let Some(existing) = profiles.iter_mut().find(|profile| profile.id == next_id) {
+        if payload.clear_api_key.unwrap_or(false) {
+            record.api_key.clear();
+        } else if record.api_key.trim().is_empty() {
+            record.api_key = existing.api_key.clone();
+        }
+        *existing = record.clone();
+    } else {
+        if payload.clear_api_key.unwrap_or(false) {
+            record.api_key.clear();
+        }
+        profiles.push(record.clone());
+    }
+
+    let next_active = if payload.activate || profiles.len() == 1 {
+        Some(next_id.clone())
+    } else {
+        active_id
+    };
+    write_provider_profiles(&state.cwd, &mut settings, &profiles, next_active.as_deref())?;
+
+    let config = load_config(&state)?;
+    let model = config.model().unwrap_or("gpt-5.4-mini").to_string();
+    let (views, _) = provider_profile_views(&settings, &provider_view(&config, &model));
+    Ok(Json(views))
+}
+
+async fn activate_provider_profile(
+    State(state): State<ShellState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<Vec<ProviderProfileView>>, ApiError> {
+    let mut settings = read_settings(&state.cwd)?;
+    let (profiles, _) = read_provider_profiles(&settings);
+    if !profiles.iter().any(|profile| profile.id == id) {
+        return Err(ApiError::not_found(format!(
+            "provider profile `{id}` was not found"
+        )));
+    }
+    write_provider_profiles(&state.cwd, &mut settings, &profiles, Some(&id))?;
+    let config = load_config(&state)?;
+    let model = config.model().unwrap_or("gpt-5.4-mini").to_string();
+    let (views, _) = provider_profile_views(&settings, &provider_view(&config, &model));
+    Ok(Json(views))
+}
+
+async fn delete_provider_profile(
+    State(state): State<ShellState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<Vec<ProviderProfileView>>, ApiError> {
+    let mut settings = read_settings(&state.cwd)?;
+    let (mut profiles, active_id) = read_provider_profiles(&settings);
+    let previous_len = profiles.len();
+    profiles.retain(|profile| profile.id != id);
+    if profiles.len() == previous_len {
+        return Err(ApiError::not_found(format!(
+            "provider profile `{id}` was not found"
+        )));
+    }
+    let next_active = if active_id.as_deref() == Some(id.as_str()) {
+        profiles.first().map(|profile| profile.id.as_str())
+    } else {
+        active_id.as_deref()
+    };
+    write_provider_profiles(&state.cwd, &mut settings, &profiles, next_active)?;
+    let config = load_config(&state)?;
+    let model = config.model().unwrap_or("gpt-5.4-mini").to_string();
+    let (views, _) = provider_profile_views(&settings, &provider_view(&config, &model));
+    Ok(Json(views))
 }
 
 async fn reset_provider(
@@ -415,6 +822,7 @@ async fn run_chat(
 }
 
 fn run_chat_blocking(state: ShellState, payload: ChatRequest) -> Result<ChatResponse, String> {
+    apply_shell_api_key_override(&state.cwd)?;
     let app = AppRuntime::load(&state.cwd).map_err(|error| error.to_string())?;
     let model = payload.model.unwrap_or_else(|| app.model().to_string());
     let store = SessionStore::new(state.config_home.join("sessions"));
@@ -445,6 +853,45 @@ fn run_chat_blocking(state: ShellState, payload: ChatRequest) -> Result<ChatResp
         estimated_prompt_tokens: execution.prompt.estimated_tokens,
         compacted: execution.prompt.compacted,
     })
+}
+
+fn apply_shell_api_key_override(cwd: &Path) -> Result<(), String> {
+    let settings = read_settings(cwd).map_err(|error| error.message)?;
+    let (profiles, active_id) = read_provider_profiles(&settings);
+    let active_profile = active_id
+        .as_deref()
+        .and_then(|id| profiles.iter().find(|profile| profile.id == id))
+        .or_else(|| profiles.first());
+
+    if let Some(profile) = active_profile {
+        // SAFETY: this local shell config bridges a stored API key into the env-var based runtime.
+        unsafe {
+            if profile.api_key.trim().is_empty() {
+                env::remove_var(&profile.api_key_env);
+            } else {
+                env::set_var(&profile.api_key_env, &profile.api_key);
+            }
+        }
+        return Ok(());
+    }
+
+    let shell = settings.get("shell").and_then(Value::as_object);
+    let inline_api_key = shell
+        .and_then(|object| object.get("inlineProviderApiKey"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let inline_api_key_env = shell
+        .and_then(|object| object.get("inlineProviderApiKeyEnv"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let (Some(api_key), Some(api_key_env)) = (inline_api_key, inline_api_key_env) {
+        unsafe {
+            env::set_var(api_key_env, api_key);
+        }
+    }
+    Ok(())
 }
 
 async fn list_skills(State(state): State<ShellState>) -> Result<Json<Vec<SkillView>>, ApiError> {
@@ -612,6 +1059,7 @@ fn provider_view(config: &opencowork_runtime::RuntimeConfig, model: &str) -> Pro
         return ProviderSettingsView {
             model: model.to_string(),
             name: provider.name().to_string(),
+            api_key: String::new(),
             api_key_env: provider.api_key_env().to_string(),
             base_url: provider.base_url().to_string(),
             base_url_env: provider.base_url_env().map(ToOwned::to_owned),
@@ -624,6 +1072,7 @@ fn provider_view(config: &opencowork_runtime::RuntimeConfig, model: &str) -> Pro
     ProviderSettingsView {
         model: model.to_string(),
         name: profile.provider_name,
+        api_key: String::new(),
         api_key_env: profile.api_key_env,
         base_url,
         base_url_env: profile.base_url_env,
@@ -632,18 +1081,301 @@ fn provider_view(config: &opencowork_runtime::RuntimeConfig, model: &str) -> Pro
     }
 }
 
+fn permission_mode_label(mode: opencowork_runtime::PermissionMode) -> &'static str {
+    match mode {
+        opencowork_runtime::PermissionMode::ReadOnly => "read-only",
+        opencowork_runtime::PermissionMode::WorkspaceWrite => "workspace-write",
+        opencowork_runtime::PermissionMode::DangerFullAccess => "danger-full-access",
+    }
+}
+
+fn infer_tool_source(name: &str) -> &'static str {
+    if name.eq_ignore_ascii_case("skill") {
+        "skill"
+    } else if name.eq_ignore_ascii_case("toolsearch") {
+        "discovery"
+    } else if name.starts_with("mcp__") {
+        "mcp"
+    } else if name.starts_with("plugin__") {
+        "plugin"
+    } else {
+        "builtin"
+    }
+}
+
+fn normalize_permission_mode_label(value: &str) -> Result<&'static str, ApiError> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "read-only" | "readonly" | "default" | "plan" => Ok("read-only"),
+        "workspace-write" | "workspace" | "workspacewrite" | "ask" => Ok("workspace-write"),
+        "danger-full-access" | "danger" | "dangerfullaccess" | "allow-all" | "allowall" => {
+            Ok("danger-full-access")
+        }
+        other => Err(ApiError::bad_request(format!(
+            "unsupported permission mode `{other}`"
+        ))),
+    }
+}
+
+fn default_provider_profile_record(config: &opencowork_runtime::RuntimeConfig) -> ProviderProfileRecord {
+    let model = config.model().unwrap_or("gpt-5.4-mini").to_string();
+    let provider = provider_view(config, &model);
+    ProviderProfileRecord {
+        id: "default-provider".to_string(),
+        label: "默认 API".to_string(),
+        model: provider.model,
+        name: provider.name,
+        api_key: provider.api_key,
+        api_key_env: provider.api_key_env,
+        base_url: provider.base_url,
+        base_url_env: provider.base_url_env,
+        timeout_ms: provider.timeout_ms,
+    }
+}
+
+fn read_provider_profiles(settings: &Value) -> (Vec<ProviderProfileRecord>, Option<String>) {
+    let shell = settings.get("shell").and_then(Value::as_object);
+    let profiles = shell
+        .and_then(|object| object.get("providerProfiles"))
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| serde_json::from_value::<ProviderProfileRecord>(entry.clone()).ok())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let active_id = shell
+        .and_then(|object| object.get("activeProviderProfileId"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    (profiles, active_id)
+}
+
+fn provider_profile_views(
+    settings: &Value,
+    fallback: &ProviderSettingsView,
+) -> (Vec<ProviderProfileView>, Option<String>) {
+    let (mut profiles, mut active_id) = read_provider_profiles(settings);
+    if profiles.is_empty() {
+        profiles.push(ProviderProfileRecord {
+            id: "default-provider".to_string(),
+            label: "默认 API".to_string(),
+            model: fallback.model.clone(),
+            name: fallback.name.clone(),
+            api_key: fallback.api_key.clone(),
+            api_key_env: fallback.api_key_env.clone(),
+            base_url: fallback.base_url.clone(),
+            base_url_env: fallback.base_url_env.clone(),
+            timeout_ms: fallback.timeout_ms,
+        });
+        active_id = Some("default-provider".to_string());
+    }
+    if active_id.is_none() {
+        active_id = profiles.first().map(|profile| profile.id.clone());
+    }
+    let active_ref = active_id.as_deref();
+    (
+        profiles
+            .into_iter()
+            .map(|profile| ProviderProfileView {
+                active: active_ref == Some(profile.id.as_str()),
+                id: profile.id,
+                label: profile.label,
+                model: profile.model,
+                name: profile.name,
+                api_key: String::new(),
+                has_api_key: !profile.api_key.trim().is_empty(),
+                api_key_env: profile.api_key_env,
+                base_url: profile.base_url,
+                base_url_env: profile.base_url_env,
+                timeout_ms: profile.timeout_ms,
+            })
+            .collect(),
+        active_id,
+    )
+}
+
+fn unique_provider_profile_id(profiles: &[ProviderProfileRecord], label: &str) -> String {
+    let base = slugify(label);
+    let mut candidate = base.clone();
+    let mut index = 2usize;
+    while profiles.iter().any(|profile| profile.id == candidate) {
+        candidate = format!("{base}-{index}");
+        index += 1;
+    }
+    candidate
+}
+
+fn apply_provider_profile(root: &mut Map<String, Value>, profile: &ProviderProfileRecord) {
+    root.insert("model".to_string(), Value::String(profile.model.clone()));
+    let mut provider = Map::new();
+    provider.insert(
+        "kind".to_string(),
+        Value::String("openai-compatible".to_string()),
+    );
+    provider.insert("name".to_string(), Value::String(profile.name.clone()));
+    provider.insert(
+        "apiKeyEnv".to_string(),
+        Value::String(profile.api_key_env.clone()),
+    );
+    provider.insert("baseUrl".to_string(), Value::String(profile.base_url.clone()));
+    if let Some(base_url_env) = &profile.base_url_env {
+        provider.insert("baseUrlEnv".to_string(), Value::String(base_url_env.clone()));
+    }
+    provider.insert(
+        "timeoutMs".to_string(),
+        Value::Number(profile.timeout_ms.into()),
+    );
+    root.insert("provider".to_string(), Value::Object(provider));
+}
+
+fn write_provider_profiles(
+    cwd: &Path,
+    settings: &mut Value,
+    profiles: &[ProviderProfileRecord],
+    active_id: Option<&str>,
+) -> Result<(), ApiError> {
+    let root = object_mut(settings);
+    {
+        let shell = shell_mut(root);
+        shell.insert(
+            "providerProfiles".to_string(),
+            serde_json::to_value(profiles).map_err(internal_error)?,
+        );
+        match active_id {
+            Some(value) => {
+                shell.insert(
+                    "activeProviderProfileId".to_string(),
+                    Value::String(value.to_string()),
+                );
+            }
+            None => {
+                shell.remove("activeProviderProfileId");
+            }
+        }
+    }
+
+    if let Some(active_id) = active_id {
+        if let Some(profile) = profiles.iter().find(|profile| profile.id == active_id) {
+            apply_provider_profile(root, profile);
+        }
+    } else {
+        root.remove("provider");
+        root.remove("model");
+    }
+
+    write_settings(cwd, settings)
+}
+
 fn session_items(state: &ShellState) -> Result<Vec<SessionListItem>, ApiError> {
     let store = SessionStore::new(state.config_home.join("sessions"));
     Ok(store
         .list()
         .map_err(internal_error)?
         .into_iter()
-        .map(|descriptor| SessionListItem {
-            id: descriptor.id,
-            message_count: descriptor.message_count,
-            updated_at_unix_ms: descriptor.updated_at_unix_ms,
+        .map(|descriptor| {
+            let session = store.load(&descriptor.id).ok();
+            let title = session
+                .as_ref()
+                .map(|session| derive_session_title(session, &descriptor.id))
+                .unwrap_or_else(|| descriptor.id.clone());
+            let preview = session
+                .as_ref()
+                .and_then(derive_session_preview)
+                .filter(|value| !value.eq_ignore_ascii_case(&title));
+            SessionListItem {
+                id: descriptor.id,
+                title,
+                preview,
+                message_count: descriptor.message_count,
+                updated_at_unix_ms: descriptor.updated_at_unix_ms,
+            }
         })
         .collect())
+}
+
+fn derive_session_title(session: &Session, fallback_id: &str) -> String {
+    extract_session_memory_section_line(
+        session.current_session_memory.as_deref(),
+        "Session Title",
+        72,
+    )
+    .or_else(|| first_message_text(session, MessageRole::User, 72))
+    .or_else(|| first_message_text(session, MessageRole::Assistant, 72))
+    .unwrap_or_else(|| fallback_id.to_string())
+}
+
+fn derive_session_preview(session: &Session) -> Option<String> {
+    extract_session_memory_section_line(
+        session.current_session_memory.as_deref(),
+        "Current State",
+        160,
+    )
+    .or_else(|| latest_message_text(session, MessageRole::Assistant, 160))
+    .or_else(|| latest_message_text(session, MessageRole::User, 160))
+}
+
+fn extract_session_memory_section_line(
+    session_memory: Option<&str>,
+    heading: &str,
+    max_chars: usize,
+) -> Option<String> {
+    let content = session_memory?;
+    let target = format!("# {heading}");
+    let mut in_target = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            if in_target {
+                break;
+            }
+            in_target = trimmed.eq_ignore_ascii_case(&target);
+            continue;
+        }
+        if !in_target || trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with('_') && trimmed.ends_with('_') {
+            continue;
+        }
+        return sanitize_session_line(trimmed, max_chars);
+    }
+    None
+}
+
+fn first_message_text(session: &Session, role: MessageRole, max_chars: usize) -> Option<String> {
+    session
+        .messages
+        .iter()
+        .find(|message| message.role == role)
+        .and_then(ConversationMessage::first_text)
+        .and_then(|text| sanitize_session_line(text, max_chars))
+}
+
+fn latest_message_text(session: &Session, role: MessageRole, max_chars: usize) -> Option<String> {
+    session
+        .messages
+        .iter()
+        .rev()
+        .find(|message| message.role == role)
+        .and_then(ConversationMessage::first_text)
+        .and_then(|text| sanitize_session_line(text, max_chars))
+}
+
+fn sanitize_session_line(value: &str, max_chars: usize) -> Option<String> {
+    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        return None;
+    }
+    let mut truncated = String::new();
+    for (index, ch) in normalized.chars().enumerate() {
+        if index >= max_chars {
+            truncated.push_str("...");
+            return Some(truncated);
+        }
+        truncated.push(ch);
+    }
+    Some(truncated)
 }
 
 fn skill_views(state: &ShellState) -> Vec<SkillView> {
@@ -795,6 +1527,75 @@ fn object_mut(value: &mut Value) -> &mut Map<String, Value> {
         *value = Value::Object(Map::new());
     }
     value.as_object_mut().expect("object")
+}
+
+fn shell_mut(root: &mut Map<String, Value>) -> &mut Map<String, Value> {
+    let entry = root
+        .entry("shell".to_string())
+        .or_insert_with(|| Value::Object(Map::new()));
+    object_mut(entry)
+}
+
+fn ensure_shell_defaults(cwd: &Path) -> Result<(), ApiError> {
+    let config = ConfigLoader::default_for(cwd)
+        .load()
+        .map_err(internal_error)?;
+    let default_profile = default_provider_profile_record(&config);
+    let mut settings = read_settings(cwd)?;
+    let (mut profiles, mut active_id) = read_provider_profiles(&settings);
+    let mut changed = false;
+
+    {
+        let root = object_mut(&mut settings);
+        if !root.contains_key("permissionMode") {
+            root.insert(
+                "permissionMode".to_string(),
+                Value::String("danger-full-access".to_string()),
+            );
+            changed = true;
+        }
+    }
+
+    if profiles.is_empty() {
+        profiles.push(default_profile.clone());
+        active_id = Some(default_profile.id.clone());
+        changed = true;
+    } else if active_id.is_none() {
+        active_id = profiles.first().map(|profile| profile.id.clone());
+        changed = true;
+    }
+
+    for profile in &mut profiles {
+        if profile.api_key.trim().is_empty() && looks_like_inline_api_key(&profile.api_key_env) {
+            profile.api_key = profile.api_key_env.trim().to_string();
+            profile.api_key_env = default_openai_profile_for_model(&profile.model).api_key_env;
+            changed = true;
+        }
+    }
+
+    if changed {
+        write_provider_profiles(cwd, &mut settings, &profiles, active_id.as_deref())?;
+    }
+
+    Ok(())
+}
+
+fn looks_like_inline_api_key(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if trimmed.starts_with("sk-")
+        || trimmed.starts_with("xai-")
+        || trimmed.starts_with("rk-")
+        || trimmed.starts_with("sess-")
+    {
+        return true;
+    }
+    let env_like = trimmed
+        .chars()
+        .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_');
+    !env_like && trimmed.len() >= 24
 }
 
 fn parse_transport(value: &str) -> Result<McpTransport, ApiError> {

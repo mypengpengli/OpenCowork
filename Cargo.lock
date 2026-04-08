@@ -1814,6 +1814,7 @@ dependencies = [
  "axum",
  "opencowork-api",
  "opencowork-app",
+ "opencowork-commands",
  "opencowork-mcp",
  "opencowork-runtime",
  "opencowork-skills",

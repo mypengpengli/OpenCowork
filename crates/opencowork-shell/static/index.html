@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -17,27 +17,33 @@
           </button>
 
           <div class="brand-block">
-            <p class="brand-kicker">OpenCoWork Agent</p>
+            <p class="brand-kicker" data-i18n="brand.kicker">OpenCoWork 智能体</p>
             <h1 class="brand-name">OpenClaw</h1>
           </div>
 
           <button id="new-session-button" class="primary-button sidebar-new-button" type="button">
             <span class="sidebar-button-icon">+</span>
-            <span class="sidebar-button-label">New Session</span>
+            <span class="sidebar-button-label" data-i18n="sidebar.newSession">新建会话</span>
           </button>
         </div>
 
         <section class="sidebar-section">
           <div class="sidebar-section-header">
-            <span class="sidebar-section-title">Conversations</span>
-            <button id="reload-sessions-button" class="icon-button" type="button" aria-label="Refresh sessions">
-              ↻
+            <span class="sidebar-section-title" data-i18n="sidebar.conversations">会话列表</span>
+            <button
+              id="reload-sessions-button"
+              class="icon-button"
+              type="button"
+              aria-label="Refresh sessions"
+              data-i18n-title="sidebar.refresh"
+            >
+              &#8635;
             </button>
           </div>
 
           <label class="sidebar-search">
-            <span class="sr-only">Search sessions</span>
-            <input id="session-search" type="search" placeholder="Search session id" />
+            <span class="sr-only" data-i18n="sidebar.search">搜索会话</span>
+            <input id="session-search" type="search" data-i18n-placeholder="sidebar.searchPlaceholder" placeholder="搜索会话编号" />
           </label>
 
           <div id="session-list" class="session-list"></div>
@@ -45,16 +51,20 @@
 
         <div class="sidebar-footer">
           <button id="nav-chat-button" class="sidebar-nav-button is-active" type="button" data-view="chat">
-            <span class="sidebar-button-icon">●</span>
-            <span class="sidebar-button-label">Workspace</span>
+            <span class="sidebar-button-icon">&#9679;</span>
+            <span class="sidebar-button-label" data-i18n="menu.chat">对话</span>
           </button>
           <button id="nav-history-button" class="sidebar-nav-button" type="button" data-view="history">
-            <span class="sidebar-button-icon">◷</span>
-            <span class="sidebar-button-label">Sessions</span>
+            <span class="sidebar-button-icon">&#9719;</span>
+            <span class="sidebar-button-label" data-i18n="menu.history">会话</span>
           </button>
           <button id="nav-settings-button" class="sidebar-nav-button" type="button" data-view="settings">
-            <span class="sidebar-button-icon">⚙</span>
-            <span class="sidebar-button-label">Settings</span>
+            <span class="sidebar-button-icon">&#9881;</span>
+            <span class="sidebar-button-label" data-i18n="menu.settings">设置</span>
+          </button>
+          <button id="locale-toggle-button" class="sidebar-nav-button" type="button">
+            <span id="locale-toggle-icon" class="sidebar-button-icon">EN</span>
+            <span id="locale-toggle-label" class="sidebar-button-label">English</span>
           </button>
         </div>
       </aside>
@@ -62,138 +72,222 @@
       <section class="content-shell">
         <section id="chat-view" class="page-view">
           <header class="status-bar">
-            <div class="status-group">
+            <div class="status-group status-group--left">
               <span id="runtime-model" class="status-tag">model</span>
               <span id="runtime-permission" class="status-tag">permission</span>
               <span id="provider-persisted" class="status-tag">provider</span>
             </div>
-            <div class="status-group">
+            <div class="status-group status-group--center">
+              <button id="session-overview-launch-button" class="status-tag utility-launch-button" type="button">
+                当前会话摘要
+              </button>
+            </div>
+            <div class="status-group status-group--right">
               <span id="team-memory-state" class="status-tag">team memory</span>
               <span id="session-updated-chip" class="status-tag">updated</span>
+              <button id="utility-launch-button" class="status-tag utility-launch-button" type="button">
+                运行辅助
+              </button>
             </div>
           </header>
 
           <section class="chat-stage">
             <div class="chat-scroll" id="message-list-shell">
               <div id="chat-empty-state" class="empty-state-shell">
-                <div class="empty-state-mark">◎</div>
-                <h2>OpenClaw</h2>
-                <p class="empty-state-copy">
-                  Continue on the existing runtime with a cleaner desktop shell. Context handling,
-                  memory, tools and sessions remain in the backend.
+                <div class="empty-state-mark">OC</div>
+                <h2 data-i18n="empty.title">OpenClaw</h2>
+                <p class="empty-state-copy" data-i18n="empty.copy">
+                  在不改后端运行时的前提下，用更清爽的工作台外壳继续处理上下文、记忆、工具和会话。
                 </p>
                 <div class="empty-state-examples">
-                  <div class="example-pill">Inspect the workspace and summarize the current runtime.</div>
-                  <div class="example-pill">Adjust provider settings without touching the loop.</div>
-                  <div class="example-pill">Create or update a local skill for this project.</div>
+                  <button class="example-pill" type="button" data-prompt-key="empty.example1" data-i18n="empty.example1">
+                    查看当前工作区，并总结运行时状态。
+                  </button>
+                  <button class="example-pill" type="button" data-prompt-key="empty.example2" data-i18n="empty.example2">
+                    调整 API / Provider 设置，但不要改主循环。
+                  </button>
+                  <button class="example-pill" type="button" data-prompt-key="empty.example3" data-i18n="empty.example3">
+                    为当前项目创建或更新本地 Skill。
+                  </button>
                 </div>
               </div>
 
+              <section id="session-overview-drawer" class="chat-drawer chat-drawer--overview is-collapsed">
+                <div class="chat-drawer-header">
+                  <div>
+                    <p class="banner-kicker" data-i18n="session.drawerKicker">会话概览</p>
+                    <h3 data-i18n="session.drawerTitle">当前会话摘要</h3>
+                  </div>
+                  <div class="pane-header-actions">
+                    <span id="session-overview-meta" class="status-tag">-</span>
+                    <button id="session-overview-toggle" class="inline-ghost pane-toggle-button" type="button" data-i18n="common.expand">
+                      展开
+                    </button>
+                  </div>
+                </div>
+                <div id="session-overview-content" class="chat-drawer-content is-hidden">
               <section id="session-banner" class="session-banner">
                 <div>
-                  <p class="banner-kicker">Session</p>
-                  <h2 id="chat-title">OpenClaw Session</h2>
+                  <p class="banner-kicker" data-i18n="session.kicker">当前会话</p>
+                  <h2 id="chat-title">OpenClaw 会话</h2>
                   <p id="chat-subtitle" class="banner-copy">
-                    Keep working on the current session from the existing runtime.
+                    继续处理当前后端会话。
                   </p>
                 </div>
                 <div class="banner-meta">
-                  <span id="current-session-chip" class="status-tag">No active session</span>
+                  <span id="current-session-chip" class="status-tag">暂无活动会话</span>
+                  <div class="banner-actions">
+                    <button id="session-copy-id-button" class="ghost-button" type="button" data-i18n="session.copyId">
+                      复制会话号
+                    </button>
+                    <button id="session-new-button" class="ghost-button" type="button" data-i18n="session.new">
+                      新建空白会话
+                    </button>
+                  </div>
                 </div>
               </section>
 
               <section id="metrics-grid" class="metrics-grid">
                 <article class="metric-card">
-                  <span class="metric-label">Messages</span>
+                  <span class="metric-label" data-i18n="metric.messages">消息数</span>
                   <strong id="summary-messages" class="metric-value">0</strong>
                 </article>
                 <article class="metric-card">
-                  <span class="metric-label">Tool Blocks</span>
+                  <span class="metric-label" data-i18n="metric.tools">工具块</span>
                   <strong id="summary-tools" class="metric-value">0</strong>
                 </article>
                 <article class="metric-card">
-                  <span class="metric-label">Session Tokens</span>
+                  <span class="metric-label" data-i18n="metric.tokens">会话 Tokens</span>
                   <strong id="summary-tokens" class="metric-value">0</strong>
                 </article>
                 <article class="metric-card">
-                  <span class="metric-label">Memory</span>
-                  <strong id="summary-memory" class="metric-value metric-value--small">Not loaded</strong>
+                  <span class="metric-label" data-i18n="metric.memory">记忆</span>
+                  <strong id="summary-memory" class="metric-value metric-value--small">未加载</strong>
                 </article>
+              </section>
+
+                </div>
               </section>
 
               <section id="message-toolbar" class="message-toolbar">
                 <div class="toolbar-title">
-                  <span>Conversation</span>
+                  <span data-i18n="conversation.title">对话</span>
                   <span id="message-count" class="toolbar-count">0</span>
                 </div>
-                <button id="expand-all-button" class="ghost-button" type="button">Expand All</button>
+                <button id="expand-all-button" class="ghost-button" type="button" data-i18n="conversation.expandAll">全部展开</button>
               </section>
 
               <div id="message-list" class="message-list"></div>
             </div>
 
-            <aside class="activity-pane">
-              <section class="pane-card">
-                <div class="pane-header">
-                  <h3>Workspace</h3>
-                  <span id="session-meta" class="status-tag">0 visible</span>
+            <section id="utility-drawer" class="chat-drawer chat-drawer--utility is-collapsed">
+              <div class="chat-drawer-header">
+                <div>
+                  <p class="banner-kicker" data-i18n="utility.kicker">运行辅助</p>
+                  <h3 data-i18n="utility.title">工作区与活动</h3>
                 </div>
-                <dl class="meta-list">
-                  <div>
-                    <dt>Path</dt>
-                    <dd id="workspace-cwd">-</dd>
+                <div class="pane-header-actions">
+                  <span id="utility-drawer-meta" class="status-tag">-</span>
+                  <button id="utility-drawer-toggle" class="inline-ghost pane-toggle-button" type="button" data-i18n="common.expand">
+                    展开
+                  </button>
+                </div>
+              </div>
+              <div id="utility-drawer-content" class="chat-drawer-content is-hidden">
+            <aside class="activity-pane">
+              <section id="workspace-pane-card" class="pane-card is-collapsed">
+                <div class="pane-header">
+                  <h3 data-i18n="workspace.title">工作区</h3>
+                  <div class="pane-header-actions">
+                    <span id="session-meta" class="status-tag">0 visible</span>
+                    <button id="workspace-pane-toggle" class="inline-ghost pane-toggle-button" type="button">展开</button>
                   </div>
-                  <div>
-                    <dt>Settings</dt>
-                    <dd id="workspace-settings">-</dd>
-                  </div>
-                  <div>
-                    <dt>Team Sync</dt>
-                    <dd id="team-memory-detail">No activity</dd>
-                  </div>
-                </dl>
+                </div>
+                <div id="workspace-pane-content" class="pane-content is-hidden">
+                  <dl class="meta-list">
+                    <div>
+                      <dt data-i18n="workspace.path">路径</dt>
+                      <dd id="workspace-cwd">-</dd>
+                    </div>
+                    <div>
+                      <dt data-i18n="workspace.settings">配置</dt>
+                      <dd id="workspace-settings">-</dd>
+                    </div>
+                    <div>
+                      <dt data-i18n="workspace.teamSync">团队记忆同步</dt>
+                      <dd id="team-memory-detail">暂无活动</dd>
+                    </div>
+                  </dl>
+                </div>
               </section>
 
-              <section class="pane-card">
+              <section id="activity-pane-card" class="pane-card is-collapsed">
                 <div class="pane-header">
-                  <h3>Turn Activity</h3>
-                  <span id="event-count" class="status-tag">0</span>
+                  <h3 data-i18n="activity.title">本轮活动</h3>
+                  <div class="pane-header-actions">
+                    <span id="event-count" class="status-tag">0</span>
+                    <button id="activity-pane-toggle" class="inline-ghost pane-toggle-button" type="button">展开</button>
+                  </div>
                 </div>
 
-                <div class="turn-stats-grid">
-                  <article class="turn-stat-card">
-                    <span class="metric-label">Iterations</span>
-                    <strong id="turn-iterations" class="metric-value">-</strong>
-                  </article>
-                  <article class="turn-stat-card">
-                    <span class="metric-label">Prompt</span>
-                    <strong id="turn-prompt-tokens" class="metric-value">-</strong>
-                  </article>
-                  <article class="turn-stat-card">
-                    <span class="metric-label">Compacted</span>
-                    <strong id="turn-compacted" class="metric-value">-</strong>
-                  </article>
-                  <article class="turn-stat-card">
-                    <span class="metric-label">Events</span>
-                    <strong id="turn-event-total" class="metric-value">0</strong>
-                  </article>
-                </div>
+                <div id="activity-pane-content" class="pane-content is-hidden">
+                  <div class="turn-stats-grid">
+                    <article class="turn-stat-card">
+                      <span class="metric-label" data-i18n="activity.iterations">迭代次数</span>
+                      <strong id="turn-iterations" class="metric-value">-</strong>
+                    </article>
+                    <article class="turn-stat-card">
+                      <span class="metric-label" data-i18n="activity.prompt">提示词预算</span>
+                      <strong id="turn-prompt-tokens" class="metric-value">-</strong>
+                    </article>
+                    <article class="turn-stat-card">
+                      <span class="metric-label" data-i18n="activity.compacted">是否压缩</span>
+                      <strong id="turn-compacted" class="metric-value">-</strong>
+                    </article>
+                    <article class="turn-stat-card">
+                      <span class="metric-label" data-i18n="activity.events">事件数</span>
+                      <strong id="turn-event-total" class="metric-value">0</strong>
+                    </article>
+                  </div>
 
-                <div id="event-list" class="event-list"></div>
+                  <div id="event-list" class="event-list"></div>
+                </div>
               </section>
             </aside>
+              </div>
+            </section>
           </section>
 
           <footer class="composer-shell">
             <form id="composer-form" class="composer-form">
+              <section id="slash-menu" class="slash-menu is-hidden">
+                <div class="slash-menu-header">
+                  <strong data-i18n="slash.title">斜杠命令</strong>
+                  <span id="slash-menu-meta" class="status-tag">/</span>
+                </div>
+                <div id="slash-menu-list" class="slash-menu-list"></div>
+                <div class="slash-menu-footer">
+                  <span class="slash-menu-hint">↑ ↓</span>
+                  <span class="slash-menu-hint">Enter 执行</span>
+                  <span class="slash-menu-hint">Tab 补全</span>
+                  <span class="slash-menu-hint">Esc 关闭</span>
+                </div>
+              </section>
               <textarea
                 id="composer-input"
                 rows="3"
-                placeholder="Continue on the existing runtime. Ctrl + Enter to send."
+                data-i18n-placeholder="composer.placeholder"
+                placeholder="继续使用当前运行时。Ctrl + Enter 发送。"
               ></textarea>
+              <div class="composer-helper-row">
+                <span class="composer-helper-copy" data-i18n="composer.shortcut">Ctrl + Enter 发送，Enter 换行。</span>
+                <button id="clear-input-button" class="ghost-button" type="button" data-i18n="composer.clear">
+                  清空输入
+                </button>
+              </div>
               <div class="composer-actions">
-                <p id="composer-status" class="composer-status">Ready.</p>
-                <button id="send-button" class="primary-button" type="submit">Send</button>
+                <p id="composer-status" class="composer-status">就绪。</p>
+                <button id="send-button" class="primary-button" type="submit" data-i18n="composer.send">发送</button>
               </div>
             </form>
           </footer>
@@ -202,12 +296,16 @@
         <section id="history-view" class="page-view is-hidden">
           <header class="page-header">
             <div>
-              <p class="page-kicker">Sessions</p>
-              <h2>Saved Sessions</h2>
+              <p class="page-kicker" data-i18n="history.kicker">会话记录</p>
+              <h2 data-i18n="history.title">已保存会话</h2>
             </div>
             <div class="page-actions">
-              <button id="history-refresh-button" class="ghost-button" type="button">Refresh</button>
-              <button id="history-new-session-button" class="primary-button" type="button">New Session</button>
+              <label class="collection-search history-search">
+                <input id="history-search" type="search" data-i18n-placeholder="history.searchPlaceholder" placeholder="搜索会话号" />
+              </label>
+              <span id="history-count-chip" class="status-tag">0 / 0</span>
+              <button id="history-refresh-button" class="ghost-button" type="button" data-i18n="common.refresh">刷新</button>
+              <button id="history-new-session-button" class="primary-button" type="button" data-i18n="sidebar.newSession">新建会话</button>
             </div>
           </header>
 
@@ -217,94 +315,160 @@
         <section id="settings-view" class="page-view is-hidden">
           <header class="page-header">
             <div>
-              <p class="page-kicker">Configuration</p>
-              <h2>Settings</h2>
-              <p class="page-copy">
-                Mirror the old OpenCowork layout while keeping this runtime untouched.
+              <p class="page-kicker" data-i18n="settings.kicker">配置中心</p>
+              <h2 data-i18n="settings.title">设置</h2>
+              <p class="page-copy" data-i18n="settings.copy">
+                保留当前运行时逻辑不变，只在外壳层处理界面、配置录入和双语体验。
               </p>
             </div>
             <div class="page-actions">
               <span id="settings-workspace-chip" class="status-tag">workspace</span>
-              <button id="open-provider-drawer-button" class="primary-button" type="button">
-                Edit API
+              <button id="header-new-skill-button" class="ghost-button" type="button" data-i18n="skills.new">
+                新建 Skill
+              </button>
+              <button id="header-new-mcp-button" class="ghost-button" type="button" data-i18n="mcp.new">
+                新建服务
+              </button>
+              <button id="open-provider-drawer-button" class="primary-button" type="button" data-i18n="settings.editApi">
+                编辑 API
               </button>
             </div>
           </header>
 
           <div class="settings-tabs" role="tablist" aria-label="Shell settings">
-            <button class="settings-tab is-active" type="button" data-settings-tab="api">API</button>
-            <button class="settings-tab" type="button" data-settings-tab="skills">Skills</button>
-            <button class="settings-tab" type="button" data-settings-tab="mcp">MCP</button>
+            <button class="settings-tab is-active" type="button" data-settings-tab="provider" data-i18n="settings.tab.provider">
+              Provider
+            </button>
+            <button class="settings-tab" type="button" data-settings-tab="permission" data-i18n="settings.tab.permission">
+              权限
+            </button>
+            <button class="settings-tab" type="button" data-settings-tab="skills" data-i18n="settings.tab.skills">Skills</button>
+            <button class="settings-tab" type="button" data-settings-tab="mcp" data-i18n="settings.tab.mcp">MCP</button>
+            <button class="settings-tab" type="button" data-settings-tab="environment" data-i18n="settings.tab.environment">
+              环境
+            </button>
           </div>
 
-          <section id="settings-api-panel" class="settings-panel">
+          <section class="settings-overview-grid">
+            <button id="overview-provider-card" class="overview-card" type="button">
+              <span class="overview-card-kicker" data-i18n="provider.title">当前 Provider</span>
+              <strong id="overview-provider-value" class="overview-card-value">-</strong>
+              <span id="overview-provider-meta" class="overview-card-meta">-</span>
+            </button>
+            <button id="overview-skills-card" class="overview-card" type="button">
+              <span class="overview-card-kicker" data-i18n="skills.title">Skill 库</span>
+              <strong id="overview-skills-value" class="overview-card-value">0</strong>
+              <span id="overview-skills-meta" class="overview-card-meta">-</span>
+            </button>
+            <button id="overview-mcp-card" class="overview-card" type="button">
+              <span class="overview-card-kicker" data-i18n="mcp.title">MCP 服务</span>
+              <strong id="overview-mcp-value" class="overview-card-value">0</strong>
+              <span id="overview-mcp-meta" class="overview-card-meta">-</span>
+            </button>
+            <button id="overview-locale-card" class="overview-card" type="button">
+              <span class="overview-card-kicker" data-i18n="locale.title">界面语言</span>
+              <strong id="overview-locale-value" class="overview-card-value">中文</strong>
+              <span id="overview-locale-meta" class="overview-card-meta">切换语言</span>
+            </button>
+          </section>
+
+          <section id="settings-provider-panel" class="settings-panel">
+            <header id="provider-profile-header" class="collection-header provider-profile-header">
+              <div>
+                <h3 data-i18n="providerProfiles.title">Provider 配置档</h3>
+                <p class="settings-card-copy" data-i18n="providerProfiles.copy">
+                  可以保存多个 API 提供商配置档，并选择一个作为当前启用项。
+                </p>
+              </div>
+              <div class="collection-toolbar">
+                <span id="provider-profile-count-chip" class="status-tag">0 / 0</span>
+                <button id="new-provider-profile-button" class="primary-button" type="button" data-i18n="providerProfiles.new">
+                  新建 Provider 档
+                </button>
+              </div>
+            </header>
+            <div id="provider-profile-list" class="settings-list"></div>
+          </section>
+
+          <section id="settings-permission-panel" class="settings-panel is-hidden">
             <div class="settings-card-list">
-              <article class="settings-card">
+              <article id="permission-card" class="settings-card">
                 <div class="settings-card-header">
                   <div>
-                    <h3>Current Provider</h3>
-                    <p class="settings-card-copy">
-                      This shell only edits the project provider config. The backend loop stays the same.
+                    <h3 data-i18n="permission.title">工具与编辑权限</h3>
+                    <p class="settings-card-copy" data-i18n="permission.copy">
+                      控制工具调用和文件编辑时的权限策略。默认使用最大权限，减少交互打断。
                     </p>
                   </div>
-                  <button id="api-edit-button" class="ghost-button" type="button">Edit</button>
                 </div>
                 <dl class="meta-list">
                   <div>
-                    <dt>Model</dt>
-                    <dd id="provider-summary-model">-</dd>
-                  </div>
-                  <div>
-                    <dt>Name</dt>
-                    <dd id="provider-summary-name">-</dd>
-                  </div>
-                  <div>
-                    <dt>Base URL</dt>
-                    <dd id="provider-summary-base-url">-</dd>
-                  </div>
-                  <div>
-                    <dt>Timeout</dt>
-                    <dd id="provider-summary-timeout">-</dd>
+                    <dt data-i18n="permission.current">当前模式</dt>
+                    <dd id="permission-summary-value">-</dd>
                   </div>
                 </dl>
+                <div class="drawer-toolbar settings-card-toolbar">
+                  <label class="compact-field">
+                    <span data-i18n="permission.current">当前模式</span>
+                    <select id="permission-mode-select">
+                      <option value="danger-full-access" data-i18n="permission.mode.danger">完全允许</option>
+                      <option value="workspace-write" data-i18n="permission.mode.workspace">运行前确认写入</option>
+                      <option value="read-only" data-i18n="permission.mode.readonly">只读</option>
+                    </select>
+                  </label>
+                  <button id="save-permission-button" class="primary-button" type="button" data-i18n="permission.save">
+                    保存权限模式
+                  </button>
+                </div>
               </article>
 
-              <article class="settings-card">
+              <article id="runtime-card" class="settings-card">
                 <div class="settings-card-header">
                   <div>
-                    <h3>Runtime Snapshot</h3>
-                    <p class="settings-card-copy">Read-only context around the current shell environment.</p>
+                    <h3 data-i18n="runtime.title">运行时快照</h3>
+                    <p class="settings-card-copy" data-i18n="runtime.copy">当前外壳环境的只读概览。</p>
                   </div>
                 </div>
                 <dl class="meta-list">
                   <div>
-                    <dt>Permission</dt>
+                    <dt data-i18n="field.permission">权限模式</dt>
                     <dd id="provider-summary-permission">-</dd>
                   </div>
                   <div>
-                    <dt>Persisted</dt>
+                    <dt data-i18n="field.persisted">持久化</dt>
                     <dd id="provider-summary-persisted">-</dd>
                   </div>
                   <div>
-                    <dt>Sessions</dt>
+                    <dt data-i18n="field.sessions">会话数</dt>
                     <dd id="provider-summary-session-count">0</dd>
                   </div>
                   <div>
-                    <dt>Skills</dt>
+                    <dt data-i18n="field.skills">技能数</dt>
                     <dd id="provider-summary-skill-count">0</dd>
                   </div>
                 </dl>
               </article>
+
             </div>
           </section>
 
           <section id="settings-skills-panel" class="settings-panel is-hidden">
             <header class="collection-header">
               <div>
-                <h3>Skill Library</h3>
-                <p class="settings-card-copy">Project skills are editable. Skills from other roots stay read-only.</p>
+                <h3 data-i18n="skills.title">Skill 库</h3>
+                <p class="settings-card-copy" data-i18n="skills.copy">项目级 Skill 可编辑，来自其他根目录的 Skill 保持只读。</p>
               </div>
-              <button id="new-skill-button" class="primary-button" type="button">New Skill</button>
+              <div class="collection-toolbar">
+                <label class="collection-search">
+                  <input id="skill-search" type="search" data-i18n-placeholder="skills.searchPlaceholder" placeholder="搜索 Skill 名称或描述" />
+                </label>
+                <label class="toggle-chip">
+                  <input id="skill-project-only" type="checkbox" />
+                  <span data-i18n="skills.projectOnly">只看项目级 Skill</span>
+                </label>
+                <span id="skill-count-chip" class="status-tag">0 / 0</span>
+                <button id="new-skill-button" class="primary-button" type="button" data-i18n="skills.new">新建 Skill</button>
+              </div>
             </header>
             <div id="skill-list" class="settings-list"></div>
           </section>
@@ -312,12 +476,68 @@
           <section id="settings-mcp-panel" class="settings-panel is-hidden">
             <header class="collection-header">
               <div>
-                <h3>MCP Servers</h3>
-                <p class="settings-card-copy">Manage shell-side MCP entries without changing runtime internals.</p>
+                <h3 data-i18n="mcp.title">MCP 服务</h3>
+                <p class="settings-card-copy" data-i18n="mcp.copy">管理壳层侧的 MCP 配置，不改运行时内部逻辑。</p>
               </div>
-              <button id="new-mcp-button" class="primary-button" type="button">New Server</button>
+              <div class="collection-toolbar">
+                <label class="collection-search">
+                  <input id="mcp-search" type="search" data-i18n-placeholder="mcp.searchPlaceholder" placeholder="搜索 MCP 名称、命令或地址" />
+                </label>
+                <span id="mcp-count-chip" class="status-tag">0 / 0</span>
+                <button id="new-mcp-button" class="primary-button" type="button" data-i18n="mcp.new">新建服务</button>
+              </div>
             </header>
             <div id="mcp-list" class="settings-list"></div>
+          </section>
+
+          <section id="settings-environment-panel" class="settings-panel is-hidden">
+            <div class="settings-card-list">
+              <article id="locale-card" class="settings-card">
+                <div class="settings-card-header">
+                  <div>
+                    <h3 data-i18n="locale.title">界面语言</h3>
+                    <p class="settings-card-copy" data-i18n="locale.copy">默认中文，可在中英文之间快速切换。</p>
+                  </div>
+                  <button id="locale-card-button" class="ghost-button" type="button" data-i18n="locale.switch">切换语言</button>
+                </div>
+                <dl class="meta-list">
+                  <div>
+                    <dt data-i18n="locale.current">当前语言</dt>
+                    <dd id="locale-current-value">中文</dd>
+                  </div>
+                </dl>
+              </article>
+
+              <article id="paths-card" class="settings-card settings-card--wide">
+                <div class="settings-card-header">
+                  <div>
+                    <h3 data-i18n="settings.pathsTitle">项目路径</h3>
+                    <p class="settings-card-copy" data-i18n="settings.pathsCopy">把最常用的配置和 Skills 路径直接放到这里，避免来回找文件。</p>
+                  </div>
+                </div>
+                <dl class="meta-list">
+                  <div>
+                    <dt data-i18n="settings.configPath">配置文件</dt>
+                    <dd id="settings-file-path">-</dd>
+                  </div>
+                  <div>
+                    <dt data-i18n="settings.skillsPath">Skills 目录</dt>
+                    <dd id="skills-dir-path">-</dd>
+                  </div>
+                </dl>
+                <div class="page-actions settings-card-actions">
+                  <button id="copy-settings-path-button" class="ghost-button" type="button" data-i18n="settings.copyConfigPath">
+                    复制配置路径
+                  </button>
+                  <button id="copy-skills-dir-button" class="ghost-button" type="button" data-i18n="settings.copySkillsDir">
+                    复制 Skills 路径
+                  </button>
+                  <button id="settings-new-skill-button" class="ghost-button" type="button" data-i18n="settings.newSkillShortcut">
+                    新建 Skill
+                  </button>
+                </div>
+              </article>
+            </div>
           </section>
         </section>
       </section>
@@ -327,119 +547,224 @@
     <aside id="settings-drawer" class="settings-drawer is-hidden" aria-hidden="true">
       <div class="drawer-header">
         <div>
-          <p class="page-kicker">Editor</p>
-          <h2 id="drawer-title">Edit Provider</h2>
+          <p class="page-kicker" data-i18n="drawer.kicker">编辑器</p>
+          <h2 id="drawer-title">编辑 Provider</h2>
         </div>
-        <button id="close-drawer-button" class="icon-button" type="button" aria-label="Close drawer">×</button>
+        <button id="close-drawer-button" class="icon-button" type="button" aria-label="Close drawer" data-i18n-title="common.close">&#10005;</button>
       </div>
 
-      <p id="drawer-status" class="drawer-status">Ready.</p>
+      <p id="drawer-status" class="drawer-status">就绪。</p>
 
       <section id="drawer-provider-panel" class="drawer-panel">
+        <p id="provider-profile-state" class="drawer-note">创建新的 Provider 配置档。</p>
+        <p id="provider-form-note" class="drawer-note">保存的是 Provider 配置档；勾选启用后，当前项目运行时会切换到这个档位。</p>
         <form id="provider-form" class="drawer-form">
           <label>
-            <span>Model</span>
-            <input id="provider-model" name="model" type="text" />
+            <span data-i18n="providerProfiles.label">配置档名称</span>
+            <input
+              id="provider-profile-label"
+              name="profileLabel"
+              type="text"
+              data-i18n-placeholder="providerProfiles.labelPlaceholder"
+              placeholder="OpenAI 默认"
+            />
+            <small class="field-hint" data-i18n="providerProfiles.labelHint">用来区分不同 API 提供商和环境，推荐写清用途。</small>
           </label>
           <label>
-            <span>Provider Label</span>
-            <input id="provider-name" name="name" type="text" />
+            <span data-i18n="field.model">模型</span>
+            <input
+              id="provider-model"
+              name="model"
+              type="text"
+              data-i18n-placeholder="provider.modelPlaceholder"
+              placeholder="claude-sonnet-4-5"
+            />
+            <small class="field-hint" data-i18n="provider.modelHint">直接用于当前壳层发起的会话请求，不改后端主循环默认值。</small>
           </label>
           <label>
-            <span>API Key Env</span>
-            <input id="provider-api-key-env" name="apiKeyEnv" type="text" />
+            <span data-i18n="provider.label">Provider 标签</span>
+            <input
+              id="provider-name"
+              name="name"
+              type="text"
+              data-i18n-placeholder="provider.namePlaceholder"
+              placeholder="openai-compatible"
+            />
+            <small class="field-hint" data-i18n="provider.nameHint">用来区分供应商或路由，不会改底层运行时结构。</small>
           </label>
           <label>
-            <span>Base URL</span>
-            <input id="provider-base-url" name="baseUrl" type="text" />
+            <span data-i18n="provider.apiKey">API Key</span>
+            <div class="secure-input-row">
+              <input
+                id="provider-api-key"
+                name="apiKey"
+                type="password"
+                autocomplete="off"
+                data-i18n-placeholder="provider.apiKeyPlaceholder"
+                placeholder="sk-..."
+              />
+              <button id="provider-api-key-visibility-button" class="ghost-button" type="button" data-i18n="provider.apiKeyReveal">
+                显示
+              </button>
+            </div>
+            <small class="field-hint" data-i18n="provider.apiKeyHint">直接填入可用的 API Key；壳层会在请求前自动接到运行环境里。</small>
+            <small id="provider-api-key-status" class="field-hint"></small>
+          </label>
+          <label id="provider-clear-api-key-row" class="toggle-chip toggle-chip--inline is-hidden">
+            <input id="provider-clear-api-key" type="checkbox" />
+            <span data-i18n="provider.apiKeyClear">保存时清空当前 API Key</span>
           </label>
           <label>
-            <span>Base URL Env</span>
-            <input id="provider-base-url-env" name="baseUrlEnv" type="text" />
+            <span data-i18n="field.baseUrl">Base URL</span>
+            <input
+              id="provider-base-url"
+              name="baseUrl"
+              type="text"
+              data-i18n-placeholder="provider.baseUrlPlaceholder"
+              placeholder="https://api.openai.com/v1"
+            />
+            <small class="field-hint" data-i18n="provider.baseUrlHint">填写兼容接口根地址；如果走官方默认地址，可保留默认值。</small>
           </label>
           <label>
-            <span>Timeout Ms</span>
+            <span data-i18n="provider.baseUrlEnv">Base URL 环境变量</span>
+            <input
+              id="provider-base-url-env"
+              name="baseUrlEnv"
+              type="text"
+              data-i18n-placeholder="provider.baseUrlEnvPlaceholder"
+              placeholder="OPENAI_BASE_URL"
+            />
+            <small class="field-hint" data-i18n="provider.baseUrlEnvHint">如果你会在不同环境之间切换地址，可以只在这里保存变量名。</small>
+          </label>
+          <label>
+            <span data-i18n="field.timeoutMs">超时毫秒</span>
             <input id="provider-timeout-ms" name="timeoutMs" type="number" min="1000" />
+            <small class="field-hint" data-i18n="provider.timeoutHint">请求超时只影响这层壳子的请求等待时间。</small>
+          </label>
+          <label class="toggle-chip toggle-chip--inline">
+            <input id="provider-profile-activate" type="checkbox" checked />
+            <span data-i18n="providerProfiles.activate">保存后设为当前启用</span>
           </label>
           <div class="drawer-actions">
-            <button class="primary-button" type="submit">Save Provider</button>
-            <button id="reset-provider-button" class="ghost-button" type="button">Use Defaults</button>
+            <button class="primary-button" type="submit" data-i18n="providerProfiles.save">保存配置档</button>
+            <button id="reset-provider-button" class="ghost-button" type="button" data-i18n="common.reset">重置</button>
+            <button id="delete-provider-profile-button" class="ghost-button ghost-button--danger" type="button" data-i18n="common.delete">
+              删除
+            </button>
           </div>
         </form>
       </section>
 
       <section id="drawer-skill-panel" class="drawer-panel is-hidden">
-        <p id="skill-editor-state" class="drawer-note">Create a new project skill.</p>
+        <p id="skill-editor-state" class="drawer-note">创建新的项目 Skill。</p>
+        <p id="skill-form-note" class="drawer-note">Skill 内容会写入项目目录下的 `.opencowork/skills`，路径和允许工具会影响自动激活。</p>
+        <div class="drawer-toolbar">
+          <label class="compact-field">
+            <span data-i18n="skill.template">内容模板</span>
+            <select id="skill-template">
+              <option value="blank" data-i18n="skill.template.blank">空白</option>
+              <option value="basic" data-i18n="skill.template.basic">基础技能</option>
+              <option value="file" data-i18n="skill.template.file">文件处理</option>
+              <option value="review" data-i18n="skill.template.review">代码审查</option>
+            </select>
+          </label>
+          <button id="apply-skill-template-button" class="ghost-button" type="button" data-i18n="skill.templateApply">
+            填入模板
+          </button>
+        </div>
         <form id="skill-form" class="drawer-form">
           <label>
-            <span>Name</span>
-            <input id="skill-name" type="text" />
+            <span data-i18n="field.name">名称</span>
+            <input id="skill-name" type="text" data-i18n-placeholder="skill.namePlaceholder" placeholder="review-rust-runtime" />
+            <small class="field-hint" data-i18n="skill.nameHint">名称会影响 slug 和文件夹名，尽量保持稳定。</small>
           </label>
           <label>
-            <span>Description</span>
+            <span data-i18n="field.description">描述</span>
             <input id="skill-description" type="text" />
           </label>
           <label>
-            <span>When To Use</span>
+            <span data-i18n="skill.when">适用场景</span>
             <input id="skill-when" type="text" />
+            <small class="field-hint" data-i18n="skill.whenHint">这里写清楚触发时机，后续给模型展示的 listing 会优先用这段。</small>
           </label>
           <label>
-            <span>Argument Hint</span>
+            <span data-i18n="skill.argumentHint">参数提示</span>
             <input id="skill-argument-hint" type="text" />
           </label>
           <label>
-            <span>Allowed Tools</span>
+            <span data-i18n="skill.allowedTools">允许工具</span>
             <input id="skill-tools" type="text" placeholder="read_file, edit_file" />
+            <small class="field-hint" data-i18n="skill.toolsHint">逗号分隔。这里只限制 skill 暴露给子流程的工具面。</small>
           </label>
           <label>
-            <span>Paths</span>
+            <span data-i18n="skill.paths">触发路径</span>
             <input id="skill-paths" type="text" placeholder="crates/**, src/**" />
+            <small class="field-hint" data-i18n="skill.pathsHint">命中文件路径后，skill 会在同一轮或下一轮自动回注到上下文。</small>
           </label>
           <label>
-            <span>Context</span>
+            <span data-i18n="skill.context">执行上下文</span>
             <select id="skill-context">
-              <option value="">default</option>
-              <option value="current">current</option>
-              <option value="fork">fork</option>
+              <option value="" data-i18n="context.default">默认</option>
+              <option value="current" data-i18n="context.current">当前</option>
+              <option value="fork" data-i18n="context.fork">分叉</option>
             </select>
+            <small class="field-hint" data-i18n="skill.contextHint">只有需要和主会话隔离时才用 fork。</small>
           </label>
           <label>
-            <span>Version</span>
+            <span data-i18n="skill.version">版本</span>
             <input id="skill-version" type="text" />
           </label>
           <label>
-            <span>Agent</span>
+            <span data-i18n="skill.agent">Agent</span>
             <input id="skill-agent" type="text" />
           </label>
           <label>
-            <span>Model</span>
+            <span data-i18n="field.model">模型</span>
             <input id="skill-model" type="text" />
           </label>
           <label>
-            <span>Effort</span>
+            <span data-i18n="skill.effort">推理强度</span>
             <input id="skill-effort" type="text" />
           </label>
           <label>
-            <span>Body</span>
+            <span data-i18n="skill.body">内容</span>
             <textarea id="skill-content" rows="10"></textarea>
+            <small class="field-hint" data-i18n="skill.bodyHint">这里保存真正写进 SKILL.md 的内容，可以直接写步骤、规则和边界。</small>
           </label>
           <div class="drawer-actions">
-            <button class="primary-button" type="submit">Save Skill</button>
-            <button id="reset-skill-button" class="ghost-button" type="button">Reset</button>
-            <button id="delete-skill-button" class="ghost-button" type="button">Delete</button>
+            <button class="primary-button" type="submit" data-i18n="skill.save">保存 Skill</button>
+            <button id="reset-skill-button" class="ghost-button" type="button" data-i18n="common.reset">重置</button>
+            <button id="delete-skill-button" class="ghost-button" type="button" data-i18n="common.delete">删除</button>
           </div>
         </form>
       </section>
 
       <section id="drawer-mcp-panel" class="drawer-panel is-hidden">
-        <p id="mcp-editor-state" class="drawer-note">Create a new MCP server entry.</p>
+        <p id="mcp-editor-state" class="drawer-note">创建新的 MCP 服务项。</p>
+        <p id="mcp-transport-hint" class="drawer-note">stdio 模式使用本地命令启动服务，通常需要填写命令和参数。</p>
+        <p id="mcp-auth-hint" class="drawer-note">当前不附带认证信息。</p>
+        <div class="drawer-toolbar">
+          <label class="compact-field">
+            <span data-i18n="mcp.preset">快速预设</span>
+            <select id="mcp-preset">
+              <option value="blank" data-i18n="mcp.preset.blank">空白</option>
+              <option value="stdio-node" data-i18n="mcp.preset.stdioNode">本地 Node stdio</option>
+              <option value="http-bearer" data-i18n="mcp.preset.httpBearer">远端 HTTP + Bearer</option>
+              <option value="sse-readonly" data-i18n="mcp.preset.sseReadonly">远端 SSE 只读</option>
+            </select>
+          </label>
+          <button id="apply-mcp-preset-button" class="ghost-button" type="button" data-i18n="mcp.presetApply">
+            应用预设
+          </button>
+        </div>
         <form id="mcp-form" class="drawer-form">
           <label>
-            <span>Name</span>
-            <input id="mcp-name" type="text" />
+            <span data-i18n="field.name">名称</span>
+            <input id="mcp-name" type="text" data-i18n-placeholder="mcp.namePlaceholder" placeholder="filesystem" />
+            <small class="field-hint" data-i18n="mcp.nameHint">建议和服务职责一致，后续工具名会以它作为前缀或分组提示。</small>
           </label>
           <label>
-            <span>Transport</span>
+            <span data-i18n="mcp.transport">传输方式</span>
             <select id="mcp-transport">
               <option value="stdio">stdio</option>
               <option value="http">http</option>
@@ -447,46 +772,71 @@
               <option value="ws">ws</option>
             </select>
           </label>
-          <label>
-            <span>Command</span>
+          <label id="mcp-command-group">
+            <span data-i18n="mcp.command">命令</span>
             <input id="mcp-command" type="text" placeholder="node server.js" />
+            <small class="field-hint" data-i18n="mcp.commandHint">stdio 模式下填写启动命令，参数单独填在下方。</small>
           </label>
-          <label>
-            <span>Args</span>
+          <label id="mcp-args-group">
+            <span data-i18n="mcp.args">参数</span>
             <input id="mcp-args" type="text" placeholder="arg1, arg2" />
+            <small class="field-hint" data-i18n="mcp.argsHint">使用逗号分隔，保存时会拆成参数数组。</small>
           </label>
-          <label>
-            <span>Endpoint</span>
+          <label id="mcp-endpoint-group">
+            <span data-i18n="mcp.endpoint">地址</span>
             <input id="mcp-endpoint" type="text" placeholder="http://127.0.0.1:3000/mcp" />
+            <small class="field-hint" data-i18n="mcp.endpointHint">http / sse / ws 都走这里，填写完整服务地址。</small>
           </label>
           <label>
-            <span>Timeout Ms</span>
+            <span data-i18n="field.timeoutMs">超时毫秒</span>
             <input id="mcp-timeout-ms" type="number" min="1000" />
+            <small class="field-hint" data-i18n="mcp.timeoutHint">超时主要用于工具发现和调用等待，不改底层 transport 逻辑。</small>
           </label>
           <label>
-            <span>Auth</span>
+            <span data-i18n="mcp.auth">认证</span>
             <select id="mcp-auth-type">
-              <option value="none">none</option>
-              <option value="bearer-env">bearer-env</option>
-              <option value="bearer-file">bearer-file</option>
+              <option value="none" data-i18n="mcp.auth.none">无</option>
+              <option value="bearer-env" data-i18n="mcp.auth.env">Bearer 环境变量</option>
+              <option value="bearer-file" data-i18n="mcp.auth.file">Bearer 文件</option>
             </select>
+            <small class="field-hint" data-i18n="mcp.authModeHint">只有需要壳层代带 Bearer Token 时再配置认证方式。</small>
           </label>
-          <label>
-            <span>Token Env</span>
+          <label id="mcp-token-env-group">
+            <span data-i18n="mcp.tokenEnv">Token 环境变量</span>
             <input id="mcp-token-env" type="text" />
           </label>
-          <label>
-            <span>Token Path</span>
+          <label id="mcp-token-path-group">
+            <span data-i18n="mcp.tokenPath">Token 文件路径</span>
             <input id="mcp-token-path" type="text" />
           </label>
           <div class="drawer-actions">
-            <button class="primary-button" type="submit">Save MCP</button>
-            <button id="reset-mcp-button" class="ghost-button" type="button">Reset</button>
-            <button id="delete-mcp-button" class="ghost-button" type="button">Delete</button>
+            <button class="primary-button" type="submit" data-i18n="mcp.save">保存 MCP</button>
+            <button id="reset-mcp-button" class="ghost-button" type="button" data-i18n="common.reset">重置</button>
+            <button id="delete-mcp-button" class="ghost-button" type="button" data-i18n="common.delete">删除</button>
           </div>
         </form>
       </section>
     </aside>
+
+    <div id="block-viewer-overlay" class="drawer-overlay is-hidden"></div>
+    <section id="block-viewer" class="block-viewer is-hidden" aria-hidden="true">
+      <div class="drawer-header">
+        <div>
+          <p class="page-kicker" data-i18n="message.viewerKicker">块查看器</p>
+          <h2 id="block-viewer-title">block</h2>
+          <p id="block-viewer-meta" class="drawer-note">0 chars</p>
+        </div>
+        <div class="page-actions">
+          <button id="block-viewer-copy-button" class="ghost-button" type="button" data-i18n="message.copyBlock">
+            复制块
+          </button>
+          <button id="block-viewer-close-button" class="icon-button" type="button" aria-label="Close block viewer" data-i18n-title="common.close">
+            &#10005;
+          </button>
+        </div>
+      </div>
+      <pre id="block-viewer-content" class="block-viewer-content"></pre>
+    </section>
 
     <script src="/app.js" type="module"></script>
   </body>
