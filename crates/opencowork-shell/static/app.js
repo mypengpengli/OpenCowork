@@ -1222,6 +1222,19 @@ function sessionDisplayPreview(sessionDescriptor, fallbackSession = null) {
     || normalizeSessionText(state.pendingTurn?.userInput, 144)
 }
 
+function sessionStateKey(sessionId) {
+  if (state.currentSessionId === sessionId) return 'active'
+  if (hasComposerDraft(sessionId)) return 'draft'
+  return 'saved'
+}
+
+function sessionStateLabel(sessionId) {
+  const key = sessionStateKey(sessionId)
+  if (key === 'active') return t('common.active')
+  if (key === 'draft') return t('common.draft')
+  return t('common.saved')
+}
+
 function matchesSessionQuery(session, rawQuery) {
   const query = String(rawQuery || '').trim().toLowerCase()
   if (!query) return true
@@ -1433,6 +1446,10 @@ function renderSlashMenu() {
       runningIndex += 1
     })
     els.slashMenuList.appendChild(section)
+  })
+  requestAnimationFrame(() => {
+    const active = els.slashMenuList.querySelector('.slash-menu-item.is-active')
+    active?.scrollIntoView({ block: 'nearest' })
   })
 }
 
@@ -2242,11 +2259,68 @@ function blockSummaryChips(block) {
   return chips.slice(0, 4)
 }
 
+function looksLikeCodeContent(content, label = '', type = '') {
+  const text = String(content || '')
+  if (!text.trim()) return false
+  if (String(type || '').toLowerCase() !== 'text') return true
+  if (/```/.test(text)) return true
+  if (/(json|diff|patch|bash|shell|command|tool|code)/i.test(String(label || ''))) return true
+  const lines = text.split('\n')
+  if (lines.length < 3) return false
+  let score = 0
+  if (/^\s{2,}\S/m.test(text)) score += 1
+  if (/[{}[\]();<>=>]/.test(text)) score += 1
+  if (/\b(function|const|let|var|class|def|fn|return|import|export|from|SELECT|INSERT|UPDATE|DELETE|CREATE|cargo|git|npm|pnpm|yarn|powershell)\b/i.test(text)) {
+    score += 1
+  }
+  return score >= 2
+}
+
+function renderBlockViewerContent() {
+  const content = String(state.blockViewer.content || '')
+  const isCodeish = looksLikeCodeContent(content, state.blockViewer.title, state.blockViewer.kind)
+  els.blockViewerContent.innerHTML = ''
+  els.blockViewerContent.classList.toggle('is-code', isCodeish)
+  els.blockViewerContent.classList.toggle('is-plain', !isCodeish)
+
+  if (!isCodeish) {
+    els.blockViewerContent.textContent = content
+    return
+  }
+
+  const shell = document.createElement('div')
+  shell.className = 'block-viewer-shell'
+
+  const linesNode = document.createElement('div')
+  linesNode.className = 'block-viewer-lines'
+
+  content.split('\n').forEach((line, index) => {
+    const lineNode = document.createElement('div')
+    lineNode.className = 'block-viewer-line'
+
+    const lineNumber = document.createElement('span')
+    lineNumber.className = 'block-viewer-line-number'
+    lineNumber.textContent = String(index + 1)
+
+    const lineText = document.createElement('span')
+    lineText.className = 'block-viewer-line-text'
+    lineText.textContent = line || ' '
+
+    lineNode.appendChild(lineNumber)
+    lineNode.appendChild(lineText)
+    linesNode.appendChild(lineNode)
+  })
+
+  shell.appendChild(linesNode)
+  els.blockViewerContent.appendChild(shell)
+}
+
 function openBlockViewer({ title, content }) {
   const normalized = String(content || '')
   state.blockViewer = {
     title: title || 'block',
     content: normalized,
+    kind: title || 'block',
     meta: t('message.viewerMeta', {
       type: title || 'block',
       chars: normalized.length,
@@ -2255,7 +2329,7 @@ function openBlockViewer({ title, content }) {
   }
   els.blockViewerTitle.textContent = state.blockViewer.title
   els.blockViewerMeta.textContent = state.blockViewer.meta
-  els.blockViewerContent.textContent = state.blockViewer.content
+  renderBlockViewerContent()
   els.blockViewerOverlay.classList.remove('is-hidden')
   els.blockViewer.classList.remove('is-hidden')
   els.blockViewer.setAttribute('aria-hidden', 'false')
@@ -2276,7 +2350,7 @@ function refreshBlockViewer() {
     chars: content.length,
     lines: lineCount(content),
   })
-  els.blockViewerContent.textContent = content
+  renderBlockViewerContent()
 }
 
 function normalizeEvents(events) {
@@ -2568,17 +2642,35 @@ function renderSidebarSessions() {
     title.textContent = sessionDisplayTitle(session)
     title.title = session.id
 
+    const preview = sessionDisplayPreview(session)
     const meta = document.createElement('span')
     meta.className = 'conversation-meta'
-    const draftSuffix = hasComposerDraft(session.id) ? ` / ${t('common.draft')}` : ''
-    const preview = sessionDisplayPreview(session)
-    meta.textContent = preview
-      ? `${preview} / ${toLocaleTimestamp(session.updatedAtUnixMs)}${draftSuffix}`
-      : `${session.messageCount} ${t('metric.messages')} / ${toLocaleTimestamp(session.updatedAtUnixMs)}${draftSuffix}`
-    meta.title = session.id
+    meta.textContent = preview || t('history.messages', { count: session.messageCount })
+    meta.title = preview || session.id
+
+    const footer = document.createElement('div')
+    footer.className = 'conversation-footer'
+
+    const updated = document.createElement('span')
+    updated.className = 'conversation-updated'
+    updated.textContent = toLocaleTimestamp(session.updatedAtUnixMs)
+
+    const count = document.createElement('span')
+    count.className = 'conversation-count'
+    count.textContent = t('history.messages', { count: session.messageCount })
+
+    const statePill = document.createElement('span')
+    const stateKey = sessionStateKey(session.id)
+    statePill.className = `conversation-state conversation-state--${stateKey}`
+    statePill.textContent = sessionStateLabel(session.id)
+
+    footer.appendChild(updated)
+    footer.appendChild(count)
+    footer.appendChild(statePill)
 
     infoButton.appendChild(title)
     infoButton.appendChild(meta)
+    infoButton.appendChild(footer)
 
     const deleteButton = document.createElement('button')
     deleteButton.type = 'button'
@@ -2763,14 +2855,23 @@ function renderMessages() {
       const summary = blockSummaryText(block)
       const chips = blockSummaryChips(block)
       const key = `${messageIndex}:${blockIndex}`
+      const isCodeish = looksLikeCodeContent(content, label, block.type)
       const collapseCandidate = shouldCollapseBlock(content)
       const isExpanded = state.expandedBlocks.has(key)
       const shouldShowTextHeader =
-        !isTextBlock || collapseCandidate || lineCount(content) > 5 || String(content).length > 280 || isPending
+        !isTextBlock ||
+        isCodeish ||
+        collapseCandidate ||
+        lineCount(content) > 5 ||
+        String(content).length > 280 ||
+        isPending
       if (collapseCandidate) collapsibleKeys.push(key)
 
       const blockNode = document.createElement('section')
       blockNode.className = `message-block message-block--${String(block.type || 'block').replace(/[^a-z0-9_-]+/gi, '-')}`
+      if (isCodeish) {
+        blockNode.classList.add('message-block--codeish')
+      }
       if (isPending) {
         blockNode.classList.add('message-block--pending')
       }
@@ -2869,6 +2970,9 @@ function renderMessages() {
 
       const contentNode = document.createElement('pre')
       contentNode.className = 'message-block-content'
+      if (isCodeish) {
+        contentNode.classList.add('message-block-content--codeish')
+      }
       if (isPending) {
         contentNode.classList.add('message-block-content--pending')
       }
@@ -3039,28 +3143,26 @@ function renderHistoryList() {
       body.appendChild(previewNode)
     }
 
-    const updated = document.createElement('div')
-    const updatedLabel = document.createElement('span')
-    updatedLabel.textContent = t('common.updated')
-    const updatedValue = document.createElement('strong')
-    updatedValue.textContent = toLocaleTimestamp(session.updatedAtUnixMs)
-    updated.appendChild(updatedLabel)
-    updated.appendChild(updatedValue)
+    const metaRow = document.createElement('div')
+    metaRow.className = 'history-card-meta-row'
 
-    const status = document.createElement('div')
-    const statusLabel = document.createElement('span')
-    statusLabel.textContent = t('common.status')
-    const statusValue = document.createElement('strong')
-    statusValue.textContent = state.currentSessionId === session.id
-      ? t('common.active')
-      : hasComposerDraft(session.id)
-        ? `${t('common.saved')} · ${t('common.draft')}`
-        : t('common.saved')
-    status.appendChild(statusLabel)
-    status.appendChild(statusValue)
+    const updatedChip = document.createElement('span')
+    updatedChip.className = 'history-chip history-chip--time'
+    updatedChip.textContent = toLocaleTimestamp(session.updatedAtUnixMs)
 
-    body.appendChild(updated)
-    body.appendChild(status)
+    const countChip = document.createElement('span')
+    countChip.className = 'history-chip history-chip--count'
+    countChip.textContent = t('history.messages', { count: session.messageCount })
+
+    const stateChip = document.createElement('span')
+    const stateKey = sessionStateKey(session.id)
+    stateChip.className = `history-chip history-chip--${stateKey}`
+    stateChip.textContent = sessionStateLabel(session.id)
+
+    metaRow.appendChild(updatedChip)
+    metaRow.appendChild(countChip)
+    metaRow.appendChild(stateChip)
+    body.appendChild(metaRow)
 
     card.appendChild(header)
     card.appendChild(body)

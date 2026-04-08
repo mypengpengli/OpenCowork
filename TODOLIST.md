@@ -59,6 +59,13 @@
 - Added persisted context-collapse archive tracking so removed messages survive as archived state across later turns and resume flows.
 - Switched provider-backed session-memory extraction to a constrained `edit_file` tool flow running in an isolated nested runtime.
 - Added team-memory sync with initial pull, delta push, git remote repo detection, write notifications, background watcher/poller, and CLI status/pull/push controls.
+- Added a web shell refinement pass with auto-named sessions, slash command palette, polished top popovers, and improved send/pending UX.
+- Reduced shell UI noise by moving session overview and runtime helper into top popovers instead of keeping them inline in the chat surface.
+- Improved shell message/history presentation with derived session titles, previews, status chips, and lighter conversation actions.
+- Refined shell code/tool blocks and settings forms toward a cleaner IDE-like presentation with better spacing, focus feedback, and block viewing.
+- Shell polish checklist: completed a more IDE-like treatment for code-ish blocks and the block viewer, including a structured viewer with line numbers.
+- Shell polish checklist: completed a lower-density settings pass with narrower copy widths, roomier spacing, and single-column settings cards where dense side-by-side layouts were noisy.
+- Shell polish checklist: completed a richer session/history status pass with message-count pills, quieter preview clamping, and more polished state chips.
 
 ## Priority 0
 
