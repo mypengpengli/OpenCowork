@@ -2642,12 +2642,6 @@ function renderSidebarSessions() {
     title.textContent = sessionDisplayTitle(session)
     title.title = session.id
 
-    const preview = sessionDisplayPreview(session)
-    const meta = document.createElement('span')
-    meta.className = 'conversation-meta'
-    meta.textContent = preview || t('history.messages', { count: session.messageCount })
-    meta.title = preview || session.id
-
     const footer = document.createElement('div')
     footer.className = 'conversation-footer'
 
@@ -2655,21 +2649,15 @@ function renderSidebarSessions() {
     updated.className = 'conversation-updated'
     updated.textContent = toLocaleTimestamp(session.updatedAtUnixMs)
 
-    const count = document.createElement('span')
-    count.className = 'conversation-count'
-    count.textContent = t('history.messages', { count: session.messageCount })
-
     const statePill = document.createElement('span')
     const stateKey = sessionStateKey(session.id)
     statePill.className = `conversation-state conversation-state--${stateKey}`
     statePill.textContent = sessionStateLabel(session.id)
 
     footer.appendChild(updated)
-    footer.appendChild(count)
     footer.appendChild(statePill)
 
     infoButton.appendChild(title)
-    infoButton.appendChild(meta)
     infoButton.appendChild(footer)
 
     const deleteButton = document.createElement('button')
@@ -2697,7 +2685,6 @@ function renderChatSummary() {
   })
   const hasSurface = Boolean(state.currentSessionId || state.currentSession || state.pendingTurn)
   const displayTitle = sessionDisplayTitle(descriptor, state.currentSession)
-  const displayPreview = sessionDisplayPreview(descriptor, state.currentSession)
 
   els.summaryMessages.textContent = String(metrics.messageCount)
   els.summaryTools.textContent = String(metrics.toolBlockCount)
@@ -2726,15 +2713,9 @@ function renderChatSummary() {
   els.metricsGrid.classList.remove('is-hidden')
   els.messageToolbar.classList.remove('is-hidden')
   els.chatTitle.textContent = displayTitle
-  if (state.pendingTurn) {
-    els.chatSubtitle.textContent = t(
-      state.pendingTurn.phase === 'streaming' ? 'composer.streaming' : 'composer.waiting',
-    )
-  } else {
-    els.chatSubtitle.textContent = displayPreview || t('session.subtitle', { count: metrics.messageCount })
-  }
-  els.currentSessionChip.textContent = displayTitle || t('session.waiting')
-  els.currentSessionChip.title = state.currentSessionId || displayTitle || ''
+  els.chatSubtitle.textContent = ''
+  els.currentSessionChip.textContent = ''
+  els.currentSessionChip.title = ''
   els.sessionUpdatedChip.textContent = state.pendingTurn
     ? t(state.pendingTurn.phase === 'streaming' ? 'composer.streaming' : 'composer.waiting')
     : descriptor

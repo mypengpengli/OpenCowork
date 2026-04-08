@@ -304,7 +304,7 @@ button:disabled {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 5px;
+  gap: 8px;
   min-width: 0;
   padding: 10px 11px;
   border: 1px solid transparent;
@@ -680,7 +680,7 @@ button:disabled {
   top: 72px;
   left: 50%;
   z-index: 8;
-  width: min(720px, calc(100vw - 360px));
+  width: min(620px, calc(100vw - 420px));
   max-height: calc(100vh - 96px);
   margin: 0;
   transform: translateX(-50%);
@@ -697,9 +697,10 @@ button:disabled {
 .session-banner {
   display: flex;
   justify-content: space-between;
-  gap: 18px;
-  margin-bottom: 14px;
-  padding: 18px 20px;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 12px;
+  padding: 14px 16px;
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   background: linear-gradient(180deg, rgba(99, 226, 183, 0.08), rgba(255, 255, 255, 0.02));
@@ -716,11 +717,18 @@ button:disabled {
   color: var(--text-soft);
 }
 
+.banner-copy:empty {
+  display: none;
+}
+
 .banner-meta {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
+  align-items: center;
   gap: 12px;
+}
+
+#current-session-chip {
+  display: none;
 }
 
 .banner-actions {
@@ -738,7 +746,7 @@ button:disabled {
 
 .metrics-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  margin-bottom: 16px;
+  margin-bottom: 8px;
 }
 
 .turn-stats-grid {
@@ -1367,9 +1375,9 @@ button:disabled {
 }
 
 .page-header {
-  width: min(980px, calc(100% - 48px));
+  width: min(920px, calc(100% - 48px));
   margin: 0 auto;
-  padding: 24px 0 12px;
+  padding: 18px 0 10px;
 }
 
 .collection-header {
@@ -1549,9 +1557,9 @@ button:disabled {
 }
 
 .settings-tabs {
-  width: min(1080px, calc(100% - 48px));
+  width: min(920px, calc(100% - 48px));
   margin: 0 auto;
-  padding: 8px 0 18px;
+  padding: 4px 0 12px;
   border-bottom: 1px solid var(--line);
   position: sticky;
   top: 0;
@@ -1560,13 +1568,14 @@ button:disabled {
 }
 
 .settings-tab {
-  min-height: 40px;
-  padding: 0 14px;
+  min-height: 34px;
+  padding: 0 12px;
   border: 1px solid transparent;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.04);
   color: var(--text-soft);
   cursor: pointer;
+  font-size: 13px;
 }
 
 .settings-tab.is-active {
@@ -1592,19 +1601,19 @@ button:disabled {
 }
 
 .settings-overview-grid {
-  width: min(980px, calc(100% - 48px));
+  width: min(920px, calc(100% - 48px));
   margin: 0 auto;
-  padding: 14px 0 0;
+  padding: 10px 0 0;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
 }
 
 .overview-card {
   display: grid;
-  gap: 10px;
-  min-height: 118px;
-  padding: 16px;
+  gap: 6px;
+  min-height: 88px;
+  padding: 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   background: var(--bg-card);
@@ -1622,26 +1631,27 @@ button:disabled {
 
 .overview-card-kicker {
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .overview-card-value {
-  font-size: 22px;
+  font-size: 18px;
   line-height: 1.2;
   word-break: break-word;
 }
 
 .overview-card-meta {
   color: var(--text-soft);
-  line-height: 1.6;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .settings-panel {
-  width: min(980px, calc(100% - 48px));
+  width: min(920px, calc(100% - 48px));
   margin: 0 auto;
-  padding: 22px 0 28px;
+  padding: 18px 0 24px;
 }
 
 .settings-panel.is-hidden {
