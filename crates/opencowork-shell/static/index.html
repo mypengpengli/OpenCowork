@@ -344,6 +344,7 @@
             </button>
             <button class="settings-tab" type="button" data-settings-tab="skills" data-i18n="settings.tab.skills">Skills</button>
             <button class="settings-tab" type="button" data-settings-tab="mcp" data-i18n="settings.tab.mcp">MCP</button>
+            <button class="settings-tab" type="button" data-settings-tab="memory" data-i18n="settings.tab.memory">Memory</button>
             <button class="settings-tab" type="button" data-settings-tab="environment" data-i18n="settings.tab.environment">
               环境
             </button>
@@ -488,6 +489,121 @@
               </div>
             </header>
             <div id="mcp-list" class="settings-list"></div>
+          </section>
+
+          <section id="settings-memory-panel" class="settings-panel is-hidden">
+            <header class="collection-header">
+              <div>
+                <h3 data-i18n="memory.title">记忆管理</h3>
+                <p class="settings-card-copy" data-i18n="memory.copy">查看三层记忆的当前状态，并直接管理项目、团队和当前会话的记忆文档。</p>
+              </div>
+              <div class="collection-toolbar">
+                <label class="collection-search">
+                  <input id="memory-search" type="search" data-i18n-placeholder="memory.searchPlaceholder" placeholder="搜索记忆文档" />
+                </label>
+                <label class="compact-field compact-field--select">
+                  <span data-i18n="memory.scopeFilter">范围</span>
+                  <select id="memory-scope-filter">
+                    <option value="all" data-i18n="memory.scope.all">全部</option>
+                    <option value="project" data-i18n="memory.scope.project">项目</option>
+                    <option value="team" data-i18n="memory.scope.team">团队</option>
+                    <option value="session" data-i18n="memory.scope.session">会话</option>
+                  </select>
+                </label>
+                <button id="memory-refresh-button" class="ghost-button" type="button" data-i18n="common.refresh">刷新</button>
+              </div>
+            </header>
+
+            <div class="settings-card-list settings-card-list--memory">
+              <article class="settings-card">
+                <div class="settings-card-header">
+                  <div>
+                    <h3 data-i18n="memory.overviewTitle">记忆总览</h3>
+                    <p class="settings-card-copy" data-i18n="memory.overviewCopy">当前项目的持久记忆、团队记忆、当前会话记忆和可召回文档都汇总在这里。</p>
+                  </div>
+                </div>
+                <div id="memory-overview-grid" class="memory-overview-grid"></div>
+              </article>
+
+              <article class="settings-card">
+                <div class="settings-card-header">
+                  <div>
+                    <h3 data-i18n="memory.checklistTitle">追平清单</h3>
+                    <p class="settings-card-copy" data-i18n="memory.checklistCopy">当前记忆系统已经对齐和仍然落后参考仓库的地方。</p>
+                  </div>
+                </div>
+                <div id="memory-checklist" class="memory-checklist"></div>
+              </article>
+            </div>
+
+            <div class="memory-management-layout">
+              <article class="settings-card memory-documents-card">
+                <div class="settings-card-header">
+                  <div>
+                    <h3 data-i18n="memory.documentsTitle">记忆文档</h3>
+                    <p class="settings-card-copy" data-i18n="memory.documentsCopy">这里列出项目记忆、团队记忆以及当前会话记忆文件。</p>
+                  </div>
+                  <span id="memory-count-chip" class="status-tag">0 / 0</span>
+                </div>
+
+                <div class="drawer-toolbar memory-create-toolbar">
+                  <label class="compact-field compact-field--select">
+                    <span data-i18n="memory.createScope">新建到</span>
+                    <select id="memory-create-scope">
+                      <option value="project" data-i18n="memory.scope.project">项目</option>
+                      <option value="team" data-i18n="memory.scope.team">团队</option>
+                    </select>
+                  </label>
+                  <label class="compact-field compact-field--grow">
+                    <span data-i18n="memory.createPath">文件名</span>
+                    <input id="memory-create-path" type="text" data-i18n-placeholder="memory.createPathPlaceholder" placeholder="decisions/api-routing.md" />
+                  </label>
+                  <button id="memory-create-button" class="primary-button" type="button" data-i18n="memory.create">新建记忆</button>
+                </div>
+
+                <div id="memory-list" class="settings-list"></div>
+              </article>
+
+              <article class="settings-card memory-editor-card">
+                <div class="settings-card-header">
+                  <div>
+                    <h3 id="memory-editor-title" data-i18n="memory.editorTitle">记忆编辑器</h3>
+                    <p id="memory-editor-copy" class="settings-card-copy" data-i18n="memory.editorCopy">选择左侧文档后，可以在这里查看和编辑它。</p>
+                  </div>
+                  <div class="page-actions">
+                    <button id="memory-copy-path-button" class="ghost-button" type="button" data-i18n="memory.copyPath">复制路径</button>
+                  </div>
+                </div>
+
+                <dl class="meta-list">
+                  <div>
+                    <dt data-i18n="memory.scopeLabel">范围</dt>
+                    <dd id="memory-editor-scope">-</dd>
+                  </div>
+                  <div>
+                    <dt data-i18n="memory.relativePath">相对路径</dt>
+                    <dd id="memory-editor-relative-path">-</dd>
+                  </div>
+                  <div>
+                    <dt data-i18n="memory.filePath">文件路径</dt>
+                    <dd id="memory-editor-path">-</dd>
+                  </div>
+                  <div>
+                    <dt data-i18n="common.updated">更新时间</dt>
+                    <dd id="memory-editor-updated">-</dd>
+                  </div>
+                </dl>
+
+                <textarea id="memory-content" rows="18" data-i18n-placeholder="memory.editorPlaceholder" placeholder="在这里查看或编辑记忆内容"></textarea>
+                <p id="memory-editor-status" class="drawer-note" data-i18n="memory.editorReady">选择一个记忆文档开始查看或编辑。</p>
+
+                <div class="drawer-actions">
+                  <button id="memory-save-button" class="primary-button" type="button" data-i18n="memory.save">保存记忆</button>
+                  <button id="memory-reload-button" class="ghost-button" type="button" data-i18n="memory.reload">重新载入</button>
+                  <button id="memory-delete-button" class="ghost-button ghost-button--danger" type="button" data-i18n="common.delete">删除</button>
+                </div>
+              </article>
+            </div>
           </section>
 
           <section id="settings-environment-panel" class="settings-panel is-hidden">

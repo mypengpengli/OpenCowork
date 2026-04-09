@@ -1,5 +1,5 @@
 use anyhow::Context;
-use axum::extract::{Path as AxumPath, State};
+use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
@@ -9,7 +9,9 @@ use opencowork_app::{AppEvent, AppRuntime};
 use opencowork_commands::{handle_command, specs as slash_specs, SlashCommand};
 use opencowork_mcp::{McpAuthConfig, McpTransport};
 use opencowork_runtime::{
-    default_config_home, ConfigLoader, ConversationMessage, MessageRole, Session, SessionStore,
+    default_config_home, project_memory_entrypoint, project_memory_root,
+    project_session_memory_path, project_team_memory_entrypoint, project_team_memory_root,
+    ConfigLoader, ConversationMessage, MessageRole, Session, SessionMemoryState, SessionStore,
 };
 use opencowork_skills::{SkillCatalog, SkillExecutionContext, SkillOrigin, SkillSummary};
 use serde::{Deserialize, Serialize};
@@ -18,6 +20,7 @@ use std::env;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 
 const INDEX_HTML: &str = include_str!("../static/index.html");
 const APP_CSS: &str = include_str!("../static/app.css");
@@ -44,6 +47,89 @@ struct BootstrapResponse {
     sessions: Vec<SessionListItem>,
     skills: Vec<SkillView>,
     mcp_servers: Vec<McpServerView>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MemoryOverviewQuery {
+    session_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MemoryOverviewResponse {
+    project_memory_root: String,
+    team_memory_root: String,
+    project_entrypoint_path: String,
+    team_entrypoint_path: String,
+    active_session_id: Option<String>,
+    active_session_title: Option<String>,
+    active_session_memory_path: Option<String>,
+    active_session_memory_exists: bool,
+    active_session_memory_state: Option<SessionMemoryStateView>,
+    project_note_count: usize,
+    team_note_count: usize,
+    relevant_candidate_count: usize,
+    documents: Vec<MemoryDocumentView>,
+    checklist: Vec<MemoryParityItemView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionMemoryStateView {
+    initialized: bool,
+    last_triggered_message_count: usize,
+    last_summarized_message_count: usize,
+    tokens_at_last_extraction: usize,
+    extraction_in_flight: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MemoryDocumentView {
+    scope: String,
+    kind: String,
+    title: String,
+    description: String,
+    relative_path: String,
+    path: String,
+    exists: bool,
+    editable: bool,
+    bytes: Option<u64>,
+    updated_at_unix_ms: Option<u128>,
+    active_session: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MemoryParityItemView {
+    status: String,
+    title: String,
+    detail: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MemoryDocumentRequest {
+    scope: String,
+    relative_path: String,
+    session_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MemoryDocumentSaveRequest {
+    scope: String,
+    relative_path: String,
+    session_id: Option<String>,
+    content: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MemoryDocumentContentView {
+    document: MemoryDocumentView,
+    content: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -339,6 +425,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/sessions", get(list_sessions))
         .route("/api/sessions/:id", get(get_session).delete(delete_session))
         .route("/api/chat", post(run_chat))
+        .route("/api/memory", get(get_memory_overview))
+        .route("/api/memory/read", post(read_memory_document))
+        .route("/api/memory/save", post(save_memory_document))
+        .route("/api/memory/delete", post(delete_memory_document))
         .route("/api/skills", get(list_skills).post(save_skill))
         .route("/api/skills/:slug", get(get_skill).delete(delete_skill))
         .route("/api/mcp", get(list_mcp).post(save_mcp))
@@ -447,12 +537,14 @@ async fn get_tool_manifest(
             .tool_manifest()
             .map_err(|error| error.to_string())?
             .into_iter()
-            .map(|(name, description, permission, _schema)| ToolManifestEntryView {
-                source: infer_tool_source(&name).to_string(),
-                permission: permission_mode_label(permission).to_string(),
-                name,
-                description,
-            })
+            .map(
+                |(name, description, permission, _schema)| ToolManifestEntryView {
+                    source: infer_tool_source(&name).to_string(),
+                    permission: permission_mode_label(permission).to_string(),
+                    name,
+                    description,
+                },
+            )
             .collect::<Vec<_>>();
         items.sort_by(|left, right| left.name.cmp(&right.name));
         Ok::<_, String>(items)
@@ -492,8 +584,8 @@ async fn run_slash_command(
                 .next()
                 .unwrap_or("help")
         );
-        let output = handle_command(&command, &session, app.permission_mode())
-            .unwrap_or_else(|| {
+        let output =
+            handle_command(&command, &session, app.permission_mode()).unwrap_or_else(|| {
                 format!(
                     "Unknown slash command: {}\n\n{}",
                     input_for_worker,
@@ -530,7 +622,10 @@ async fn save_permission_mode(
     let label = normalize_permission_mode_label(&payload.permission_mode)?;
     let mut settings = read_settings(&state.cwd)?;
     let root = object_mut(&mut settings);
-    root.insert("permissionMode".to_string(), Value::String(label.to_string()));
+    root.insert(
+        "permissionMode".to_string(),
+        Value::String(label.to_string()),
+    );
     write_settings(&state.cwd, &settings)?;
     Ok(Json(PermissionModeView {
         value: label.to_string(),
@@ -610,7 +705,10 @@ async fn save_provider(
                 "inlineProviderApiKey".to_string(),
                 Value::String(api_key.to_string()),
             );
-            shell.insert("inlineProviderApiKeyEnv".to_string(), Value::String(api_key_env));
+            shell.insert(
+                "inlineProviderApiKeyEnv".to_string(),
+                Value::String(api_key_env),
+            );
         } else {
             shell.remove("inlineProviderApiKey");
             shell.remove("inlineProviderApiKeyEnv");
@@ -638,13 +736,19 @@ async fn save_provider_profile(
     Json(payload): Json<ProviderProfileUpsertRequest>,
 ) -> Result<Json<Vec<ProviderProfileView>>, ApiError> {
     if payload.label.trim().is_empty() {
-        return Err(ApiError::bad_request("provider profile label must not be empty"));
+        return Err(ApiError::bad_request(
+            "provider profile label must not be empty",
+        ));
     }
     if payload.model.trim().is_empty() {
-        return Err(ApiError::bad_request("provider profile model must not be empty"));
+        return Err(ApiError::bad_request(
+            "provider profile model must not be empty",
+        ));
     }
     if payload.name.trim().is_empty() {
-        return Err(ApiError::bad_request("provider profile name must not be empty"));
+        return Err(ApiError::bad_request(
+            "provider profile name must not be empty",
+        ));
     }
     if payload.base_url.trim().is_empty() {
         return Err(ApiError::bad_request(
@@ -668,7 +772,8 @@ async fn save_provider_profile(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned);
-    let next_id = requested_id.unwrap_or_else(|| unique_provider_profile_id(&profiles, &payload.label));
+    let next_id =
+        requested_id.unwrap_or_else(|| unique_provider_profile_id(&profiles, &payload.label));
     let mut record = ProviderProfileRecord {
         id: next_id.clone(),
         label: payload.label.trim().to_string(),
@@ -819,6 +924,89 @@ async fn run_chat(
         .map_err(|error| ApiError::internal(error.to_string()))?
         .map_err(ApiError::internal)?;
     Ok(Json(response))
+}
+
+async fn get_memory_overview(
+    State(state): State<ShellState>,
+    Query(query): Query<MemoryOverviewQuery>,
+) -> Result<Json<MemoryOverviewResponse>, ApiError> {
+    Ok(Json(build_memory_overview(
+        &state,
+        query.session_id.as_deref(),
+    )?))
+}
+
+async fn read_memory_document(
+    State(state): State<ShellState>,
+    Json(payload): Json<MemoryDocumentRequest>,
+) -> Result<Json<MemoryDocumentContentView>, ApiError> {
+    let document = resolve_memory_document_view(
+        &state,
+        payload.scope.as_str(),
+        payload.relative_path.as_str(),
+        payload.session_id.as_deref(),
+    )?;
+    let path = PathBuf::from(&document.path);
+    let content = if path.exists() {
+        fs::read_to_string(&path).map_err(internal_error)?
+    } else {
+        default_memory_document_content(&document)
+    };
+    Ok(Json(MemoryDocumentContentView { document, content }))
+}
+
+async fn save_memory_document(
+    State(state): State<ShellState>,
+    Json(payload): Json<MemoryDocumentSaveRequest>,
+) -> Result<Json<MemoryDocumentContentView>, ApiError> {
+    let document = resolve_memory_document_view(
+        &state,
+        payload.scope.as_str(),
+        payload.relative_path.as_str(),
+        payload.session_id.as_deref(),
+    )?;
+    let path = PathBuf::from(&document.path);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(internal_error)?;
+    }
+    let content = payload.content.replace("\r\n", "\n");
+    fs::write(&path, &content).map_err(internal_error)?;
+    sync_session_memory_if_needed(&state, &document, Some(content.clone()))?;
+    let refreshed = resolve_memory_document_view(
+        &state,
+        payload.scope.as_str(),
+        payload.relative_path.as_str(),
+        payload.session_id.as_deref(),
+    )?;
+    Ok(Json(MemoryDocumentContentView {
+        document: refreshed,
+        content,
+    }))
+}
+
+async fn delete_memory_document(
+    State(state): State<ShellState>,
+    Json(payload): Json<MemoryDocumentRequest>,
+) -> Result<Json<MemoryOverviewResponse>, ApiError> {
+    let document = resolve_memory_document_view(
+        &state,
+        payload.scope.as_str(),
+        payload.relative_path.as_str(),
+        payload.session_id.as_deref(),
+    )?;
+    let path = PathBuf::from(&document.path);
+    if !path.exists() {
+        return Err(ApiError::not_found(format!(
+            "memory document `{}` was not found",
+            document.relative_path
+        )));
+    }
+    fs::remove_file(&path).map_err(internal_error)?;
+    sync_session_memory_if_needed(&state, &document, None)?;
+    Ok(Json(build_memory_overview(
+        &state,
+        payload.session_id.as_deref(),
+    )?))
 }
 
 fn run_chat_blocking(state: ShellState, payload: ChatRequest) -> Result<ChatResponse, String> {
@@ -1116,7 +1304,9 @@ fn normalize_permission_mode_label(value: &str) -> Result<&'static str, ApiError
     }
 }
 
-fn default_provider_profile_record(config: &opencowork_runtime::RuntimeConfig) -> ProviderProfileRecord {
+fn default_provider_profile_record(
+    config: &opencowork_runtime::RuntimeConfig,
+) -> ProviderProfileRecord {
     let model = config.model().unwrap_or("gpt-5.4-mini").to_string();
     let provider = provider_view(config, &model);
     ProviderProfileRecord {
@@ -1140,7 +1330,9 @@ fn read_provider_profiles(settings: &Value) -> (Vec<ProviderProfileRecord>, Opti
         .map(|entries| {
             entries
                 .iter()
-                .filter_map(|entry| serde_json::from_value::<ProviderProfileRecord>(entry.clone()).ok())
+                .filter_map(|entry| {
+                    serde_json::from_value::<ProviderProfileRecord>(entry.clone()).ok()
+                })
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
@@ -1218,9 +1410,15 @@ fn apply_provider_profile(root: &mut Map<String, Value>, profile: &ProviderProfi
         "apiKeyEnv".to_string(),
         Value::String(profile.api_key_env.clone()),
     );
-    provider.insert("baseUrl".to_string(), Value::String(profile.base_url.clone()));
+    provider.insert(
+        "baseUrl".to_string(),
+        Value::String(profile.base_url.clone()),
+    );
     if let Some(base_url_env) = &profile.base_url_env {
-        provider.insert("baseUrlEnv".to_string(), Value::String(base_url_env.clone()));
+        provider.insert(
+            "baseUrlEnv".to_string(),
+            Value::String(base_url_env.clone()),
+        );
     }
     provider.insert(
         "timeoutMs".to_string(),
@@ -1292,6 +1490,439 @@ fn session_items(state: &ShellState) -> Result<Vec<SessionListItem>, ApiError> {
             }
         })
         .collect())
+}
+
+fn build_memory_overview(
+    state: &ShellState,
+    session_id: Option<&str>,
+) -> Result<MemoryOverviewResponse, ApiError> {
+    let project_root = project_memory_root(&state.config_home, &state.cwd);
+    let team_root = project_team_memory_root(&state.config_home, &state.cwd);
+    let project_entrypoint = project_memory_entrypoint(&state.config_home, &state.cwd);
+    let team_entrypoint = project_team_memory_entrypoint(&state.config_home, &state.cwd);
+    let session = load_memory_session(state, session_id)?;
+    let active_session_id = session
+        .as_ref()
+        .and_then(|value| value.id().map(ToOwned::to_owned));
+    let active_session_title = session
+        .as_ref()
+        .and_then(|value| value.id().map(|id| derive_session_title(value, id)));
+    let active_session_memory_path = session
+        .as_ref()
+        .map(|value| project_session_memory_path(&state.config_home, &state.cwd, value))
+        .map(|path| path.display().to_string());
+    let active_session_memory_exists = active_session_memory_path
+        .as_deref()
+        .map(Path::new)
+        .map(Path::exists)
+        .unwrap_or(false);
+
+    let mut documents = vec![
+        memory_document_view(
+            "project",
+            "entrypoint",
+            "Project MEMORY.md",
+            "Persistent workspace memory entrypoint loaded on every turn.",
+            "MEMORY.md",
+            project_entrypoint.clone(),
+            false,
+        ),
+        memory_document_view(
+            "team",
+            "entrypoint",
+            "Team MEMORY.md",
+            "Shared team memory entrypoint loaded beside project memory.",
+            "MEMORY.md",
+            team_entrypoint.clone(),
+            false,
+        ),
+    ];
+
+    let mut project_note_count = 0usize;
+    documents.extend(scan_memory_documents(
+        "project",
+        "note",
+        &project_root,
+        Some(Path::new("team")),
+        "Project memory note",
+        &mut project_note_count,
+    )?);
+
+    let mut team_note_count = 0usize;
+    documents.extend(scan_memory_documents(
+        "team",
+        "note",
+        &team_root,
+        None,
+        "Team memory note",
+        &mut team_note_count,
+    )?);
+
+    if let Some(value) = session.as_ref() {
+        let session_path = project_session_memory_path(&state.config_home, &state.cwd, value);
+        documents.push(memory_document_view(
+            "session",
+            "session",
+            "Current session memory",
+            "Background-maintained working notes for the active session.",
+            "summary.md",
+            session_path,
+            true,
+        ));
+    }
+
+    documents.sort_by(|left, right| {
+        left.scope
+            .cmp(&right.scope)
+            .then(left.kind.cmp(&right.kind))
+            .then(left.relative_path.cmp(&right.relative_path))
+    });
+
+    Ok(MemoryOverviewResponse {
+        project_memory_root: project_root.display().to_string(),
+        team_memory_root: team_root.display().to_string(),
+        project_entrypoint_path: project_entrypoint.display().to_string(),
+        team_entrypoint_path: team_entrypoint.display().to_string(),
+        active_session_id,
+        active_session_title,
+        active_session_memory_path,
+        active_session_memory_exists,
+        active_session_memory_state: session
+            .as_ref()
+            .map(|value| SessionMemoryStateView::from(&value.session_memory_state)),
+        project_note_count,
+        team_note_count,
+        relevant_candidate_count: project_note_count,
+        documents,
+        checklist: memory_parity_checklist(),
+    })
+}
+
+fn load_memory_session(
+    state: &ShellState,
+    session_id: Option<&str>,
+) -> Result<Option<Session>, ApiError> {
+    let Some(session_id) = session_id.filter(|value| !value.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let store = SessionStore::new(state.config_home.join("sessions"));
+    let session = store.load(session_id).map_err(internal_error)?;
+    Ok(Some(session))
+}
+
+fn scan_memory_documents(
+    scope: &str,
+    kind: &str,
+    root: &Path,
+    excluded_prefix: Option<&Path>,
+    description: &str,
+    note_count: &mut usize,
+) -> Result<Vec<MemoryDocumentView>, ApiError> {
+    let mut documents = Vec::new();
+    if !root.exists() {
+        return Ok(documents);
+    }
+    collect_memory_documents(
+        scope,
+        kind,
+        root,
+        root,
+        excluded_prefix,
+        description,
+        note_count,
+        &mut documents,
+    )?;
+    Ok(documents)
+}
+
+fn collect_memory_documents(
+    scope: &str,
+    kind: &str,
+    root: &Path,
+    current: &Path,
+    excluded_prefix: Option<&Path>,
+    description: &str,
+    note_count: &mut usize,
+    documents: &mut Vec<MemoryDocumentView>,
+) -> Result<(), ApiError> {
+    for entry in fs::read_dir(current).map_err(internal_error)? {
+        let entry = entry.map_err(internal_error)?;
+        let path = entry.path();
+        let relative = path
+            .strip_prefix(root)
+            .map_err(internal_error)?
+            .to_path_buf();
+        if let Some(prefix) = excluded_prefix {
+            if relative.starts_with(prefix) {
+                continue;
+            }
+        }
+        if path.is_dir() {
+            collect_memory_documents(
+                scope,
+                kind,
+                root,
+                &path,
+                excluded_prefix,
+                description,
+                note_count,
+                documents,
+            )?;
+            continue;
+        }
+        if !is_memory_document_path(&path) {
+            continue;
+        }
+        let relative_path = relative.to_string_lossy().replace('\\', "/");
+        if relative_path.eq_ignore_ascii_case("MEMORY.md") {
+            continue;
+        }
+        *note_count += 1;
+        let title = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("memory.md")
+            .to_string();
+        documents.push(memory_document_view(
+            scope,
+            kind,
+            &title,
+            description,
+            &relative_path,
+            path,
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn is_memory_document_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|value| value.to_str()),
+        Some("md") | Some("markdown") | Some("txt")
+    )
+}
+
+fn memory_document_view(
+    scope: &str,
+    kind: &str,
+    title: &str,
+    description: &str,
+    relative_path: &str,
+    path: PathBuf,
+    active_session: bool,
+) -> MemoryDocumentView {
+    let (bytes, updated_at_unix_ms) = file_metadata_summary(&path);
+    MemoryDocumentView {
+        scope: scope.to_string(),
+        kind: kind.to_string(),
+        title: title.to_string(),
+        description: description.to_string(),
+        relative_path: relative_path.to_string(),
+        path: path.display().to_string(),
+        exists: path.exists(),
+        editable: true,
+        bytes,
+        updated_at_unix_ms,
+        active_session,
+    }
+}
+
+fn resolve_memory_document_view(
+    state: &ShellState,
+    scope: &str,
+    relative_path: &str,
+    session_id: Option<&str>,
+) -> Result<MemoryDocumentView, ApiError> {
+    let normalized_scope = scope.trim().to_ascii_lowercase();
+    let normalized_relative = normalize_memory_relative_path(relative_path)?;
+    match normalized_scope.as_str() {
+        "project" => {
+            let path =
+                project_memory_root(&state.config_home, &state.cwd).join(&normalized_relative);
+            let kind = if normalized_relative.eq_ignore_ascii_case("MEMORY.md") {
+                "entrypoint"
+            } else {
+                "note"
+            };
+            Ok(memory_document_view(
+                "project",
+                kind,
+                Path::new(&normalized_relative)
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("MEMORY.md"),
+                if kind == "entrypoint" {
+                    "Persistent workspace memory entrypoint loaded on every turn."
+                } else {
+                    "Project memory note"
+                },
+                &normalized_relative,
+                path,
+                false,
+            ))
+        }
+        "team" => {
+            let path =
+                project_team_memory_root(&state.config_home, &state.cwd).join(&normalized_relative);
+            let kind = if normalized_relative.eq_ignore_ascii_case("MEMORY.md") {
+                "entrypoint"
+            } else {
+                "note"
+            };
+            Ok(memory_document_view(
+                "team",
+                kind,
+                Path::new(&normalized_relative)
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("MEMORY.md"),
+                if kind == "entrypoint" {
+                    "Shared team memory entrypoint loaded beside project memory."
+                } else {
+                    "Team memory note"
+                },
+                &normalized_relative,
+                path,
+                false,
+            ))
+        }
+        "session" => {
+            let session = load_memory_session(state, session_id)?
+                .ok_or_else(|| ApiError::bad_request("session memory requires a sessionId"))?;
+            let path = project_session_memory_path(&state.config_home, &state.cwd, &session);
+            Ok(memory_document_view(
+                "session",
+                "session",
+                "Current session memory",
+                "Background-maintained working notes for the active session.",
+                "summary.md",
+                path,
+                true,
+            ))
+        }
+        _ => Err(ApiError::bad_request("unsupported memory scope")),
+    }
+}
+
+fn normalize_memory_relative_path(value: &str) -> Result<String, ApiError> {
+    let candidate = value.trim().replace('\\', "/");
+    if candidate.is_empty() {
+        return Err(ApiError::bad_request("memory path must not be empty"));
+    }
+    let path = Path::new(&candidate);
+    if path.is_absolute() {
+        return Err(ApiError::bad_request("memory path must be relative"));
+    }
+    let mut parts = Vec::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(value) => parts.push(value.to_string_lossy().to_string()),
+            std::path::Component::CurDir => {}
+            _ => {
+                return Err(ApiError::bad_request(
+                    "memory path must stay inside its root",
+                ))
+            }
+        }
+    }
+    let normalized = parts.join("/");
+    if normalized.is_empty() {
+        return Err(ApiError::bad_request("memory path must not be empty"));
+    }
+    Ok(normalized)
+}
+
+fn file_metadata_summary(path: &Path) -> (Option<u64>, Option<u128>) {
+    let Ok(metadata) = fs::metadata(path) else {
+        return (None, None);
+    };
+    let updated_at_unix_ms = metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+        .map(|value| value.as_millis());
+    (Some(metadata.len()), updated_at_unix_ms)
+}
+
+fn default_memory_document_content(document: &MemoryDocumentView) -> String {
+    match (document.scope.as_str(), document.kind.as_str()) {
+        ("project", "entrypoint") => {
+            "# Project memory\n\n- Capture durable workspace constraints, decisions, and warnings here.\n".to_string()
+        }
+        ("team", "entrypoint") => {
+            "# Team memory\n\n- Capture shared team conventions and coordination notes here.\n".to_string()
+        }
+        ("session", _) => "# Session Title\n_\n\n# Current State\n_\n".to_string(),
+        _ => format!("# {}\n\n", document.title),
+    }
+}
+
+fn sync_session_memory_if_needed(
+    state: &ShellState,
+    document: &MemoryDocumentView,
+    content: Option<String>,
+) -> Result<(), ApiError> {
+    if document.scope != "session" || !document.active_session {
+        return Ok(());
+    }
+    let Some(session_id) = Path::new(&document.path)
+        .parent()
+        .and_then(|value| value.parent())
+        .and_then(|value| value.file_name())
+        .and_then(|value| value.to_str())
+    else {
+        return Ok(());
+    };
+    let store = SessionStore::new(state.config_home.join("sessions"));
+    let mut session = store.load(session_id).map_err(internal_error)?;
+    session.current_session_memory = content;
+    store
+        .save_named(session_id, &session)
+        .map_err(internal_error)?;
+    Ok(())
+}
+
+fn memory_parity_checklist() -> Vec<MemoryParityItemView> {
+    vec![
+        MemoryParityItemView {
+            status: "done".to_string(),
+            title: "Three-layer memory is wired".to_string(),
+            detail: "Instruction memory, current session memory, and relevant memory recall are already active in prompt assembly.".to_string(),
+        },
+        MemoryParityItemView {
+            status: "done".to_string(),
+            title: "Memory management shell is added".to_string(),
+            detail: "The shell can now inspect and edit project, team, and current session memory files.".to_string(),
+        },
+        MemoryParityItemView {
+            status: "next".to_string(),
+            title: "Split relevant recall into a dedicated side-query route".to_string(),
+            detail: "Relevant-memory selection still rides the main provider path instead of a stricter side-query flow.".to_string(),
+        },
+        MemoryParityItemView {
+            status: "next".to_string(),
+            title: "Add surfaced-memory throttling".to_string(),
+            detail: "Reference repos throttle how many recalled memories can surface across turns; OpenCoWork still needs that guard.".to_string(),
+        },
+        MemoryParityItemView {
+            status: "next".to_string(),
+            title: "Finish memory distillation and richer team sync handling".to_string(),
+            detail: "Auto-memory distillation plus richer team-memory auth and conflict handling remain behind the reference behavior.".to_string(),
+        },
+    ]
+}
+
+impl From<&SessionMemoryState> for SessionMemoryStateView {
+    fn from(value: &SessionMemoryState) -> Self {
+        Self {
+            initialized: value.initialized,
+            last_triggered_message_count: value.last_triggered_message_count,
+            last_summarized_message_count: value.last_summarized_message_count,
+            tokens_at_last_extraction: value.tokens_at_last_extraction,
+            extraction_in_flight: value.extraction_started_at_unix_ms.is_some(),
+        }
+    }
 }
 
 fn derive_session_title(session: &Session, fallback_id: &str) -> String {

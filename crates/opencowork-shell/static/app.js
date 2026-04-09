@@ -53,6 +53,16 @@ const state = {
   skillFilter: '',
   skillProjectOnly: false,
   mcpFilter: '',
+  memory: {
+    loaded: false,
+    loading: false,
+    filter: 'all',
+    search: '',
+    overview: null,
+    selectedKey: null,
+    selectedDocument: null,
+    draftContent: '',
+  },
   paneState: loadPaneState(),
   forceMessageScroll: false,
   blockViewer: {
@@ -149,6 +159,7 @@ const els = {
   settingsProviderPanel: document.querySelector('#settings-provider-panel'),
   settingsPermissionPanel: document.querySelector('#settings-permission-panel'),
   settingsEnvironmentPanel: document.querySelector('#settings-environment-panel'),
+  settingsMemoryPanel: document.querySelector('#settings-memory-panel'),
   permissionCard: document.querySelector('#permission-card'),
   runtimeCard: document.querySelector('#runtime-card'),
   localeCard: document.querySelector('#locale-card'),
@@ -174,6 +185,28 @@ const els = {
   newProviderProfileButton: document.querySelector('#new-provider-profile-button'),
   settingsSkillsPanel: document.querySelector('#settings-skills-panel'),
   settingsMcpPanel: document.querySelector('#settings-mcp-panel'),
+  memorySearch: document.querySelector('#memory-search'),
+  memoryScopeFilter: document.querySelector('#memory-scope-filter'),
+  memoryRefreshButton: document.querySelector('#memory-refresh-button'),
+  memoryOverviewGrid: document.querySelector('#memory-overview-grid'),
+  memoryChecklist: document.querySelector('#memory-checklist'),
+  memoryCountChip: document.querySelector('#memory-count-chip'),
+  memoryCreateScope: document.querySelector('#memory-create-scope'),
+  memoryCreatePath: document.querySelector('#memory-create-path'),
+  memoryCreateButton: document.querySelector('#memory-create-button'),
+  memoryList: document.querySelector('#memory-list'),
+  memoryEditorTitle: document.querySelector('#memory-editor-title'),
+  memoryEditorCopy: document.querySelector('#memory-editor-copy'),
+  memoryCopyPathButton: document.querySelector('#memory-copy-path-button'),
+  memoryEditorScope: document.querySelector('#memory-editor-scope'),
+  memoryEditorRelativePath: document.querySelector('#memory-editor-relative-path'),
+  memoryEditorPath: document.querySelector('#memory-editor-path'),
+  memoryEditorUpdated: document.querySelector('#memory-editor-updated'),
+  memoryContent: document.querySelector('#memory-content'),
+  memoryEditorStatus: document.querySelector('#memory-editor-status'),
+  memorySaveButton: document.querySelector('#memory-save-button'),
+  memoryReloadButton: document.querySelector('#memory-reload-button'),
+  memoryDeleteButton: document.querySelector('#memory-delete-button'),
   openProviderDrawerButton: document.querySelector('#open-provider-drawer-button'),
   localeCardButton: document.querySelector('#locale-card-button'),
   localeCurrentValue: document.querySelector('#locale-current-value'),
@@ -423,6 +456,7 @@ const MESSAGES = {
     'settings.tab.permission': '权限',
     'settings.tab.skills': 'Skills',
     'settings.tab.mcp': 'MCP',
+    'settings.tab.memory': '记忆',
     'settings.tab.environment': '环境',
     'settings.overviewSkillsMeta': '项目 {{project}} / 总计 {{total}}',
     'settings.overviewMcpMeta': '已配置 {{count}} 个服务',
@@ -572,6 +606,70 @@ const MESSAGES = {
     'mcp.authHint.none': '当前不附带认证信息。',
     'mcp.authHint.env': '请求时会从环境变量读取 Bearer Token。',
     'mcp.authHint.file': '请求时会从本地文件读取 Bearer Token。',
+    'memory.title': '记忆管理',
+    'memory.copy': '查看三层记忆的当前状态，并直接管理项目、团队和当前会话的记忆文档。',
+    'memory.searchPlaceholder': '搜索记忆文档',
+    'memory.scopeFilter': '范围',
+    'memory.scope.all': '全部',
+    'memory.scope.project': '项目',
+    'memory.scope.team': '团队',
+    'memory.scope.session': '会话',
+    'memory.overviewTitle': '记忆总览',
+    'memory.overviewCopy': '当前项目的持久记忆、团队记忆、当前会话记忆和可召回文档都汇总在这里。',
+    'memory.checklistTitle': '追平清单',
+    'memory.checklistCopy': '当前记忆系统已经对齐和仍然落后参考仓库的地方。',
+    'memory.documentsTitle': '记忆文档',
+    'memory.documentsCopy': '这里列出项目记忆、团队记忆以及当前会话记忆文件。',
+    'memory.createScope': '新建到',
+    'memory.createPath': '文件名',
+    'memory.createPathPlaceholder': 'decisions/api-routing.md',
+    'memory.create': '新建记忆',
+    'memory.editorTitle': '记忆编辑器',
+    'memory.editorCopy': '选择左侧文档后，可以在这里查看和编辑它。',
+    'memory.copyPath': '复制路径',
+    'memory.scopeLabel': '范围',
+    'memory.relativePath': '相对路径',
+    'memory.filePath': '文件路径',
+    'memory.editorPlaceholder': '在这里查看或编辑记忆内容',
+    'memory.editorReady': '选择一个记忆文档开始查看或编辑。',
+    'memory.save': '保存记忆',
+    'memory.reload': '重新载入',
+    'memory.loading': '正在加载记忆状态...',
+    'memory.empty': '当前范围下还没有记忆文档。',
+    'memory.noMatch': '没有匹配当前筛选条件的记忆文档。',
+    'memory.sessionMissing': '当前没有选中的会话，会话记忆会在选择会话后出现。',
+    'memory.currentSession': '当前会话记忆',
+    'memory.projectEntrypoint': '项目记忆入口',
+    'memory.teamEntrypoint': '团队记忆入口',
+    'memory.projectNotes': '项目记忆文档',
+    'memory.teamNotes': '团队记忆文档',
+    'memory.relevantCandidates': '可召回候选',
+    'memory.memoryReady': '记忆层已经对齐到三层结构，可以继续追参考仓库剩余缺口。',
+    'memory.inFlight': '后台更新中',
+    'memory.idle': '空闲',
+    'memory.exists': '已存在',
+    'memory.missing': '未创建',
+    'memory.saved': '记忆文档已保存。',
+    'memory.deleted': '记忆文档已删除。',
+    'memory.created': '记忆文档已创建。',
+    'memory.reloaded': '记忆文档已重新载入。',
+    'memory.createPathRequired': '请先输入要创建的记忆文档路径。',
+    'memory.selectFirst': '请先选择一个记忆文档。',
+    'memory.deleteConfirm': '确定删除记忆文档 {{name}} 吗？',
+    'memory.type.entrypoint': '入口',
+    'memory.type.note': '文档',
+    'memory.type.session': '会话',
+    'memory.status.done': '已完成',
+    'memory.status.next': '待继续',
+    'memory.overview.activeSession': '当前会话',
+    'memory.overview.activeSessionNone': '未选择',
+    'memory.overview.projectRoot': '项目根',
+    'memory.overview.teamRoot': '团队根',
+    'memory.overview.sessionPath': '会话路径',
+    'memory.overview.projectCount': '{{count}} 份',
+    'memory.overview.teamCount': '{{count}} 份',
+    'memory.overview.relevantCount': '{{count}} 份',
+    'memory.overview.sessionState': '初始化 {{initialized}} / 触发 {{triggered}} / 摘要 {{summarized}} / tokens {{tokens}}',
     'drawer.kicker': '编辑器',
     'drawer.ready': '就绪。',
     'drawer.editProvider': '编辑 Provider',
@@ -809,6 +907,7 @@ const MESSAGES = {
     'settings.tab.permission': 'Permissions',
     'settings.tab.skills': 'Skills',
     'settings.tab.mcp': 'MCP',
+    'settings.tab.memory': 'Memory',
     'settings.tab.environment': 'Environment',
     'settings.overviewSkillsMeta': 'Project {{project}} / Total {{total}}',
     'settings.overviewMcpMeta': '{{count}} configured',
@@ -958,6 +1057,70 @@ const MESSAGES = {
     'mcp.authHint.none': 'No auth data will be attached.',
     'mcp.authHint.env': 'Bearer token will be read from an environment variable.',
     'mcp.authHint.file': 'Bearer token will be read from a local file.',
+    'memory.title': 'Memory',
+    'memory.copy': 'Inspect the current three-layer memory state and manage project, team, and current-session memory documents.',
+    'memory.searchPlaceholder': 'Search memory documents',
+    'memory.scopeFilter': 'Scope',
+    'memory.scope.all': 'All',
+    'memory.scope.project': 'Project',
+    'memory.scope.team': 'Team',
+    'memory.scope.session': 'Session',
+    'memory.overviewTitle': 'Memory Overview',
+    'memory.overviewCopy': 'Persistent project memory, team memory, current session memory, and recallable notes are summarized here.',
+    'memory.checklistTitle': 'Parity Checklist',
+    'memory.checklistCopy': 'What is already aligned and what is still behind the reference repositories.',
+    'memory.documentsTitle': 'Memory Documents',
+    'memory.documentsCopy': 'Browse project memory, team memory, and current session memory files here.',
+    'memory.createScope': 'Create In',
+    'memory.createPath': 'File Name',
+    'memory.createPathPlaceholder': 'decisions/api-routing.md',
+    'memory.create': 'New Memory',
+    'memory.editorTitle': 'Memory Editor',
+    'memory.editorCopy': 'Select a memory document on the left to inspect or edit it here.',
+    'memory.copyPath': 'Copy Path',
+    'memory.scopeLabel': 'Scope',
+    'memory.relativePath': 'Relative Path',
+    'memory.filePath': 'File Path',
+    'memory.editorPlaceholder': 'View or edit the memory content here',
+    'memory.editorReady': 'Select a memory document to inspect or edit it.',
+    'memory.save': 'Save Memory',
+    'memory.reload': 'Reload',
+    'memory.loading': 'Loading memory state...',
+    'memory.empty': 'No memory documents exist for the current scope.',
+    'memory.noMatch': 'No memory documents match the current filter.',
+    'memory.sessionMissing': 'No active session is selected yet, so session memory will appear after you load a session.',
+    'memory.currentSession': 'Current Session Memory',
+    'memory.projectEntrypoint': 'Project Entrypoint',
+    'memory.teamEntrypoint': 'Team Entrypoint',
+    'memory.projectNotes': 'Project Memory Notes',
+    'memory.teamNotes': 'Team Memory Notes',
+    'memory.relevantCandidates': 'Recall Candidates',
+    'memory.memoryReady': 'The memory layer is already split into three layers and can keep closing the remaining parity gaps.',
+    'memory.inFlight': 'Refreshing in background',
+    'memory.idle': 'Idle',
+    'memory.exists': 'Exists',
+    'memory.missing': 'Missing',
+    'memory.saved': 'Memory document saved.',
+    'memory.deleted': 'Memory document deleted.',
+    'memory.created': 'Memory document created.',
+    'memory.reloaded': 'Memory document reloaded.',
+    'memory.createPathRequired': 'Enter the memory document path first.',
+    'memory.selectFirst': 'Select a memory document first.',
+    'memory.deleteConfirm': 'Delete memory document {{name}}?',
+    'memory.type.entrypoint': 'Entrypoint',
+    'memory.type.note': 'Note',
+    'memory.type.session': 'Session',
+    'memory.status.done': 'Done',
+    'memory.status.next': 'Next',
+    'memory.overview.activeSession': 'Active Session',
+    'memory.overview.activeSessionNone': 'None',
+    'memory.overview.projectRoot': 'Project Root',
+    'memory.overview.teamRoot': 'Team Root',
+    'memory.overview.sessionPath': 'Session Path',
+    'memory.overview.projectCount': '{{count}} files',
+    'memory.overview.teamCount': '{{count}} files',
+    'memory.overview.relevantCount': '{{count}} files',
+    'memory.overview.sessionState': 'initialized {{initialized}} / triggered {{triggered}} / summarized {{summarized}} / tokens {{tokens}}',
     'drawer.kicker': 'Editor',
     'drawer.ready': 'Ready.',
     'drawer.editProvider': 'Edit Provider',
@@ -1292,6 +1455,7 @@ function shellSlashActions() {
     { key: 'provider', title: t('slash.action.provider'), subtitle: t('slash.action.providerSummary'), action: { type: 'open-settings-tab', tab: 'provider' } },
     { key: 'skills', title: t('slash.action.skills'), subtitle: t('slash.action.skillsSummary'), action: { type: 'open-settings-tab', tab: 'skills' } },
     { key: 'mcp', title: t('slash.action.mcp'), subtitle: t('slash.action.mcpSummary'), action: { type: 'open-settings-tab', tab: 'mcp' } },
+    { key: 'memory', title: '/memory', subtitle: 'Open memory management.', action: { type: 'open-settings-tab', tab: 'memory' } },
     { key: 'tools', title: t('slash.action.tools'), subtitle: t('slash.action.toolsSummary'), action: { type: 'show-tools' } },
   ]
 }
@@ -2436,7 +2600,11 @@ function setSettingsTab(tab) {
   els.settingsPermissionPanel.classList.toggle('is-hidden', tab !== 'permission')
   els.settingsSkillsPanel.classList.toggle('is-hidden', tab !== 'skills')
   els.settingsMcpPanel.classList.toggle('is-hidden', tab !== 'mcp')
+  els.settingsMemoryPanel.classList.toggle('is-hidden', tab !== 'memory')
   els.settingsEnvironmentPanel.classList.toggle('is-hidden', tab !== 'environment')
+  if (tab === 'memory') {
+    void loadMemoryData()
+  }
 }
 
 function setDrawerMode(mode) {
@@ -2579,6 +2747,248 @@ function renderSettingsOverview() {
     els.overviewLocaleValue.textContent = state.locale === 'zh' ? t('locale.current.zh') : t('locale.current.en')
     els.overviewLocaleMeta.textContent = t('settings.overviewLocaleMeta')
   }
+}
+
+function currentMemoryDocuments() {
+  return state.memory.overview?.documents || []
+}
+
+function memoryDocumentKey(document) {
+  if (!document) return ''
+  return `${document.scope}:${document.relativePath}:${document.activeSession ? 'active' : 'static'}`
+}
+
+function filteredMemoryDocuments() {
+  const documents = currentMemoryDocuments()
+  const query = state.memory.search.trim().toLowerCase()
+  return documents.filter((document) => {
+    const matchesScope = state.memory.filter === 'all' || document.scope === state.memory.filter
+    if (!matchesScope) return false
+    if (!query) return true
+    const haystack = [document.title, document.description, document.relativePath, document.path]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+    return haystack.includes(query)
+  })
+}
+
+function renderMemoryPanel() {
+  if (els.memorySearch) {
+    els.memorySearch.value = state.memory.search
+  }
+  if (els.memoryScopeFilter) {
+    els.memoryScopeFilter.value = state.memory.filter
+  }
+  renderMemoryOverview()
+  renderMemoryChecklist()
+  renderMemoryList()
+  renderMemoryEditor()
+}
+
+function renderMemoryOverview() {
+  if (!els.memoryOverviewGrid) return
+  const overview = state.memory.overview
+  els.memoryOverviewGrid.innerHTML = ''
+  if (!overview) {
+    els.memoryOverviewGrid.innerHTML = `<div class="settings-empty">${t('memory.loading')}</div>`
+    return
+  }
+
+  const sessionState = overview.activeSessionMemoryState
+  const cards = [
+    {
+      title: t('memory.projectNotes'),
+      value: overview.projectNoteCount,
+      meta: t('memory.overview.projectCount', { count: overview.projectNoteCount }),
+      detail: overview.projectMemoryRoot,
+    },
+    {
+      title: t('memory.teamNotes'),
+      value: overview.teamNoteCount,
+      meta: t('memory.overview.teamCount', { count: overview.teamNoteCount }),
+      detail: overview.teamMemoryRoot,
+    },
+    {
+      title: t('memory.currentSession'),
+      value: overview.activeSessionTitle || t('memory.overview.activeSessionNone'),
+      meta: sessionState
+        ? t('memory.overview.sessionState', {
+          initialized: sessionState.initialized ? 1 : 0,
+          triggered: sessionState.lastTriggeredMessageCount,
+          summarized: sessionState.lastSummarizedMessageCount,
+          tokens: sessionState.tokensAtLastExtraction,
+        })
+        : t('memory.sessionMissing'),
+      detail: overview.activeSessionMemoryPath || '-',
+    },
+    {
+      title: t('memory.relevantCandidates'),
+      value: overview.relevantCandidateCount,
+      meta: t('memory.overview.relevantCount', { count: overview.relevantCandidateCount }),
+      detail: t(sessionState?.extractionInFlight ? 'memory.inFlight' : 'memory.idle'),
+    },
+  ]
+
+  cards.forEach((card) => {
+    const node = document.createElement('article')
+    node.className = 'memory-overview-card'
+
+    const title = document.createElement('span')
+    title.className = 'memory-overview-title'
+    title.textContent = card.title
+
+    const value = document.createElement('strong')
+    value.className = 'memory-overview-value'
+    value.textContent = String(card.value)
+
+    const meta = document.createElement('span')
+    meta.className = 'memory-overview-meta'
+    meta.textContent = String(card.meta)
+
+    const detail = document.createElement('code')
+    detail.className = 'memory-overview-detail'
+    detail.textContent = compactText(String(card.detail || '-'), 76)
+    detail.title = String(card.detail || '-')
+
+    node.appendChild(title)
+    node.appendChild(value)
+    node.appendChild(meta)
+    node.appendChild(detail)
+    els.memoryOverviewGrid.appendChild(node)
+  })
+}
+
+function renderMemoryChecklist() {
+  if (!els.memoryChecklist) return
+  const items = state.memory.overview?.checklist || []
+  els.memoryChecklist.innerHTML = ''
+  if (!items.length) {
+    els.memoryChecklist.innerHTML = `<div class="settings-empty">${t('memory.loading')}</div>`
+    return
+  }
+
+  items.forEach((item) => {
+    const row = document.createElement('article')
+    row.className = 'memory-checklist-item'
+
+    const header = document.createElement('div')
+    header.className = 'memory-checklist-header'
+
+    const title = document.createElement('strong')
+    title.textContent = item.title
+
+    const status = document.createElement('span')
+    status.className = `status-tag${item.status === 'done' ? ' status-tag--accent' : ''}`
+    status.textContent = t(`memory.status.${item.status}`)
+
+    const detail = document.createElement('p')
+    detail.className = 'memory-checklist-copy'
+    detail.textContent = item.detail
+
+    header.appendChild(title)
+    header.appendChild(status)
+    row.appendChild(header)
+    row.appendChild(detail)
+    els.memoryChecklist.appendChild(row)
+  })
+}
+
+function renderMemoryList() {
+  if (!els.memoryList) return
+  const all = currentMemoryDocuments()
+  const visible = filteredMemoryDocuments()
+  if (els.memoryCountChip) {
+    els.memoryCountChip.textContent = `${visible.length} / ${all.length}`
+  }
+  els.memoryList.innerHTML = ''
+
+  if (!all.length) {
+    els.memoryList.innerHTML = `<div class="settings-empty">${t('memory.loading')}</div>`
+    return
+  }
+  if (!visible.length) {
+    const key = state.memory.search.trim() || state.memory.filter !== 'all' ? 'memory.noMatch' : 'memory.empty'
+    els.memoryList.innerHTML = `<div class="settings-empty">${t(key)}</div>`
+    return
+  }
+
+  visible.forEach((document) => {
+    const card = document.createElement('article')
+    card.className = `settings-list-card${state.memory.selectedKey === memoryDocumentKey(document) ? ' is-selected' : ''}`
+    card.addEventListener('click', async () => {
+      await selectMemoryDocument(document)
+    })
+
+    const header = document.createElement('div')
+    header.className = 'settings-list-header'
+
+    const copy = document.createElement('div')
+    copy.className = 'settings-list-copy'
+
+    const title = document.createElement('h4')
+    title.textContent = document.title
+
+    const description = document.createElement('p')
+    description.textContent = document.relativePath
+
+    copy.appendChild(title)
+    copy.appendChild(description)
+
+    const chips = document.createElement('div')
+    chips.className = 'settings-chip-row'
+    ;[
+      t(`memory.type.${document.kind}`),
+      t(`memory.scope.${document.scope}`),
+      t(document.exists ? 'memory.exists' : 'memory.missing'),
+    ].forEach((value, index) => {
+      const chip = document.createElement('span')
+      chip.className = `status-tag${index === 2 && !document.exists ? '' : ''}`
+      chip.textContent = value
+      chips.appendChild(chip)
+    })
+
+    card.appendChild(header)
+    header.appendChild(copy)
+    card.appendChild(chips)
+    els.memoryList.appendChild(card)
+  })
+}
+
+function renderMemoryEditor() {
+  const document = state.memory.selectedDocument
+  if (!document) {
+    els.memoryEditorTitle.textContent = t('memory.editorTitle')
+    els.memoryEditorCopy.textContent = t('memory.editorCopy')
+    els.memoryEditorScope.textContent = '-'
+    els.memoryEditorRelativePath.textContent = '-'
+    els.memoryEditorPath.textContent = '-'
+    els.memoryEditorUpdated.textContent = '-'
+    els.memoryContent.value = ''
+    els.memoryContent.disabled = true
+    els.memorySaveButton.disabled = true
+    els.memoryReloadButton.disabled = true
+    els.memoryDeleteButton.disabled = true
+    els.memoryCopyPathButton.disabled = true
+    els.memoryEditorStatus.textContent = t('memory.editorReady')
+    return
+  }
+
+  els.memoryEditorTitle.textContent = document.title
+  els.memoryEditorCopy.textContent = document.description
+  els.memoryEditorScope.textContent = t(`memory.scope.${document.scope}`)
+  els.memoryEditorRelativePath.textContent = document.relativePath
+  els.memoryEditorRelativePath.title = document.relativePath
+  els.memoryEditorPath.textContent = compactText(document.path, 72)
+  els.memoryEditorPath.title = document.path
+  els.memoryEditorUpdated.textContent = document.updatedAtUnixMs ? toLocaleTimestamp(document.updatedAtUnixMs) : '-'
+  els.memoryContent.value = state.memory.draftContent || ''
+  els.memoryContent.disabled = false
+  els.memorySaveButton.disabled = false
+  els.memoryReloadButton.disabled = false
+  els.memoryDeleteButton.disabled = !document.exists
+  els.memoryCopyPathButton.disabled = false
+  els.memoryEditorStatus.textContent = document.exists ? t('memory.exists') : t('memory.missing')
 }
 
 function permissionModeLabel(value) {
@@ -3131,17 +3541,12 @@ function renderHistoryList() {
     updatedChip.className = 'history-chip history-chip--time'
     updatedChip.textContent = toLocaleTimestamp(session.updatedAtUnixMs)
 
-    const countChip = document.createElement('span')
-    countChip.className = 'history-chip history-chip--count'
-    countChip.textContent = t('history.messages', { count: session.messageCount })
-
     const stateChip = document.createElement('span')
     const stateKey = sessionStateKey(session.id)
     stateChip.className = `history-chip history-chip--${stateKey}`
     stateChip.textContent = sessionStateLabel(session.id)
 
     metaRow.appendChild(updatedChip)
-    metaRow.appendChild(countChip)
     metaRow.appendChild(stateChip)
     body.appendChild(metaRow)
 
@@ -3590,12 +3995,70 @@ function renderAll() {
   renderSkillsList()
   renderMcpEditor()
   renderMcpList()
+  renderMemoryPanel()
   updateComposerState()
   syncComposerHeight()
   updateSlashMenuFromComposer()
 }
 
 // DATA
+async function loadMemoryData({ preserveSelection = true } = {}) {
+  state.memory.loading = true
+  if (state.settingsTab === 'memory') {
+    renderMemoryPanel()
+  }
+  const suffix = state.currentSessionId ? `?sessionId=${encodeURIComponent(state.currentSessionId)}` : ''
+  try {
+    const overview = await request(`/api/memory${suffix}`)
+    state.memory.overview = overview
+    state.memory.loaded = true
+
+    const documents = overview.documents || []
+    const existingSelection = preserveSelection
+      ? documents.find((document) => memoryDocumentKey(document) === state.memory.selectedKey)
+      : null
+    const nextSelection =
+      existingSelection
+      || documents.find((document) => document.scope === 'session')
+      || documents.find((document) => document.scope === 'project' && document.kind === 'entrypoint')
+      || documents[0]
+      || null
+
+    if (nextSelection) {
+      await selectMemoryDocument(nextSelection, { preserveDraft: false, skipRender: true })
+    } else {
+      state.memory.selectedKey = null
+      state.memory.selectedDocument = null
+      state.memory.draftContent = ''
+    }
+  } catch (error) {
+    setComposerStatus(error.message || t('memory.loading'), true)
+  } finally {
+    state.memory.loading = false
+    if (state.settingsTab === 'memory') {
+      renderMemoryPanel()
+    }
+  }
+}
+
+async function selectMemoryDocument(document, { preserveDraft = false, skipRender = false } = {}) {
+  if (!document) return
+  const response = await request('/api/memory/read', {
+    method: 'POST',
+    body: JSON.stringify({
+      scope: document.scope,
+      relativePath: document.relativePath,
+      sessionId: state.currentSessionId || null,
+    }),
+  })
+  state.memory.selectedKey = memoryDocumentKey(response.document)
+  state.memory.selectedDocument = response.document
+  state.memory.draftContent = preserveDraft ? state.memory.draftContent : response.content || ''
+  if (!skipRender) {
+    renderMemoryPanel()
+  }
+}
+
 async function loadBootstrap({ allowAutoSelect = false } = {}) {
   state.bootstrap = await request('/api/bootstrap')
   state.slashCatalog.loaded = false
@@ -3647,6 +4110,9 @@ async function loadBootstrap({ allowAutoSelect = false } = {}) {
   }
 
   renderAll()
+  if (state.settingsTab === 'memory') {
+    await loadMemoryData()
+  }
   if (!state.currentSessionId) {
     restoreComposerDraft(null)
   }
@@ -3665,6 +4131,9 @@ async function loadSession(sessionId, rerender = true) {
   }
   restoreComposerDraft(sessionId)
   if (rerender) renderAll()
+  if (state.settingsTab === 'memory') {
+    await loadMemoryData()
+  }
 }
 
 // ACTIONS
@@ -3794,6 +4263,128 @@ async function copyProjectPath(kind) {
     setComposerStatus(t('composer.pathCopied'))
   } catch {
     setComposerStatus(t('composer.copyFailed'), true)
+  }
+}
+
+async function copyMemoryPath() {
+  const document = state.memory.selectedDocument
+  if (!document) {
+    setComposerStatus(t('memory.selectFirst'), true)
+    return
+  }
+  try {
+    await copyText(document.path)
+    setComposerStatus(t('composer.pathCopied'))
+  } catch {
+    setComposerStatus(t('composer.copyFailed'), true)
+  }
+}
+
+async function refreshMemory() {
+  await loadMemoryData({ preserveSelection: true })
+  setComposerStatus(t('common.refresh'))
+}
+
+async function createMemoryDocument() {
+  const relativePathRaw = String(els.memoryCreatePath.value || '').trim()
+  if (!relativePathRaw) {
+    setComposerStatus(t('memory.createPathRequired'), true)
+    els.memoryCreatePath.focus()
+    return
+  }
+  const relativePath = /\.[a-z0-9]+$/i.test(relativePathRaw) ? relativePathRaw : `${relativePathRaw}.md`
+  try {
+    await request('/api/memory/save', {
+      method: 'POST',
+      body: JSON.stringify({
+        scope: els.memoryCreateScope.value,
+        relativePath,
+        sessionId: null,
+        content: `# ${relativePath.split('/').pop().replace(/\.[^.]+$/, '')}\n\n`,
+      }),
+    })
+    els.memoryCreatePath.value = ''
+    await loadMemoryData({ preserveSelection: false })
+    const next = currentMemoryDocuments().find((document) =>
+      document.scope === els.memoryCreateScope.value && document.relativePath === relativePath.replace(/\\/g, '/')
+    )
+    if (next) {
+      await selectMemoryDocument(next)
+    }
+    setComposerStatus(t('memory.created'))
+  } catch (error) {
+    setComposerStatus(error.message || t('memory.create'), true)
+  }
+}
+
+async function saveMemoryDocument() {
+  const document = state.memory.selectedDocument
+  if (!document) {
+    setComposerStatus(t('memory.selectFirst'), true)
+    return
+  }
+  try {
+    const response = await request('/api/memory/save', {
+      method: 'POST',
+      body: JSON.stringify({
+        scope: document.scope,
+        relativePath: document.relativePath,
+        sessionId: state.currentSessionId || null,
+        content: els.memoryContent.value,
+      }),
+    })
+    state.memory.selectedKey = memoryDocumentKey(response.document)
+    state.memory.selectedDocument = response.document
+    state.memory.draftContent = response.content || ''
+    await loadBootstrap({ allowAutoSelect: false })
+    if (state.settingsTab === 'memory') {
+      await loadMemoryData({ preserveSelection: true })
+    }
+    setComposerStatus(t('memory.saved'))
+  } catch (error) {
+    setComposerStatus(error.message || t('memory.save'), true)
+  }
+}
+
+async function reloadMemoryDocument() {
+  const document = state.memory.selectedDocument
+  if (!document) {
+    setComposerStatus(t('memory.selectFirst'), true)
+    return
+  }
+  try {
+    await selectMemoryDocument(document)
+    setComposerStatus(t('memory.reloaded'))
+  } catch (error) {
+    setComposerStatus(error.message || t('memory.reload'), true)
+  }
+}
+
+async function deleteMemoryDocumentAction() {
+  const document = state.memory.selectedDocument
+  if (!document || !document.exists) {
+    setComposerStatus(t('memory.selectFirst'), true)
+    return
+  }
+  const confirmed = window.confirm(t('memory.deleteConfirm', { name: document.relativePath }))
+  if (!confirmed) return
+  try {
+    state.memory.overview = await request('/api/memory/delete', {
+      method: 'POST',
+      body: JSON.stringify({
+        scope: document.scope,
+        relativePath: document.relativePath,
+        sessionId: state.currentSessionId || null,
+      }),
+    })
+    state.memory.selectedKey = null
+    state.memory.selectedDocument = null
+    state.memory.draftContent = ''
+    await loadBootstrap({ allowAutoSelect: false })
+    await loadMemoryData({ preserveSelection: false })
+    setComposerStatus(t('memory.deleted'))
+  } catch (error) {
+    setComposerStatus(error.message || t('common.delete'), true)
   }
 }
 
@@ -3968,6 +4559,11 @@ async function executeSlashInput(rawInput) {
       finishSlash('slash.executed', { command: input })
       setView('settings')
       setSettingsTab('mcp')
+      return true
+    case 'memory':
+      finishSlash('slash.executed', { command: input })
+      setView('settings')
+      setSettingsTab('memory')
       return true
     case 'tools':
       await showToolManifest()
@@ -4509,6 +5105,14 @@ els.mcpSearch.addEventListener('input', (event) => {
   state.mcpFilter = event.target.value || ''
   renderMcpList()
 })
+els.memorySearch.addEventListener('input', (event) => {
+  state.memory.search = event.target.value || ''
+  renderMemoryList()
+})
+els.memoryScopeFilter.addEventListener('change', (event) => {
+  state.memory.filter = event.target.value || 'all'
+  renderMemoryList()
+})
 els.settingsTabs.forEach((button) => {
   button.addEventListener('click', () => setSettingsTab(button.dataset.settingsTab))
 })
@@ -4552,6 +5156,15 @@ els.overviewLocaleCard.addEventListener('click', () => {
 els.localeCardButton.addEventListener('click', toggleLocale)
 els.copySettingsPathButton.addEventListener('click', () => copyProjectPath('config'))
 els.copySkillsDirButton.addEventListener('click', () => copyProjectPath('skills'))
+els.memoryRefreshButton.addEventListener('click', refreshMemory)
+els.memoryCreateButton.addEventListener('click', createMemoryDocument)
+els.memoryCopyPathButton.addEventListener('click', copyMemoryPath)
+els.memorySaveButton.addEventListener('click', saveMemoryDocument)
+els.memoryReloadButton.addEventListener('click', reloadMemoryDocument)
+els.memoryDeleteButton.addEventListener('click', deleteMemoryDocumentAction)
+els.memoryContent.addEventListener('input', () => {
+  state.memory.draftContent = els.memoryContent.value
+})
 els.settingsNewSkillButton.addEventListener('click', () => {
   setSettingsTab('skills')
   newSkill()

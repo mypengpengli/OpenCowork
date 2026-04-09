@@ -1483,9 +1483,10 @@ button:disabled {
 }
 
 .history-card-body {
-  flex-wrap: wrap;
+  display: flex;
+  flex-direction: column;
   align-items: flex-start;
-  gap: 10px;
+  gap: 8px;
   margin-top: 12px;
 }
 
@@ -1502,10 +1503,11 @@ button:disabled {
 
 .history-card-meta-row {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
   width: auto;
   flex: 0 0 auto;
+  max-width: 100%;
 }
 
 .history-chip {
@@ -1658,6 +1660,124 @@ button:disabled {
 
 .settings-card--wide {
   grid-column: span 2;
+}
+
+.settings-card-list--memory {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.memory-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.memory-overview-card,
+.memory-checklist-item {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.memory-overview-title {
+  color: var(--text-faint);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.memory-overview-value {
+  font-size: 18px;
+  line-height: 1.3;
+}
+
+.memory-overview-meta,
+.memory-checklist-copy {
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.memory-overview-detail {
+  color: var(--text-faint);
+  font-size: 12px;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.memory-checklist {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.memory-checklist-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.memory-checklist-copy {
+  margin: 0;
+}
+
+.memory-management-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 360px) minmax(0, 1fr);
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.memory-documents-card .settings-list {
+  width: auto;
+  margin: 0;
+  padding: 0;
+  max-height: 560px;
+}
+
+.memory-documents-card .settings-list-card {
+  padding: 13px 14px;
+}
+
+.memory-editor-card textarea {
+  width: 100%;
+  min-height: 360px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: #1b1b1d;
+  color: var(--text);
+  line-height: 1.75;
+  resize: vertical;
+}
+
+.memory-editor-card textarea:focus {
+  outline: none;
+  border-color: var(--line-strong);
+}
+
+.memory-editor-card textarea:disabled {
+  opacity: 0.55;
+}
+
+.memory-create-toolbar {
+  margin-top: 14px;
+}
+
+.compact-field--select {
+  flex: 0 0 148px;
+}
+
+.compact-field--grow {
+  flex: 1.6;
 }
 
 .settings-card-toolbar {
@@ -1917,6 +2037,10 @@ button:disabled {
   .settings-overview-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .memory-management-layout {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 900px) {
@@ -1995,7 +2119,9 @@ button:disabled {
   .metrics-grid,
   .turn-stats-grid,
   .settings-card-list,
-  .settings-overview-grid {
+  .settings-overview-grid,
+  .memory-overview-grid,
+  .settings-card-list--memory {
     grid-template-columns: 1fr;
   }
 
