@@ -171,6 +171,12 @@ button:disabled {
   color: var(--text-soft);
 }
 
+.ghost-button.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--line-strong);
+}
+
 .ghost-button--danger {
   color: #ffd7df;
 }
@@ -1663,7 +1669,7 @@ button:disabled {
 }
 
 .settings-card-list--memory {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .memory-overview-grid {
@@ -1674,7 +1680,8 @@ button:disabled {
 }
 
 .memory-overview-card,
-.memory-checklist-item {
+.memory-guide-card,
+.memory-guide-steps-card {
   display: grid;
   gap: 6px;
   padding: 14px;
@@ -1696,7 +1703,7 @@ button:disabled {
 }
 
 .memory-overview-meta,
-.memory-checklist-copy {
+.memory-guide-copy {
   color: var(--text-soft);
   font-size: 13px;
   line-height: 1.7;
@@ -1711,21 +1718,61 @@ button:disabled {
   text-overflow: ellipsis;
 }
 
-.memory-checklist {
+.memory-guide-panel {
+  margin-bottom: 18px;
+}
+
+.memory-guide-panel.is-hidden {
+  display: none;
+}
+
+.memory-guide-grid {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin-top: 14px;
 }
 
-.memory-checklist-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+.memory-guide-copy {
+  margin: 0;
 }
 
-.memory-checklist-copy {
+.memory-guide-detail-list {
+  display: grid;
+  gap: 10px;
+  margin: 4px 0 0;
+}
+
+.memory-guide-detail-list div {
+  display: grid;
+  gap: 4px;
+}
+
+.memory-guide-detail-list dt {
+  color: var(--text-faint);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.memory-guide-detail-list dd {
   margin: 0;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.memory-guide-steps {
+  margin-top: 12px;
+}
+
+.memory-guide-step-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--text-soft);
+  line-height: 1.75;
 }
 
 .memory-management-layout {
@@ -1742,8 +1789,44 @@ button:disabled {
   max-height: 560px;
 }
 
+.memory-group {
+  display: grid;
+  gap: 10px;
+}
+
+.memory-group + .memory-group {
+  margin-top: 16px;
+}
+
+.memory-group-header h4 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.memory-group-copy {
+  margin: 4px 0 0;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .memory-documents-card .settings-list-card {
   padding: 13px 14px;
+}
+
+.memory-doc-meta {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.memory-doc-path {
+  color: var(--text-faint);
+  font-size: 12px;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .memory-editor-card textarea {
@@ -1770,6 +1853,10 @@ button:disabled {
 
 .memory-create-toolbar {
   margin-top: 14px;
+}
+
+.memory-create-note {
+  margin-top: 10px;
 }
 
 .compact-field--select {
@@ -2121,6 +2208,7 @@ button:disabled {
   .settings-card-list,
   .settings-overview-grid,
   .memory-overview-grid,
+  .memory-guide-grid,
   .settings-card-list--memory {
     grid-template-columns: 1fr;
   }

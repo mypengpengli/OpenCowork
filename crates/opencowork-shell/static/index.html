@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>OpenClaw</title>
+    <title>OpenCowork</title>
     <link rel="stylesheet" href="/app.css" />
   </head>
   <body>
@@ -18,7 +18,7 @@
 
           <div class="brand-block">
             <p class="brand-kicker" data-i18n="brand.kicker">OpenCoWork 智能体</p>
-            <h1 class="brand-name">OpenClaw</h1>
+            <h1 class="brand-name">OpenCowork</h1>
           </div>
 
           <button id="new-session-button" class="primary-button sidebar-new-button" type="button">
@@ -95,7 +95,7 @@
             <div class="chat-scroll" id="message-list-shell">
               <div id="chat-empty-state" class="empty-state-shell">
                 <div class="empty-state-mark">OC</div>
-                <h2 data-i18n="empty.title">OpenClaw</h2>
+                <h2 data-i18n="empty.title">OpenCowork</h2>
                 <p class="empty-state-copy" data-i18n="empty.copy">
                   在不改后端运行时的前提下，用更清爽的工作台外壳继续处理上下文、记忆、工具和会话。
                 </p>
@@ -129,7 +129,7 @@
               <section id="session-banner" class="session-banner">
                 <div>
                   <p class="banner-kicker" data-i18n="session.kicker">当前会话</p>
-                  <h2 id="chat-title">OpenClaw 会话</h2>
+                  <h2 id="chat-title">OpenCowork 会话</h2>
                   <p id="chat-subtitle" class="banner-copy">
                     继续处理当前后端会话。
                   </p>
@@ -510,29 +510,31 @@
                     <option value="session" data-i18n="memory.scope.session">会话</option>
                   </select>
                 </label>
+                <button id="memory-guide-button" class="ghost-button" type="button" data-i18n="memory.guideButton">记忆原理</button>
                 <button id="memory-refresh-button" class="ghost-button" type="button" data-i18n="common.refresh">刷新</button>
               </div>
             </header>
+
+            <article id="memory-guide-panel" class="settings-card memory-guide-panel is-hidden">
+              <div class="settings-card-header">
+                <div>
+                  <h3 data-i18n="memory.guideTitle">记忆原理与用法</h3>
+                  <p class="settings-card-copy" data-i18n="memory.guideCopy">先看这里，再去编辑记忆文档，会更容易理解每一类该写什么。</p>
+                </div>
+              </div>
+              <div id="memory-guide-grid" class="memory-guide-grid"></div>
+              <div id="memory-guide-steps" class="memory-guide-steps"></div>
+            </article>
 
             <div class="settings-card-list settings-card-list--memory">
               <article class="settings-card">
                 <div class="settings-card-header">
                   <div>
                     <h3 data-i18n="memory.overviewTitle">记忆总览</h3>
-                    <p class="settings-card-copy" data-i18n="memory.overviewCopy">当前项目的持久记忆、团队记忆、当前会话记忆和可召回文档都汇总在这里。</p>
+                    <p class="settings-card-copy" data-i18n="memory.overviewCopy">项目长期记忆、团队共享记忆、当前会话记忆和可召回候选会集中显示在这里。</p>
                   </div>
                 </div>
                 <div id="memory-overview-grid" class="memory-overview-grid"></div>
-              </article>
-
-              <article class="settings-card">
-                <div class="settings-card-header">
-                  <div>
-                    <h3 data-i18n="memory.checklistTitle">追平清单</h3>
-                    <p class="settings-card-copy" data-i18n="memory.checklistCopy">当前记忆系统已经对齐和仍然落后参考仓库的地方。</p>
-                  </div>
-                </div>
-                <div id="memory-checklist" class="memory-checklist"></div>
               </article>
             </div>
 
@@ -541,7 +543,7 @@
                 <div class="settings-card-header">
                   <div>
                     <h3 data-i18n="memory.documentsTitle">记忆文档</h3>
-                    <p class="settings-card-copy" data-i18n="memory.documentsCopy">这里列出项目记忆、团队记忆以及当前会话记忆文件。</p>
+                    <p class="settings-card-copy" data-i18n="memory.documentsCopy">按用途分组查看记忆文档。先看分组说明，再决定写到哪一类。</p>
                   </div>
                   <span id="memory-count-chip" class="status-tag">0 / 0</span>
                 </div>
@@ -560,6 +562,7 @@
                   </label>
                   <button id="memory-create-button" class="primary-button" type="button" data-i18n="memory.create">新建记忆</button>
                 </div>
+                <p class="drawer-note memory-create-note" data-i18n="memory.createHint">这里新建的是补充记忆笔记，不会覆盖项目主记忆或团队主记忆入口。</p>
 
                 <div id="memory-list" class="settings-list"></div>
               </article>
@@ -579,6 +582,14 @@
                   <div>
                     <dt data-i18n="memory.scopeLabel">范围</dt>
                     <dd id="memory-editor-scope">-</dd>
+                  </div>
+                  <div>
+                    <dt data-i18n="memory.typeLabel">记忆类型</dt>
+                    <dd id="memory-editor-type">-</dd>
+                  </div>
+                  <div>
+                    <dt data-i18n="memory.usageLabel">适合存什么</dt>
+                    <dd id="memory-editor-usage">-</dd>
                   </div>
                   <div>
                     <dt data-i18n="memory.relativePath">相对路径</dt>

@@ -437,7 +437,7 @@ async fn main() -> anyhow::Result<()> {
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    println!("OpenClaw shell listening at http://{addr}");
+    println!("OpenCowork shell listening at http://{addr}");
     axum::serve(listener, app).await?;
     Ok(())
 }
@@ -486,7 +486,7 @@ async fn get_bootstrap(
     .map_err(internal_error)?
     .map_err(ApiError::internal)?;
     Ok(Json(BootstrapResponse {
-        app_name: "OpenClaw",
+        app_name: "OpenCowork",
         cwd: state.cwd.display().to_string(),
         settings_file: shell_settings_path(&state.cwd).display().to_string(),
         model: model.clone(),

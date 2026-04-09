@@ -56,6 +56,7 @@ const state = {
   memory: {
     loaded: false,
     loading: false,
+    guideOpen: false,
     filter: 'all',
     search: '',
     overview: null,
@@ -187,9 +188,12 @@ const els = {
   settingsMcpPanel: document.querySelector('#settings-mcp-panel'),
   memorySearch: document.querySelector('#memory-search'),
   memoryScopeFilter: document.querySelector('#memory-scope-filter'),
+  memoryGuideButton: document.querySelector('#memory-guide-button'),
   memoryRefreshButton: document.querySelector('#memory-refresh-button'),
+  memoryGuidePanel: document.querySelector('#memory-guide-panel'),
+  memoryGuideGrid: document.querySelector('#memory-guide-grid'),
+  memoryGuideSteps: document.querySelector('#memory-guide-steps'),
   memoryOverviewGrid: document.querySelector('#memory-overview-grid'),
-  memoryChecklist: document.querySelector('#memory-checklist'),
   memoryCountChip: document.querySelector('#memory-count-chip'),
   memoryCreateScope: document.querySelector('#memory-create-scope'),
   memoryCreatePath: document.querySelector('#memory-create-path'),
@@ -199,6 +203,8 @@ const els = {
   memoryEditorCopy: document.querySelector('#memory-editor-copy'),
   memoryCopyPathButton: document.querySelector('#memory-copy-path-button'),
   memoryEditorScope: document.querySelector('#memory-editor-scope'),
+  memoryEditorType: document.querySelector('#memory-editor-type'),
+  memoryEditorUsage: document.querySelector('#memory-editor-usage'),
   memoryEditorRelativePath: document.querySelector('#memory-editor-relative-path'),
   memoryEditorPath: document.querySelector('#memory-editor-path'),
   memoryEditorUpdated: document.querySelector('#memory-editor-updated'),
@@ -345,7 +351,7 @@ const MESSAGES = {
     'composer.streaming': '输出中…',
     'message.pendingUser': '刚刚发送',
     'message.waitingResponse': '等待助手响应…',
-    'app.title': 'OpenClaw',
+    'app.title': 'OpenCowork',
     'brand.kicker': 'OpenCoWork 智能体',
     'sidebar.newSession': '新建会话',
     'sidebar.conversations': '会话列表',
@@ -361,19 +367,19 @@ const MESSAGES = {
     'locale.switchToChinese': '中文',
     'locale.current.zh': '中文',
     'locale.current.en': 'English',
-    'empty.title': 'OpenClaw',
+    'empty.title': 'OpenCowork',
     'empty.copy': '在不改后端运行时的前提下，用更清爽的工作台外壳继续处理上下文、记忆、工具和会话。',
     'empty.example1': '查看当前工作区，并总结运行时状态。',
     'empty.example2': '调整 API / Provider 设置，但不要改主循环。',
     'empty.example3': '为当前项目创建或更新本地 Skill。',
     'session.kicker': '当前会话',
-    'session.defaultTitle': 'OpenClaw 会话',
+    'session.defaultTitle': 'OpenCowork 会话',
     'session.defaultSubtitle': '从侧边栏加载已有会话，或者新建一个继续工作。',
     'session.empty': '暂无活动会话',
     'session.waiting': '等待第一轮输入',
     'session.loaded': '已从当前状态加载',
     'session.updated': '更新于 {{time}}',
-    'session.title': 'OpenClaw / {{id}}',
+    'session.title': 'OpenCowork / {{id}}',
     'session.subtitle': '继续处理当前后端会话，共有 {{count}} 条已存消息。',
     'session.copyId': '复制会话号',
     'session.new': '新建空白会话',
@@ -615,19 +621,50 @@ const MESSAGES = {
     'memory.scope.team': '团队',
     'memory.scope.session': '会话',
     'memory.overviewTitle': '记忆总览',
-    'memory.overviewCopy': '当前项目的持久记忆、团队记忆、当前会话记忆和可召回文档都汇总在这里。',
-    'memory.checklistTitle': '追平清单',
-    'memory.checklistCopy': '当前记忆系统已经对齐和仍然落后参考仓库的地方。',
+    'memory.overviewCopy': '项目长期记忆、团队共享记忆、当前会话记忆和可召回候选都会集中显示在这里。',
+    'memory.guideButton': '记忆原理',
+    'memory.guideTitle': '记忆原理与用法',
+    'memory.guideCopy': '先看这里，再去编辑记忆文档，会更容易理解每一类该写什么。',
+    'memory.guide.projectTitle': '项目长期记忆',
+    'memory.guide.projectCopy': '写长期有效的规则、关键约束、重要决定。适合一直跟着项目走的内容。',
+    'memory.guide.teamTitle': '团队共享记忆',
+    'memory.guide.teamCopy': '写多人协作约定、共享流程和注意事项。适合需要团队一起遵守的内容。',
+    'memory.guide.sessionTitle': '当前会话记忆',
+    'memory.guide.sessionCopy': '这是系统为当前会话维护的工作笔记。一般以查看和轻微修正为主，不需要当成长期文档来写。',
+    'memory.guide.noteTitle': '补充记忆笔记',
+    'memory.guide.noteCopy': '把某个主题拆成单独笔记，例如 API 路由、部署约束、测试要求。需要时系统会把它们召回。',
+    'memory.guide.loadLabel': '加载时机',
+    'memory.guide.fileLabel': '文件名',
+    'memory.guide.locationLabel': '存放位置',
+    'memory.guide.howToOpenLabel': '怎么看到文件',
+    'memory.guide.projectLoad': '只要这个文件存在，就会在每次请求组装 prompt 时作为长期背景一起加载。',
+    'memory.guide.teamLoad': '只要这个文件存在，也会在每次请求组装 prompt 时一起加载，作为团队共享背景。',
+    'memory.guide.sessionLoad': '当前会话选中后会读入；后台达到阈值后会刷新 summary.md，并在后续请求里带上。当前阈值是初始化约 10k tokens，之后新增约 5k tokens 且满足更新条件时刷新。',
+    'memory.guide.noteLoad': '不会每次都加载。只有当前请求和这些笔记足够相关时，系统才会把少量补充笔记召回到上下文里。',
+    'memory.guide.projectFile': 'MEMORY.md',
+    'memory.guide.teamFile': 'team/MEMORY.md',
+    'memory.guide.sessionFile': 'summary.md',
+    'memory.guide.noteFile': '自定义 .md 文件，例如 decisions/api-routing.md',
+    'memory.guide.openHint': '想查看具体文件位置：先在下方按分组点选对应文档，再在右侧看完整路径，或点击“复制路径”。',
+    'memory.guide.sessionPathMissing': '先选中一个会话后，这里才会出现 session-memory/summary.md 的真实路径。',
+    'memory.guide.stepsTitle': '怎么用最合适',
+    'memory.guide.step1': '长期规则和重要决定，优先写进“项目主记忆”。',
+    'memory.guide.step2': '多人共享的约定，写进“团队共享记忆”。',
+    'memory.guide.step3': '某个专题太长时，再拆成“补充记忆笔记”。',
+    'memory.guide.step4': '“当前会话记忆”主要用来理解系统此刻记住了什么，不建议把它当知识库来堆内容。',
     'memory.documentsTitle': '记忆文档',
-    'memory.documentsCopy': '这里列出项目记忆、团队记忆以及当前会话记忆文件。',
+    'memory.documentsCopy': '按用途分组查看记忆文档。先看分组说明，再决定写到哪一类。',
     'memory.createScope': '新建到',
     'memory.createPath': '文件名',
     'memory.createPathPlaceholder': 'decisions/api-routing.md',
     'memory.create': '新建记忆',
+    'memory.createHint': '这里新建的是补充记忆笔记，不会覆盖项目主记忆或团队主记忆入口。',
     'memory.editorTitle': '记忆编辑器',
     'memory.editorCopy': '选择左侧文档后，可以在这里查看和编辑它。',
     'memory.copyPath': '复制路径',
     'memory.scopeLabel': '范围',
+    'memory.typeLabel': '记忆类型',
+    'memory.usageLabel': '适合存什么',
     'memory.relativePath': '相对路径',
     'memory.filePath': '文件路径',
     'memory.editorPlaceholder': '在这里查看或编辑记忆内容',
@@ -659,6 +696,30 @@ const MESSAGES = {
     'memory.type.entrypoint': '入口',
     'memory.type.note': '文档',
     'memory.type.session': '会话',
+    'memory.docType.projectEntry': '项目主记忆',
+    'memory.docType.projectNote': '项目补充笔记',
+    'memory.docType.teamEntry': '团队共享记忆',
+    'memory.docType.teamNote': '团队补充笔记',
+    'memory.docType.session': '当前会话记忆',
+    'memory.doc.projectEntryTitle': '项目主记忆',
+    'memory.doc.teamEntryTitle': '团队共享记忆',
+    'memory.doc.sessionTitle': '当前会话记忆',
+    'memory.doc.projectEntryUsage': '适合长期规则、关键约束、重要决定。',
+    'memory.doc.projectNoteUsage': '适合某个专题的补充说明，按需被召回。',
+    'memory.doc.teamEntryUsage': '适合多人共享流程、协作约定和团队注意事项。',
+    'memory.doc.teamNoteUsage': '适合团队内部某个专题的共享笔记。',
+    'memory.doc.sessionUsage': '系统维护的当前会话工作笔记，用来承接上下文。',
+    'memory.group.projectEntryTitle': '项目主记忆',
+    'memory.group.projectEntryCopy': '最重要的项目级长期记忆。优先放规则、约束和关键决定。',
+    'memory.group.projectNotesTitle': '项目补充笔记',
+    'memory.group.projectNotesCopy': '给项目主记忆分流的专题笔记，例如 API、测试、部署、目录约定。',
+    'memory.group.teamEntryTitle': '团队共享记忆',
+    'memory.group.teamEntryCopy': '团队层面的共享规则和协作约定，适合所有成员一起遵守。',
+    'memory.group.teamNotesTitle': '团队补充笔记',
+    'memory.group.teamNotesCopy': '团队共享记忆的专题延伸，用来存更细的共享资料。',
+    'memory.group.sessionTitle': '当前会话记忆',
+    'memory.group.sessionCopy': '本次会话的临时工作笔记，会随当前会话变化。',
+    'memory.countSummary': '共 {{count}} 份',
     'memory.status.done': '已完成',
     'memory.status.next': '待继续',
     'memory.overview.activeSession': '当前会话',
@@ -796,7 +857,7 @@ const MESSAGES = {
     'composer.streaming': 'Streaming…',
     'message.pendingUser': 'Just sent',
     'message.waitingResponse': 'Waiting for the assistant response…',
-    'app.title': 'OpenClaw',
+    'app.title': 'OpenCowork',
     'brand.kicker': 'OpenCoWork Agent',
     'sidebar.newSession': 'New Session',
     'sidebar.conversations': 'Conversations',
@@ -812,19 +873,19 @@ const MESSAGES = {
     'locale.switchToChinese': '中文',
     'locale.current.zh': 'Chinese',
     'locale.current.en': 'English',
-    'empty.title': 'OpenClaw',
+    'empty.title': 'OpenCowork',
     'empty.copy': 'Keep the backend runtime intact while using a cleaner shell for context, memory, tools, and sessions.',
     'empty.example1': 'Inspect the workspace and summarize the current runtime.',
     'empty.example2': 'Adjust API / Provider settings without touching the loop.',
     'empty.example3': 'Create or update a local skill for this project.',
     'session.kicker': 'Session',
-    'session.defaultTitle': 'OpenClaw Session',
+    'session.defaultTitle': 'OpenCowork Session',
     'session.defaultSubtitle': 'Load an existing session from the sidebar or start a new one.',
     'session.empty': 'No active session',
     'session.waiting': 'Waiting for first turn',
     'session.loaded': 'Loaded from current state',
     'session.updated': 'Updated {{time}}',
-    'session.title': 'OpenClaw / {{id}}',
+    'session.title': 'OpenCowork / {{id}}',
     'session.subtitle': 'Continue the same backend session with {{count}} stored messages.',
     'session.copyId': 'Copy Session ID',
     'session.new': 'New Blank Session',
@@ -1066,19 +1127,50 @@ const MESSAGES = {
     'memory.scope.team': 'Team',
     'memory.scope.session': 'Session',
     'memory.overviewTitle': 'Memory Overview',
-    'memory.overviewCopy': 'Persistent project memory, team memory, current session memory, and recallable notes are summarized here.',
-    'memory.checklistTitle': 'Parity Checklist',
-    'memory.checklistCopy': 'What is already aligned and what is still behind the reference repositories.',
+    'memory.overviewCopy': 'Project-long memory, team-shared memory, current session memory, and recall candidates are summarized here.',
+    'memory.guideButton': 'Memory Guide',
+    'memory.guideTitle': 'Memory Model & Usage',
+    'memory.guideCopy': 'Read this first, then edit memory documents. It explains what each memory layer is for.',
+    'memory.guide.projectTitle': 'Project-long memory',
+    'memory.guide.projectCopy': 'Store durable rules, hard constraints, and major decisions that should stay with the project.',
+    'memory.guide.teamTitle': 'Team-shared memory',
+    'memory.guide.teamCopy': 'Store shared team conventions, workflows, and coordination notes that multiple people should follow.',
+    'memory.guide.sessionTitle': 'Current session memory',
+    'memory.guide.sessionCopy': 'This is the working note maintained for the active session. It is usually for inspection and light correction, not a long-term knowledge base.',
+    'memory.guide.noteTitle': 'Supplemental memory notes',
+    'memory.guide.noteCopy': 'Break specific topics into standalone notes such as API routing, deployment constraints, or testing requirements. These are recalled when useful.',
+    'memory.guide.loadLabel': 'Load Timing',
+    'memory.guide.fileLabel': 'File Name',
+    'memory.guide.locationLabel': 'Location',
+    'memory.guide.howToOpenLabel': 'How to inspect it',
+    'memory.guide.projectLoad': 'If this file exists, it is loaded into prompt assembly on every request as durable background context.',
+    'memory.guide.teamLoad': 'If this file exists, it is also loaded on every request as shared team background context.',
+    'memory.guide.sessionLoad': 'It is read after an active session is selected; summary.md is refreshed in the background after thresholds are met and then carried into later requests. The current thresholds are about 10k tokens to initialize, then about 5k new tokens plus update conditions before refresh.',
+    'memory.guide.noteLoad': 'These are not loaded every time. Only a small set of relevant notes is recalled when the current request clearly matches them.',
+    'memory.guide.projectFile': 'MEMORY.md',
+    'memory.guide.teamFile': 'team/MEMORY.md',
+    'memory.guide.sessionFile': 'summary.md',
+    'memory.guide.noteFile': 'Custom .md files such as decisions/api-routing.md',
+    'memory.guide.openHint': 'To inspect the real file location, select a document in the grouped list below, then read the full path on the right or use “Copy Path.”',
+    'memory.guide.sessionPathMissing': 'Select an active session first to see the real session-memory/summary.md path.',
+    'memory.guide.stepsTitle': 'Best way to use it',
+    'memory.guide.step1': 'Put durable rules and major decisions in the project primary memory first.',
+    'memory.guide.step2': 'Put team-wide conventions in team shared memory.',
+    'memory.guide.step3': 'When one topic gets too large, split it into supplemental memory notes.',
+    'memory.guide.step4': 'Treat current session memory as a working note that helps the runtime carry context, not as a place to dump long-term docs.',
     'memory.documentsTitle': 'Memory Documents',
-    'memory.documentsCopy': 'Browse project memory, team memory, and current session memory files here.',
+    'memory.documentsCopy': 'Documents are grouped by purpose so it is obvious where each note belongs.',
     'memory.createScope': 'Create In',
     'memory.createPath': 'File Name',
     'memory.createPathPlaceholder': 'decisions/api-routing.md',
     'memory.create': 'New Memory',
+    'memory.createHint': 'This creates a supplemental memory note and will not replace the primary project or team memory entrypoint.',
     'memory.editorTitle': 'Memory Editor',
     'memory.editorCopy': 'Select a memory document on the left to inspect or edit it here.',
     'memory.copyPath': 'Copy Path',
     'memory.scopeLabel': 'Scope',
+    'memory.typeLabel': 'Memory Type',
+    'memory.usageLabel': 'Best For',
     'memory.relativePath': 'Relative Path',
     'memory.filePath': 'File Path',
     'memory.editorPlaceholder': 'View or edit the memory content here',
@@ -1110,6 +1202,30 @@ const MESSAGES = {
     'memory.type.entrypoint': 'Entrypoint',
     'memory.type.note': 'Note',
     'memory.type.session': 'Session',
+    'memory.docType.projectEntry': 'Project Primary Memory',
+    'memory.docType.projectNote': 'Project Note',
+    'memory.docType.teamEntry': 'Team Shared Memory',
+    'memory.docType.teamNote': 'Team Note',
+    'memory.docType.session': 'Current Session Memory',
+    'memory.doc.projectEntryTitle': 'Project Primary Memory',
+    'memory.doc.teamEntryTitle': 'Team Shared Memory',
+    'memory.doc.sessionTitle': 'Current Session Memory',
+    'memory.doc.projectEntryUsage': 'Durable rules, hard constraints, and major decisions.',
+    'memory.doc.projectNoteUsage': 'Supplemental project notes that can be recalled when useful.',
+    'memory.doc.teamEntryUsage': 'Shared workflows, coordination notes, and team-wide conventions.',
+    'memory.doc.teamNoteUsage': 'More focused team notes for a specific shared topic.',
+    'memory.doc.sessionUsage': 'The working note for the active session that carries short-term context.',
+    'memory.group.projectEntryTitle': 'Project Primary Memory',
+    'memory.group.projectEntryCopy': 'The most important project-level memory. Put long-lived rules, constraints, and decisions here first.',
+    'memory.group.projectNotesTitle': 'Project Notes',
+    'memory.group.projectNotesCopy': 'Topic-specific project notes such as API, testing, deployment, or directory conventions.',
+    'memory.group.teamEntryTitle': 'Team Shared Memory',
+    'memory.group.teamEntryCopy': 'Shared rules and collaboration conventions that the whole team should follow.',
+    'memory.group.teamNotesTitle': 'Team Notes',
+    'memory.group.teamNotesCopy': 'More focused shared references that extend the team primary memory.',
+    'memory.group.sessionTitle': 'Current Session Memory',
+    'memory.group.sessionCopy': 'The temporary working note for this active session.',
+    'memory.countSummary': '{{count}} files',
     'memory.status.done': 'Done',
     'memory.status.next': 'Next',
     'memory.overview.activeSession': 'Active Session',
@@ -2773,6 +2889,73 @@ function filteredMemoryDocuments() {
   })
 }
 
+function memoryDocumentFileLabel(document) {
+  const normalized = String(document?.relativePath || '').replace(/\\/g, '/')
+  const fileName = normalized.split('/').filter(Boolean).pop() || normalized || document?.title || '-'
+  return fileName.replace(/\.[^.]+$/, '')
+}
+
+function memoryDocumentGroupKey(document) {
+  if (document.scope === 'session') return 'session'
+  if (document.scope === 'project' && document.kind === 'entrypoint') return 'project-entry'
+  if (document.scope === 'project') return 'project-notes'
+  if (document.scope === 'team' && document.kind === 'entrypoint') return 'team-entry'
+  return 'team-notes'
+}
+
+function memoryDocumentGroupConfig(groupKey) {
+  switch (groupKey) {
+    case 'project-entry':
+      return {
+        title: t('memory.group.projectEntryTitle'),
+        copy: t('memory.group.projectEntryCopy'),
+      }
+    case 'project-notes':
+      return {
+        title: t('memory.group.projectNotesTitle'),
+        copy: t('memory.group.projectNotesCopy'),
+      }
+    case 'team-entry':
+      return {
+        title: t('memory.group.teamEntryTitle'),
+        copy: t('memory.group.teamEntryCopy'),
+      }
+    case 'team-notes':
+      return {
+        title: t('memory.group.teamNotesTitle'),
+        copy: t('memory.group.teamNotesCopy'),
+      }
+    default:
+      return {
+        title: t('memory.group.sessionTitle'),
+        copy: t('memory.group.sessionCopy'),
+      }
+  }
+}
+
+function memoryDocumentTypeLabel(document) {
+  if (document.scope === 'session') return t('memory.docType.session')
+  if (document.scope === 'project' && document.kind === 'entrypoint') return t('memory.docType.projectEntry')
+  if (document.scope === 'project') return t('memory.docType.projectNote')
+  if (document.scope === 'team' && document.kind === 'entrypoint') return t('memory.docType.teamEntry')
+  return t('memory.docType.teamNote')
+}
+
+function memoryDocumentUsageLabel(document) {
+  if (document.scope === 'session') return t('memory.doc.sessionUsage')
+  if (document.scope === 'project' && document.kind === 'entrypoint') return t('memory.doc.projectEntryUsage')
+  if (document.scope === 'project') return t('memory.doc.projectNoteUsage')
+  if (document.scope === 'team' && document.kind === 'entrypoint') return t('memory.doc.teamEntryUsage')
+  return t('memory.doc.teamNoteUsage')
+}
+
+function memoryDocumentDisplayTitle(document) {
+  if (document.scope === 'session') return t('memory.doc.sessionTitle')
+  if (document.scope === 'project' && document.kind === 'entrypoint') return t('memory.doc.projectEntryTitle')
+  if (document.scope === 'team' && document.kind === 'entrypoint') return t('memory.doc.teamEntryTitle')
+  return memoryDocumentFileLabel(document)
+}
+
 function renderMemoryPanel() {
   if (els.memorySearch) {
     els.memorySearch.value = state.memory.search
@@ -2780,8 +2963,14 @@ function renderMemoryPanel() {
   if (els.memoryScopeFilter) {
     els.memoryScopeFilter.value = state.memory.filter
   }
+  if (els.memoryGuidePanel) {
+    els.memoryGuidePanel.classList.toggle('is-hidden', !state.memory.guideOpen)
+  }
+  if (els.memoryGuideButton) {
+    els.memoryGuideButton.classList.toggle('is-active', state.memory.guideOpen)
+  }
   renderMemoryOverview()
-  renderMemoryChecklist()
+  renderMemoryGuide()
   renderMemoryList()
   renderMemoryEditor()
 }
@@ -2798,16 +2987,16 @@ function renderMemoryOverview() {
   const sessionState = overview.activeSessionMemoryState
   const cards = [
     {
-      title: t('memory.projectNotes'),
+      title: t('memory.docType.projectEntry'),
       value: overview.projectNoteCount,
       meta: t('memory.overview.projectCount', { count: overview.projectNoteCount }),
-      detail: overview.projectMemoryRoot,
+      detail: overview.projectEntrypointPath,
     },
     {
-      title: t('memory.teamNotes'),
+      title: t('memory.docType.teamEntry'),
       value: overview.teamNoteCount,
       meta: t('memory.overview.teamCount', { count: overview.teamNoteCount }),
-      detail: overview.teamMemoryRoot,
+      detail: overview.teamEntrypointPath,
     },
     {
       title: t('memory.currentSession'),
@@ -2859,39 +3048,107 @@ function renderMemoryOverview() {
   })
 }
 
-function renderMemoryChecklist() {
-  if (!els.memoryChecklist) return
-  const items = state.memory.overview?.checklist || []
-  els.memoryChecklist.innerHTML = ''
-  if (!items.length) {
-    els.memoryChecklist.innerHTML = `<div class="settings-empty">${t('memory.loading')}</div>`
-    return
-  }
+function renderMemoryGuide() {
+  if (!els.memoryGuideGrid || !els.memoryGuideSteps) return
+  els.memoryGuideGrid.innerHTML = ''
+  els.memoryGuideSteps.innerHTML = ''
+  const overview = state.memory.overview
 
-  items.forEach((item) => {
-    const row = document.createElement('article')
-    row.className = 'memory-checklist-item'
+  const sections = [
+    {
+      title: t('memory.guide.projectTitle'),
+      copy: t('memory.guide.projectCopy'),
+      load: t('memory.guide.projectLoad'),
+      file: t('memory.guide.projectFile'),
+      location: overview?.projectEntrypointPath || '-',
+    },
+    {
+      title: t('memory.guide.teamTitle'),
+      copy: t('memory.guide.teamCopy'),
+      load: t('memory.guide.teamLoad'),
+      file: t('memory.guide.teamFile'),
+      location: overview?.teamEntrypointPath || '-',
+    },
+    {
+      title: t('memory.guide.sessionTitle'),
+      copy: t('memory.guide.sessionCopy'),
+      load: t('memory.guide.sessionLoad'),
+      file: t('memory.guide.sessionFile'),
+      location: overview?.activeSessionMemoryPath || t('memory.guide.sessionPathMissing'),
+    },
+    {
+      title: t('memory.guide.noteTitle'),
+      copy: t('memory.guide.noteCopy'),
+      load: t('memory.guide.noteLoad'),
+      file: t('memory.guide.noteFile'),
+      location: [overview?.projectMemoryRoot, overview?.teamMemoryRoot].filter(Boolean).join('\n') || '-',
+    },
+  ]
 
-    const header = document.createElement('div')
-    header.className = 'memory-checklist-header'
+  sections.forEach((section) => {
+    const card = document.createElement('article')
+    card.className = 'memory-guide-card'
 
     const title = document.createElement('strong')
-    title.textContent = item.title
+    title.textContent = section.title
 
-    const status = document.createElement('span')
-    status.className = `status-tag${item.status === 'done' ? ' status-tag--accent' : ''}`
-    status.textContent = t(`memory.status.${item.status}`)
+    const copy = document.createElement('p')
+    copy.className = 'memory-guide-copy'
+    copy.textContent = section.copy
 
-    const detail = document.createElement('p')
-    detail.className = 'memory-checklist-copy'
-    detail.textContent = item.detail
+    const detailList = document.createElement('dl')
+    detailList.className = 'memory-guide-detail-list'
 
-    header.appendChild(title)
-    header.appendChild(status)
-    row.appendChild(header)
-    row.appendChild(detail)
-    els.memoryChecklist.appendChild(row)
+    ;[
+      [t('memory.guide.loadLabel'), section.load],
+      [t('memory.guide.fileLabel'), section.file],
+      [t('memory.guide.locationLabel'), section.location],
+    ].forEach(([label, value]) => {
+      const row = document.createElement('div')
+      const dt = document.createElement('dt')
+      dt.textContent = label
+      const dd = document.createElement('dd')
+      dd.textContent = value
+      dd.title = value
+      row.appendChild(dt)
+      row.appendChild(dd)
+      detailList.appendChild(row)
+    })
+
+    card.appendChild(title)
+    card.appendChild(copy)
+    card.appendChild(detailList)
+    els.memoryGuideGrid.appendChild(card)
   })
+
+  const steps = document.createElement('article')
+  steps.className = 'memory-guide-steps-card'
+
+  const heading = document.createElement('strong')
+  heading.textContent = t('memory.guide.stepsTitle')
+
+  const list = document.createElement('ol')
+  list.className = 'memory-guide-step-list'
+  ;[
+    t('memory.guide.step1'),
+    t('memory.guide.step2'),
+    t('memory.guide.step3'),
+    t('memory.guide.step4'),
+  ].forEach((line) => {
+    const item = document.createElement('li')
+    item.textContent = line
+    list.appendChild(item)
+  })
+
+  steps.appendChild(heading)
+  steps.appendChild(list)
+
+  const openHint = document.createElement('p')
+  openHint.className = 'memory-guide-copy'
+  openHint.textContent = t('memory.guide.openHint')
+  steps.appendChild(openHint)
+
+  els.memoryGuideSteps.appendChild(steps)
 }
 
 function renderMemoryList() {
@@ -2899,7 +3156,7 @@ function renderMemoryList() {
   const all = currentMemoryDocuments()
   const visible = filteredMemoryDocuments()
   if (els.memoryCountChip) {
-    els.memoryCountChip.textContent = `${visible.length} / ${all.length}`
+    els.memoryCountChip.textContent = t('memory.countSummary', { count: visible.length })
   }
   els.memoryList.innerHTML = ''
 
@@ -2913,45 +3170,91 @@ function renderMemoryList() {
     return
   }
 
+  const groupOrder = ['project-entry', 'project-notes', 'team-entry', 'team-notes', 'session']
+  const grouped = new Map(groupOrder.map((key) => [key, []]))
   visible.forEach((document) => {
-    const card = document.createElement('article')
-    card.className = `settings-list-card${state.memory.selectedKey === memoryDocumentKey(document) ? ' is-selected' : ''}`
-    card.addEventListener('click', async () => {
-      await selectMemoryDocument(document)
-    })
+    const groupKey = memoryDocumentGroupKey(document)
+    grouped.get(groupKey)?.push(document)
+  })
 
-    const header = document.createElement('div')
-    header.className = 'settings-list-header'
+  groupOrder.forEach((groupKey) => {
+    const documents = grouped.get(groupKey) || []
+    if (!documents.length) return
 
-    const copy = document.createElement('div')
-    copy.className = 'settings-list-copy'
+    const section = document.createElement('section')
+    section.className = 'memory-group'
+
+    const sectionHeader = document.createElement('div')
+    sectionHeader.className = 'memory-group-header'
+
+    const titleBlock = document.createElement('div')
 
     const title = document.createElement('h4')
-    title.textContent = document.title
+    title.textContent = memoryDocumentGroupConfig(groupKey).title
 
-    const description = document.createElement('p')
-    description.textContent = document.relativePath
+    const copy = document.createElement('p')
+    copy.className = 'memory-group-copy'
+    copy.textContent = memoryDocumentGroupConfig(groupKey).copy
 
-    copy.appendChild(title)
-    copy.appendChild(description)
+    titleBlock.appendChild(title)
+    titleBlock.appendChild(copy)
+    sectionHeader.appendChild(titleBlock)
+    section.appendChild(sectionHeader)
 
-    const chips = document.createElement('div')
-    chips.className = 'settings-chip-row'
-    ;[
-      t(`memory.type.${document.kind}`),
-      t(`memory.scope.${document.scope}`),
-      t(document.exists ? 'memory.exists' : 'memory.missing'),
-    ].forEach((value, index) => {
-      const chip = document.createElement('span')
-      chip.className = `status-tag${index === 2 && !document.exists ? '' : ''}`
-      chip.textContent = value
-      chips.appendChild(chip)
-    })
+    documents
+      .slice()
+      .sort((left, right) => String(left.relativePath || '').localeCompare(String(right.relativePath || '')))
+      .forEach((document) => {
+        const card = document.createElement('article')
+        card.className = `settings-list-card${state.memory.selectedKey === memoryDocumentKey(document) ? ' is-selected' : ''}`
+        card.addEventListener('click', async () => {
+          await selectMemoryDocument(document)
+        })
 
-    card.appendChild(header)
-    header.appendChild(copy)
-    card.appendChild(chips)
-    els.memoryList.appendChild(card)
+        const header = document.createElement('div')
+        header.className = 'settings-list-header'
+
+        const copyBlock = document.createElement('div')
+        copyBlock.className = 'settings-list-copy'
+
+        const heading = document.createElement('h4')
+        heading.textContent = memoryDocumentDisplayTitle(document)
+
+        const subtitle = document.createElement('p')
+        subtitle.textContent = memoryDocumentUsageLabel(document)
+
+        copyBlock.appendChild(heading)
+        copyBlock.appendChild(subtitle)
+        header.appendChild(copyBlock)
+        card.appendChild(header)
+
+        const meta = document.createElement('div')
+        meta.className = 'memory-doc-meta'
+
+        const path = document.createElement('span')
+        path.className = 'memory-doc-path'
+        path.textContent = document.relativePath
+        path.title = document.relativePath
+
+        const chips = document.createElement('div')
+        chips.className = 'settings-chip-row'
+        ;[
+          memoryDocumentTypeLabel(document),
+          t(document.exists ? 'memory.exists' : 'memory.missing'),
+        ].forEach((value, index) => {
+          const chip = document.createElement('span')
+          chip.className = `status-tag${index === 1 && document.exists ? ' status-tag--accent' : ''}`
+          chip.textContent = value
+          chips.appendChild(chip)
+        })
+
+        meta.appendChild(path)
+        meta.appendChild(chips)
+        card.appendChild(meta)
+        section.appendChild(card)
+      })
+
+    els.memoryList.appendChild(section)
   })
 }
 
@@ -2961,6 +3264,8 @@ function renderMemoryEditor() {
     els.memoryEditorTitle.textContent = t('memory.editorTitle')
     els.memoryEditorCopy.textContent = t('memory.editorCopy')
     els.memoryEditorScope.textContent = '-'
+    els.memoryEditorType.textContent = '-'
+    els.memoryEditorUsage.textContent = '-'
     els.memoryEditorRelativePath.textContent = '-'
     els.memoryEditorPath.textContent = '-'
     els.memoryEditorUpdated.textContent = '-'
@@ -2974,9 +3279,11 @@ function renderMemoryEditor() {
     return
   }
 
-  els.memoryEditorTitle.textContent = document.title
-  els.memoryEditorCopy.textContent = document.description
+  els.memoryEditorTitle.textContent = memoryDocumentDisplayTitle(document)
+  els.memoryEditorCopy.textContent = memoryDocumentUsageLabel(document)
   els.memoryEditorScope.textContent = t(`memory.scope.${document.scope}`)
+  els.memoryEditorType.textContent = memoryDocumentTypeLabel(document)
+  els.memoryEditorUsage.textContent = memoryDocumentUsageLabel(document)
   els.memoryEditorRelativePath.textContent = document.relativePath
   els.memoryEditorRelativePath.title = document.relativePath
   els.memoryEditorPath.textContent = compactText(document.path, 72)
@@ -3043,8 +3350,8 @@ function renderSidebarSessions() {
     infoButton.type = 'button'
     infoButton.className = 'conversation-main'
     infoButton.addEventListener('click', async () => {
-      await loadSession(session.id)
       setView('chat')
+      await loadSession(session.id)
     })
 
     const title = document.createElement('span')
@@ -3459,8 +3766,8 @@ function renderHistoryList() {
     const card = document.createElement('article')
     card.className = `history-card${state.currentSessionId === session.id ? ' is-active' : ''}`
     card.addEventListener('click', async () => {
-      await loadSession(session.id)
       setView('chat')
+      await loadSession(session.id)
     })
 
     const header = document.createElement('div')
@@ -3488,8 +3795,8 @@ function renderHistoryList() {
     openButton.textContent = t('history.open')
     openButton.addEventListener('click', async (event) => {
       event.stopPropagation()
-      await loadSession(session.id)
       setView('chat')
+      await loadSession(session.id)
     })
 
     const copyIdButton = document.createElement('button')
@@ -4224,6 +4531,7 @@ async function submitChat(event) {
 }
 
 function startNewSession() {
+  setView('chat')
   state.currentSessionId = null
   state.currentSession = null
   state.lastEvents = []
@@ -4238,7 +4546,6 @@ function startNewSession() {
   restoreComposerDraft(null)
   renderAll()
   setComposerStatus(t('composer.newSessionReady'))
-  setView('chat')
   queueMicrotask(() => els.composerInput.focus())
 }
 
@@ -5112,6 +5419,10 @@ els.memorySearch.addEventListener('input', (event) => {
 els.memoryScopeFilter.addEventListener('change', (event) => {
   state.memory.filter = event.target.value || 'all'
   renderMemoryList()
+})
+els.memoryGuideButton.addEventListener('click', () => {
+  state.memory.guideOpen = !state.memory.guideOpen
+  renderMemoryPanel()
 })
 els.settingsTabs.forEach((button) => {
   button.addEventListener('click', () => setSettingsTab(button.dataset.settingsTab))
