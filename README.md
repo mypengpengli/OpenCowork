@@ -1,6 +1,6 @@
 # OpenCoWork
 
-`opencowork` is being rebuilt as a local-first agent runtime instead of the previous frontend-only app.
+`opencowork` is now centered on a local-first Rust runtime with a usable desktop/web shell as the main entrypoint.
 
 The new direction follows the strong architectural ideas demonstrated by `claw-code`:
 
@@ -15,7 +15,12 @@ The new direction follows the strong architectural ideas demonstrated by `claw-c
 - slash-command oriented CLI surface
 - layered settings discovery and merge rules
 
-This repository is a fresh implementation for OpenCoWork. The goal is to keep the architecture quality, not to preserve the old Vite scaffold. The CLI is only the current host shell; the runtime is intended to be wrapped later by a web or desktop UI.
+This repository is a fresh implementation for OpenCoWork. The goal is to keep the architecture quality, not to preserve the old Vite scaffold. The current default user-facing host is the shell layer:
+
+- `crates/opencowork-desktop` for the Windows desktop host
+- `crates/opencowork-shell` for the local web shell
+
+The CLI still exists for debugging and lower-level runtime workflows, but it is no longer the primary product surface of this branch.
 
 ## Workspace layout
 
@@ -32,14 +37,27 @@ This repository is a fresh implementation for OpenCoWork. The goal is to keep th
 +-- crates/mcp            # MCP naming, registry, resources, auth, transport
 +-- crates/commands       # slash commands and command help
 +-- crates/opencowork-cli # executable entrypoint
++-- crates/opencowork-shell   # local web shell and settings UI
++-- crates/opencowork-desktop # native desktop host that opens the shell in WebView
 ```
 
 ## Current status
 
-The repository is now in the fourteenth rebuild phase. The old frontend scaffold is gone. OpenCoWork now has real execution paths for provider-backed turns, realtime streamed CLI rendering, MCP remote transport plus resources/auth state, session resume, persistent worker-service control, a UI-agnostic app/event layer, a stronger context/tool orchestration core, and a first real version of the reference-style three-layer memory system.
+The old frontend scaffold is gone. The current default branch is focused on:
+
+- the local-first runtime core
+- the desktop/web shell wrapper
+- shell-side settings for provider, permissions, skills, and MCP
+- auto-named sessions, slash command palette, and conversation/history UI polish
+- a double-click Windows launcher for local startup
+
+OpenCoWork now has real execution paths for provider-backed turns, MCP remote transport plus resources/auth state, session resume, persistent worker-service control, a UI-agnostic app/event layer, a stronger context/tool orchestration core, a reference-style three-layer memory system, and a usable shell surface on top of that runtime.
 
 The current repository state also includes:
 
+- desktop host plus web shell as the current primary product surface
+- shell-side provider profile management, permission-mode editing, skills/MCP management, and slash command discovery
+- auto-named sessions, improved history/search UX, top popovers, and shell launcher support
 - provider bridge abstractions plus a live OpenAI-compatible client
 - incremental SSE streaming routed into the CLI renderer without forking the main runtime loop
 - unified builtin/plugin/MCP tool registration
@@ -111,6 +129,8 @@ Useful notes:
 ## Commands
 
 ```powershell
+cargo run --target-dir "$env:TEMP\opencowork-target" -p opencowork-shell
+cargo run --target-dir "$env:TEMP\opencowork-target" -p opencowork-desktop
 cargo fmt
 cargo test --target-dir "$env:TEMP\opencowork-target"
 cargo run --target-dir "$env:TEMP\opencowork-target" -p opencowork-cli -- provider
