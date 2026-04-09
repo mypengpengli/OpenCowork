@@ -1485,7 +1485,8 @@ button:disabled {
 .history-card-body {
   flex-wrap: wrap;
   align-items: flex-start;
-  margin-top: 14px;
+  gap: 10px;
+  margin-top: 12px;
 }
 
 .history-card-preview {
@@ -1502,19 +1503,20 @@ button:disabled {
 .history-card-meta-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  width: 100%;
+  gap: 6px;
+  width: auto;
+  flex: 0 0 auto;
 }
 
 .history-chip {
   display: inline-flex;
   align-items: center;
-  min-height: 24px;
-  padding: 0 9px;
+  min-height: 22px;
+  padding: 0 8px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.05);
   color: var(--text-soft);
-  font-size: 11px;
+  font-size: 10.5px;
 }
 
 .history-chip--time::before,
@@ -1539,16 +1541,6 @@ button:disabled {
 
 .history-chip--saved {
   color: var(--text-faint);
-}
-
-.history-card-body div {
-  display: grid;
-  gap: 4px;
-}
-
-.history-card-body span {
-  color: var(--text-faint);
-  font-size: 12px;
 }
 
 .settings-card-actions {
