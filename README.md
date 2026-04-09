@@ -77,6 +77,37 @@ The current repository state also includes:
 - reference-style `ToolSearch` mode handling for `tst`, `tst-auto`, and `standard`, plus manifest diagnostics for deferred-tool sizing
 - CLI flows for `provider`, `prompt`, `resume`, `mcp auth`, `mcp resources`, `handoffs consume`, `handoffs worker`, and `handoffs service`
 
+## Windows Quick Start
+
+If you just want to double-click and run the project on Windows, use:
+
+```text
+Start-OpenClaw.bat
+```
+
+The launcher resolves the project root from its own location, so it still works if the repository is moved to a different folder. It will:
+
+- build the desktop shell first
+- start `opencowork-desktop` when the desktop host is available
+- fall back to the web shell and open `http://127.0.0.1:33211/` if the desktop host cannot be started
+
+### What a new Windows machine needs
+
+For a fresh machine, the project currently needs:
+
+- Rust toolchain (`rustup`, `cargo`, `rustc`)
+- Windows MSVC C++ build environment
+  install either Visual Studio 2022 Build Tools or Visual Studio with the C++ desktop workload
+- Microsoft Edge WebView2 Runtime
+  required by the desktop shell hosted through `wry`
+
+Useful notes:
+
+- Node.js is not required for the current Rust shell/desktop startup path.
+- Git is only needed to clone/pull the repository, not to run an already-downloaded copy.
+- MCP servers or custom tools may need their own runtimes later, depending on what you configure.
+- The first build on a new machine will be slower because Cargo needs to compile the workspace.
+
 ## Commands
 
 ```powershell
