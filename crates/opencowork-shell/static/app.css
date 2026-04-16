@@ -515,6 +515,11 @@ button:disabled {
   color: var(--accent);
 }
 
+.status-tag--danger {
+  background: rgba(240, 111, 142, 0.16);
+  color: #ffd7df;
+}
+
 .chat-stage {
   flex: 1;
   display: grid;
@@ -1664,12 +1669,54 @@ button:disabled {
   gap: 18px;
 }
 
+.acp-section-header {
+  margin-top: 28px;
+}
+
+.acp-section-header:first-child {
+  margin-top: 0;
+}
+
+.acp-section-header .field-hint {
+  margin: 10px 0 0;
+}
+
+.acp-form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.acp-form-span {
+  grid-column: 1 / -1;
+}
+
+.acp-thread-list {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.acp-command-help {
+  margin: 14px 0 0;
+  white-space: pre-wrap;
+  font-family: "Cascadia Code", "Consolas", monospace;
+}
+
+.acp-thread-copy {
+  margin: 12px 0 0;
+}
+
 .settings-card--wide {
   grid-column: span 2;
 }
 
 .settings-card-list--memory {
   grid-template-columns: minmax(0, 1fr);
+}
+
+.settings-card .settings-list {
+  width: auto;
+  margin: 14px 0 0;
+  padding: 0;
 }
 
 .memory-overview-grid {
@@ -2206,6 +2253,7 @@ button:disabled {
   .metrics-grid,
   .turn-stats-grid,
   .settings-card-list,
+  .acp-form-grid,
   .settings-overview-grid,
   .memory-overview-grid,
   .memory-guide-grid,

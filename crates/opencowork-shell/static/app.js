@@ -47,6 +47,7 @@ const state = {
   drawerMode: 'provider',
   providerApiKeyVisible: false,
   selectedProviderProfileId: null,
+  selectedChannelType: 'discord',
   selectedSkillSlug: null,
   selectedSkillDetail: null,
   selectedMcpName: null,
@@ -161,6 +162,7 @@ const els = {
   settingsPermissionPanel: document.querySelector('#settings-permission-panel'),
   settingsEnvironmentPanel: document.querySelector('#settings-environment-panel'),
   settingsMemoryPanel: document.querySelector('#settings-memory-panel'),
+  settingsAcpPanel: document.querySelector('#settings-acp-panel'),
   permissionCard: document.querySelector('#permission-card'),
   runtimeCard: document.querySelector('#runtime-card'),
   localeCard: document.querySelector('#locale-card'),
@@ -225,6 +227,29 @@ const els = {
   copySettingsPathButton: document.querySelector('#copy-settings-path-button'),
   copySkillsDirButton: document.querySelector('#copy-skills-dir-button'),
   settingsNewSkillButton: document.querySelector('#settings-new-skill-button'),
+  acpDefaultCwd: document.querySelector('#acp-default-cwd'),
+  acpCodexArgs: document.querySelector('#acp-codex-args'),
+  acpClaudeArgs: document.querySelector('#acp-claude-args'),
+  saveAcpButton: document.querySelector('#save-acp-button'),
+  refreshAcpButton: document.querySelector('#refresh-acp-button'),
+  acpChannelCountChip: document.querySelector('#acp-channel-count-chip'),
+  acpChannelList: document.querySelector('#acp-channel-list'),
+  acpSelectedChannelChip: document.querySelector('#acp-selected-channel-chip'),
+  acpChannelStatus: document.querySelector('#acp-channel-status'),
+  acpChannelBot: document.querySelector('#acp-channel-bot'),
+  acpChannelLastPoll: document.querySelector('#acp-channel-last-poll'),
+  acpChannelError: document.querySelector('#acp-channel-error'),
+  acpCommandPrefix: document.querySelector('#acp-command-prefix'),
+  acpChannelMeta: document.querySelector('#acp-channel-meta'),
+  acpCommandHelp: document.querySelector('#acp-command-help'),
+  acpThreadRuntime: document.querySelector('#acp-thread-runtime'),
+  acpThreadChannelId: document.querySelector('#acp-thread-channel-id'),
+  acpThreadChannelName: document.querySelector('#acp-thread-channel-name'),
+  acpThreadTitle: document.querySelector('#acp-thread-title'),
+  acpThreadCwd: document.querySelector('#acp-thread-cwd'),
+  createAcpThreadButton: document.querySelector('#create-acp-thread-button'),
+  acpThreadCount: document.querySelector('#acp-thread-count'),
+  acpThreadList: document.querySelector('#acp-thread-list'),
   skillSearch: document.querySelector('#skill-search'),
   skillProjectOnly: document.querySelector('#skill-project-only'),
   skillCountChip: document.querySelector('#skill-count-chip'),
@@ -241,8 +266,18 @@ const els = {
   drawerTitle: document.querySelector('#drawer-title'),
   drawerStatus: document.querySelector('#drawer-status'),
   drawerProviderPanel: document.querySelector('#drawer-provider-panel'),
+  drawerChannelPanel: document.querySelector('#drawer-channel-panel'),
   drawerSkillPanel: document.querySelector('#drawer-skill-panel'),
   drawerMcpPanel: document.querySelector('#drawer-mcp-panel'),
+  channelEditorState: document.querySelector('#channel-editor-state'),
+  channelFormNote: document.querySelector('#channel-form-note'),
+  channelForm: document.querySelector('#channel-form'),
+  channelType: document.querySelector('#channel-type'),
+  channelDiscordToken: document.querySelector('#channel-discord-token'),
+  channelDiscordGuildId: document.querySelector('#channel-discord-guild-id'),
+  channelDiscordPollMs: document.querySelector('#channel-discord-poll-ms'),
+  saveChannelButton: document.querySelector('#save-channel-button'),
+  resetChannelButton: document.querySelector('#reset-channel-button'),
   providerProfileState: document.querySelector('#provider-profile-state'),
   providerFormNote: document.querySelector('#provider-form-note'),
   providerForm: document.querySelector('#provider-form'),
@@ -310,6 +345,106 @@ const els = {
   blockViewerCloseButton: document.querySelector('#block-viewer-close-button'),
 }
 
+const ACP_CHANNEL_DEFINITIONS = [
+  {
+    type: 'discord',
+    nameKey: 'acp.channelDiscordName',
+    copyKey: 'acp.channelDiscordCopy',
+    modeKey: 'acp.channelHybridMode',
+  },
+]
+
+function getAcpChannelDefinition(type = state.selectedChannelType) {
+  return ACP_CHANNEL_DEFINITIONS.find((item) => item.type === type) || ACP_CHANNEL_DEFINITIONS[0]
+}
+
+function currentAcpChannels(settings = currentAcpOverview().settings || {}) {
+  const channels = Array.isArray(settings.channels) ? settings.channels.filter(Boolean) : []
+  if (channels.length) return channels
+  return [{
+    channelType: 'discord',
+    label: t('acp.channelDiscordName'),
+    enabled: Boolean(settings.discordEnabled),
+    config: {
+      token: settings.discordToken || '',
+      tokenEnv: settings.discordTokenEnv || '',
+      guildId: settings.discordGuildId || '',
+      pollMs: Number(settings.discordPollMs || 5000),
+      commandPrefix: settings.commandPrefix || '!oc',
+    },
+  }]
+}
+
+function findAcpChannelConfig(type = state.selectedChannelType, settings = currentAcpOverview().settings || {}) {
+  const channels = currentAcpChannels(settings)
+  return channels.find((channel) => channel.channelType === type) || channels[0] || null
+}
+
+function getAcpChannelSnapshot(type, settings = {}, status = {}) {
+  const channel = findAcpChannelConfig(type, settings)
+  const definition = getAcpChannelDefinition(channel?.channelType || type)
+  const config = channel?.config || {}
+  switch (definition.type) {
+    case 'discord': {
+      const configured = Boolean(channel?.enabled)
+      const runtimeTone = status.lastError ? 'error' : (status.running ? 'running' : '')
+      return {
+        definition,
+        configured,
+        title: channel?.label || t(definition.nameKey),
+        description: t(definition.copyKey),
+        summary: configured ? t('acp.channelConfigured') : t(definition.copyKey),
+        detail: {
+          status: acpBridgeStatusLabel(status),
+          bot: status.botUsername
+            ? `${status.botUsername}${status.botUserId ? ` (${status.botUserId})` : ''}`
+            : '-',
+          lastPoll: acpLastPollLabel(status),
+          lastError: status.lastError || '-',
+          meta: t('acp.channelsMeta', {
+            count: Number(status.scannedChannels || 0),
+            pollMs: Number(status.pollMs || 0),
+          }),
+        },
+        chips: [
+          {
+            text: acpBridgeStatusLabel(status),
+            tone: runtimeTone,
+          },
+          {
+            text: config.guildId || t('acp.channelNotConfigured'),
+            tone: config.guildId ? '' : 'error',
+          },
+          {
+            text: `${Number(config.pollMs || 5000)} ms`,
+            tone: '',
+          },
+          {
+            text: t(definition.modeKey),
+            tone: '',
+          },
+        ],
+      }
+    }
+    default:
+      return {
+        definition,
+        configured: false,
+        title: '-',
+        description: '-',
+        summary: '-',
+        detail: {
+          status: t('acp.statusDisabled'),
+          bot: '-',
+          lastPoll: '-',
+          lastError: '-',
+          meta: '-',
+        },
+        chips: [],
+      }
+  }
+}
+
 const MESSAGES = {
   zh: {
     'slash.title': '斜杠命令',
@@ -332,6 +467,7 @@ const MESSAGES = {
     'slash.action.skillsSummary': '浏览和编辑 Skills。',
     'slash.action.mcp': '/mcp',
     'slash.action.mcpSummary': '浏览和编辑 MCP 服务。',
+    'slash.action.acpSummary': '打开渠道/ACP 设置。',
     'slash.action.tools': '/tools',
     'slash.action.toolsSummary': '查看当前可用工具清单。',
     'slash.action.skill': '/skill {{name}}',
@@ -463,6 +599,7 @@ const MESSAGES = {
     'settings.tab.skills': 'Skills',
     'settings.tab.mcp': 'MCP',
     'settings.tab.memory': '记忆',
+    'settings.tab.acp': '渠道/ACP',
     'settings.tab.environment': '环境',
     'settings.overviewSkillsMeta': '项目 {{project}} / 总计 {{total}}',
     'settings.overviewMcpMeta': '已配置 {{count}} 个服务',
@@ -734,6 +871,7 @@ const MESSAGES = {
     'drawer.kicker': '编辑器',
     'drawer.ready': '就绪。',
     'drawer.editProvider': '编辑 Provider',
+    'drawer.editChannel': '编辑 {{name}}',
     'drawer.createSkill': '创建 Skill',
     'drawer.editSkill': '编辑 {{name}}',
     'drawer.createMcp': '创建 MCP 服务',
@@ -816,6 +954,89 @@ const MESSAGES = {
     'errors.mcpEndpointRequired': '当前传输方式必须填写 Endpoint。',
     'errors.mcpTokenEnvRequired': '当前认证方式必须填写 Token 环境变量。',
     'errors.mcpTokenPathRequired': '当前认证方式必须填写 Token 文件路径。',
+    'acp.title': '渠道/ACP',
+    'acp.copy': '把 Discord 配置成远程开发渠道。未绑定 ACP 时按普通助理使用；绑定后切换到独立的 Codex CLI / Claude Code CLI 会话。',
+    'acp.channelsTitle': '渠道列表',
+    'acp.channelsCopy': '各个远程渠道统一在这里管理。当前先支持 Discord，后面要接微信、Telegram 也会继续放在这一层。',
+    'acp.channelsCount': '{{visible}} / {{total}}',
+    'acp.channelDiscordName': 'Discord 渠道',
+    'acp.channelDiscordCopy': '一个 Discord 机器人同时支持普通助理模式和 ACP 直连模式。',
+    'acp.channelConfigured': '已配置',
+    'acp.channelNotConfigured': '未配置',
+    'acp.channelHybridMode': '普通助理 + ACP',
+    'acp.defaultsTitle': 'ACP 默认配置',
+    'acp.defaultsCopy': '这些默认项只作用于绑定后的 ACP 直连线程，不影响未绑定频道的普通助理模式。',
+    'acp.sectionChannelTitle': '1. 渠道配置',
+    'acp.sectionChannelCopy': '先把 Discord 接入为远程开发渠道。只完成这一步时，未绑定 ACP 的频道会按普通助理模式工作，每个频道各自保留聊天上下文。',
+    'acp.sectionChannelHint': '单个机器人 Token + 单个服务器 ID 就够了。不绑定 ACP 也能直接在频道里当普通助理用；之后对某个频道执行 !oc bind codex 或 !oc bind claude，才会切到直连模式。',
+    'acp.defaultCwd': '默认工作目录',
+    'acp.defaultCwdPlaceholder': 'd:/你的项目',
+    'acp.defaultCwdHint': '新绑定 Discord 频道时，如果没单独指定路径，就使用这里。',
+    'acp.codexArgs': 'Codex CLI 参数',
+    'acp.codexArgsHint': '每行一个参数。留空则使用内置的 Codex ACP 默认参数。',
+    'acp.claudeArgs': 'Claude Code CLI 参数',
+    'acp.claudeArgsHint': '每行一个参数。留空则使用内置的 Claude ACP 默认参数。',
+    'acp.discordToken': 'Discord 机器人 Token',
+    'acp.discordTokenPlaceholder': '机器人 Token',
+    'acp.discordTokenHint': '这里直接填写机器人的 Token。系统会自动优先读取内置环境变量 DISCORD_BOT_TOKEN，不需要额外填写变量名。',
+    'acp.discordGuildId': '服务器 ID',
+    'acp.pollMs': '轮询间隔（毫秒）',
+    'acp.channelType': '渠道类型',
+    'acp.channelTypeHint': '当前只有 Discord，一个机器人就能同时支持普通助理模式和 ACP 直连模式。',
+    'acp.channelGuildHint': '保存后会自动开始监听这个服务器下的频道和线程。',
+    'acp.channelPollHint': '一般保持 5000 即可；更小会更快，但请求也会更多。',
+    'acp.saveDefaults': '保存 ACP 默认配置',
+    'acp.channelSave': '保存渠道配置',
+    'acp.refresh': '刷新状态',
+    'acp.runtimeTitle': '渠道运行状态',
+    'acp.runtimeCopy': '配置完成后，Discord 会作为远程开发渠道使用：未绑定 ACP 的频道走普通助理模式，绑定后改为把普通消息转发给对应的 CLI 会话。',
+    'acp.bridgeStatus': '桥接状态',
+    'acp.botIdentity': '机器人身份',
+    'acp.lastPoll': '最近轮询',
+    'acp.lastError': '最近错误',
+    'acp.noChannelsScanned': '还没有扫描到频道',
+    'acp.sectionThreadTitle': '2. ACP 线程接入',
+    'acp.sectionThreadCopy': 'ACP 线程用于把某个 Discord 频道切换成直连的远程编程通道。绑定后，该频道里的普通消息不再走普通助理，而是继续对应的 CLI 会话。',
+    'acp.sectionThreadHint': '绑定方式有两种：1. 在 Discord 频道里发送 !oc bind codex 或 !oc bind claude；2. 在下面手动填写频道 ID 直接绑定。解绑后，该频道会回到普通助理模式。',
+    'acp.manualTitle': '渠道绑定',
+    'acp.manualCopy': '手动把某个 Discord 频道绑定到 ACP 线程。适合提前完成直连模式配置。',
+    'acp.runtime': '运行时',
+    'acp.channelId': 'Discord 频道 ID',
+    'acp.channelName': 'Discord 频道名',
+    'acp.channelNamePlaceholder': '远程开发',
+    'acp.threadTitle': '线程标题',
+    'acp.threadTitlePlaceholder': '远程 Codex 线程',
+    'acp.overrideCwd': '工作目录覆盖',
+    'acp.overrideCwdPlaceholder': '留空则使用默认 ACP 工作目录',
+    'acp.createThread': '创建或重绑线程',
+    'acp.threadsTitle': '渠道线程',
+    'acp.threadsCopy': '下面每张卡片都是一个独立渠道线程，底层连接到 Codex CLI 或 Claude Code CLI。',
+    'acp.statusDisabled': '未启用',
+    'acp.statusRunning': '运行中',
+    'acp.statusIdle': '空闲',
+    'acp.statusError': '错误',
+    'acp.lastPollStarted': '开始于 {{time}}',
+    'acp.lastPollCompleted': '完成于 {{time}}',
+    'acp.channelsMeta': '{{count}} 个频道 / {{pollMs}} ms',
+    'acp.helpText': 'Discord 命令：\n{{prefix}} bind codex\n{{prefix}} bind claude\n{{prefix}} status\n{{prefix}} reset\n{{prefix}} unbind\n\n未绑定频道会走普通助理模式并保留各自上下文；绑定后，普通消息会继续对应的 CLI 线程。reset 会清空当前模式的上下文，unbind 会切回普通助理。',
+    'acp.threadsEmpty': '还没有绑定任何 ACP 线程。',
+    'acp.noProviderSession': '还没有 provider session',
+    'acp.threadNeverRun': '这个 ACP 线程还没有执行过任何 prompt。',
+    'acp.channelDrawerState': '编辑 {{name}} 配置。',
+    'acp.channelDrawerNote': '这里不再单独做启用开关。保存后会根据配置自动生效：填好服务器 ID 和 Token 就开始轮询；清空其一即可停用。后续微信、Telegram 也会放在这里管理。',
+    'acp.refreshDone': 'ACP 状态已刷新。',
+    'acp.refreshFailed': '刷新 ACP 状态失败。',
+    'acp.defaultsSaved': 'ACP 默认配置已保存。',
+    'acp.channelSaved': '渠道配置已保存。',
+    'acp.saveFailed': '保存 ACP 配置失败。',
+    'acp.channelIdRequired': '必须填写 Discord 频道 ID。',
+    'acp.threadBound': '已绑定到 Discord 频道 {{channelId}}。',
+    'acp.threadCreateFailed': '创建 ACP 线程失败。',
+    'acp.threadReset': 'ACP 线程 {{threadId}} 已重置。',
+    'acp.threadResetFailed': '重置 ACP 线程失败。',
+    'acp.threadDeleteConfirm': '确定删除 ACP 线程 “{{label}}” 吗？',
+    'acp.threadDeleted': 'ACP 线程 {{threadId}} 已删除。',
+    'acp.threadDeleteFailed': '删除 ACP 线程失败。',
   },
   en: {
     'slash.title': 'Slash Commands',
@@ -838,6 +1059,7 @@ const MESSAGES = {
     'slash.action.skillsSummary': 'Browse and edit skills.',
     'slash.action.mcp': '/mcp',
     'slash.action.mcpSummary': 'Browse and edit MCP servers.',
+    'slash.action.acpSummary': 'Open Channel/ACP settings.',
     'slash.action.tools': '/tools',
     'slash.action.toolsSummary': 'Show the current tool manifest.',
     'slash.action.skill': '/skill {{name}}',
@@ -969,7 +1191,91 @@ const MESSAGES = {
     'settings.tab.skills': 'Skills',
     'settings.tab.mcp': 'MCP',
     'settings.tab.memory': 'Memory',
+    'settings.tab.acp': 'Channel/ACP',
     'settings.tab.environment': 'Environment',
+    'acp.title': 'Channel/ACP',
+    'acp.copy': 'Configure Discord as a remote development channel. Unbound channels stay in normal assistant mode; bound channels switch into isolated Codex CLI or Claude Code CLI sessions.',
+    'acp.channelsTitle': 'Channel List',
+    'acp.channelsCopy': 'Manage every remote channel from one place. Discord is first; WeChat, Telegram, and other channel types can be added here later.',
+    'acp.channelsCount': '{{visible}} / {{total}}',
+    'acp.channelDiscordName': 'Discord Channel',
+    'acp.channelDiscordCopy': 'One Discord bot can serve both normal assistant mode and direct ACP mode.',
+    'acp.channelConfigured': 'Configured',
+    'acp.channelNotConfigured': 'Not Configured',
+    'acp.channelHybridMode': 'Assistant + ACP',
+    'acp.defaultsTitle': 'ACP Defaults',
+    'acp.defaultsCopy': 'These defaults only affect bound ACP direct threads and do not change the normal assistant flow in unbound channels.',
+    'acp.sectionChannelTitle': '1. Channel Setup',
+    'acp.sectionChannelCopy': 'First connect Discord as a remote development channel. With only this step, unbound channels work in normal assistant mode and each channel keeps its own chat context.',
+    'acp.sectionChannelHint': 'One bot token plus one server ID is enough. You can use Discord as a normal assistant channel without ACP, then run !oc bind codex or !oc bind claude in a specific channel when you want direct mode.',
+    'acp.defaultCwd': 'Default Working Directory',
+    'acp.defaultCwdPlaceholder': 'd:/your/project',
+    'acp.defaultCwdHint': 'Used when a newly bound Discord channel does not provide an explicit path.',
+    'acp.codexArgs': 'Codex CLI Args',
+    'acp.codexArgsHint': 'One argument per line. Leave empty to use the built-in Codex ACP defaults.',
+    'acp.claudeArgs': 'Claude Code CLI Args',
+    'acp.claudeArgsHint': 'One argument per line. Leave empty to use the built-in Claude ACP defaults.',
+    'acp.discordToken': 'Discord Bot Token',
+    'acp.discordTokenPlaceholder': 'Bot token',
+    'acp.discordTokenHint': 'Paste the bot token directly here. The app automatically checks the built-in DISCORD_BOT_TOKEN environment variable first, so no extra env var field is needed.',
+    'acp.discordGuildId': 'Server ID',
+    'acp.pollMs': 'Poll Interval (ms)',
+    'acp.channelType': 'Channel Type',
+    'acp.channelTypeHint': 'Discord is the only channel today, and one bot is enough for both normal assistant mode and direct ACP mode.',
+    'acp.channelGuildHint': 'After saving, the bridge starts monitoring channels and threads in this server automatically.',
+    'acp.channelPollHint': '5000 ms is usually enough. Lower values respond faster but create more requests.',
+    'acp.saveDefaults': 'Save ACP Defaults',
+    'acp.channelSave': 'Save Channel Settings',
+    'acp.refresh': 'Refresh Status',
+    'acp.runtimeTitle': 'Channel Runtime',
+    'acp.runtimeCopy': 'Once configured, Discord acts as a remote development channel: unbound channels use normal assistant mode, and bound channels forward plain messages into the linked CLI session.',
+    'acp.bridgeStatus': 'Bridge Status',
+    'acp.botIdentity': 'Bot Identity',
+    'acp.lastPoll': 'Last Poll',
+    'acp.lastError': 'Last Error',
+    'acp.noChannelsScanned': 'No channels scanned yet',
+    'acp.sectionThreadTitle': '2. ACP Thread Binding',
+    'acp.sectionThreadCopy': 'ACP binding switches a Discord channel into direct remote coding mode. After binding, plain messages no longer use the normal assistant flow and instead continue the linked CLI session.',
+    'acp.sectionThreadHint': 'There are two binding methods: 1. send !oc bind codex or !oc bind claude inside the Discord channel; 2. bind it manually below with the channel ID. After unbinding, the channel returns to normal assistant mode.',
+    'acp.manualTitle': 'Channel Binding',
+    'acp.manualCopy': 'Bind a Discord channel to an ACP thread manually. Useful when you want direct mode ready before the first bot command arrives.',
+    'acp.runtime': 'Runtime',
+    'acp.channelId': 'Discord Channel ID',
+    'acp.channelName': 'Discord Channel Name',
+    'acp.channelNamePlaceholder': 'remote-dev',
+    'acp.threadTitle': 'Thread Title',
+    'acp.threadTitlePlaceholder': 'Remote Codex Thread',
+    'acp.overrideCwd': 'Working Directory Override',
+    'acp.overrideCwdPlaceholder': 'Leave empty to use the default ACP working directory',
+    'acp.createThread': 'Create or Rebind Thread',
+    'acp.threadsTitle': 'Channel Threads',
+    'acp.threadsCopy': 'Each card below is an isolated channel thread backed by either Codex CLI or Claude Code CLI.',
+    'acp.statusDisabled': 'Disabled',
+    'acp.statusRunning': 'Running',
+    'acp.statusIdle': 'Idle',
+    'acp.statusError': 'Error',
+    'acp.lastPollStarted': 'Started {{time}}',
+    'acp.lastPollCompleted': 'Completed {{time}}',
+    'acp.channelsMeta': '{{count}} channels / {{pollMs}} ms',
+    'acp.helpText': 'Discord commands:\n{{prefix}} bind codex\n{{prefix}} bind claude\n{{prefix}} status\n{{prefix}} reset\n{{prefix}} unbind\n\nUnbound channels stay in normal assistant mode and keep their own context. After binding, plain messages continue the linked CLI thread. reset clears the current mode context, and unbind switches the channel back to normal assistant mode.',
+    'acp.threadsEmpty': 'No Channel/ACP threads are bound yet.',
+    'acp.noProviderSession': 'no provider session yet',
+    'acp.threadNeverRun': 'This Channel/ACP thread has not run any prompts yet.',
+    'acp.channelDrawerState': 'Editing {{name}} settings.',
+    'acp.channelDrawerNote': 'There is no separate enable switch anymore. Save is enough: once the server ID and token are present, polling starts automatically; clear either field to disable it. Future channel types such as WeChat or Telegram will live here too.',
+    'acp.refreshDone': 'Channel/ACP status refreshed.',
+    'acp.refreshFailed': 'Failed to refresh Channel/ACP status.',
+    'acp.defaultsSaved': 'ACP defaults saved.',
+    'acp.channelSaved': 'Channel settings saved.',
+    'acp.saveFailed': 'Failed to save Channel/ACP settings.',
+    'acp.channelIdRequired': 'Discord channel id is required.',
+    'acp.threadBound': 'Bound to Discord channel {{channelId}}.',
+    'acp.threadCreateFailed': 'Failed to create Channel/ACP thread.',
+    'acp.threadReset': 'Channel/ACP thread {{threadId}} reset.',
+    'acp.threadResetFailed': 'Failed to reset Channel/ACP thread.',
+    'acp.threadDeleteConfirm': 'Delete Channel/ACP thread "{{label}}"?',
+    'acp.threadDeleted': 'Channel/ACP thread {{threadId}} deleted.',
+    'acp.threadDeleteFailed': 'Failed to delete Channel/ACP thread.',
     'settings.overviewSkillsMeta': 'Project {{project}} / Total {{total}}',
     'settings.overviewMcpMeta': '{{count}} configured',
     'settings.overviewLocaleMeta': 'Click to switch language',
@@ -1240,6 +1546,7 @@ const MESSAGES = {
     'drawer.kicker': 'Editor',
     'drawer.ready': 'Ready.',
     'drawer.editProvider': 'Edit Provider',
+    'drawer.editChannel': 'Edit {{name}}',
     'drawer.createSkill': 'Create Skill',
     'drawer.editSkill': 'Edit {{name}}',
     'drawer.createMcp': 'Create MCP Server',
@@ -1572,6 +1879,7 @@ function shellSlashActions() {
     { key: 'skills', title: t('slash.action.skills'), subtitle: t('slash.action.skillsSummary'), action: { type: 'open-settings-tab', tab: 'skills' } },
     { key: 'mcp', title: t('slash.action.mcp'), subtitle: t('slash.action.mcpSummary'), action: { type: 'open-settings-tab', tab: 'mcp' } },
     { key: 'memory', title: '/memory', subtitle: 'Open memory management.', action: { type: 'open-settings-tab', tab: 'memory' } },
+    { key: 'acp', title: '/acp', subtitle: t('slash.action.acpSummary'), action: { type: 'open-settings-tab', tab: 'acp' } },
     { key: 'tools', title: t('slash.action.tools'), subtitle: t('slash.action.toolsSummary'), action: { type: 'show-tools' } },
   ]
 }
@@ -2717,6 +3025,7 @@ function setSettingsTab(tab) {
   els.settingsSkillsPanel.classList.toggle('is-hidden', tab !== 'skills')
   els.settingsMcpPanel.classList.toggle('is-hidden', tab !== 'mcp')
   els.settingsMemoryPanel.classList.toggle('is-hidden', tab !== 'memory')
+  els.settingsAcpPanel.classList.toggle('is-hidden', tab !== 'acp')
   els.settingsEnvironmentPanel.classList.toggle('is-hidden', tab !== 'environment')
   if (tab === 'memory') {
     void loadMemoryData()
@@ -2725,8 +3034,11 @@ function setSettingsTab(tab) {
 
 function setDrawerMode(mode) {
   state.drawerMode = mode
+  const activeChannel = getAcpChannelDefinition()
+  const activeChannelConfig = findAcpChannelConfig(state.selectedChannelType)
   const titles = {
     provider: t('drawer.editProvider'),
+    channel: t('drawer.editChannel', { name: activeChannelConfig?.label || t(activeChannel.nameKey) }),
     skill: state.selectedSkillDetail
       ? t('drawer.editSkill', { name: state.selectedSkillDetail.name })
       : t('drawer.createSkill'),
@@ -2736,6 +3048,7 @@ function setDrawerMode(mode) {
   }
   els.drawerTitle.textContent = titles[mode]
   els.drawerProviderPanel.classList.toggle('is-hidden', mode !== 'provider')
+  els.drawerChannelPanel.classList.toggle('is-hidden', mode !== 'channel')
   els.drawerSkillPanel.classList.toggle('is-hidden', mode !== 'skill')
   els.drawerMcpPanel.classList.toggle('is-hidden', mode !== 'mcp')
 }
@@ -2750,6 +3063,14 @@ function openDrawer(mode) {
   queueMicrotask(() => {
     if (mode === 'provider') {
       els.providerProfileLabel.focus()
+      return
+    }
+    if (mode === 'channel') {
+      if (els.channelDiscordGuildId?.value.trim()) {
+        els.channelDiscordGuildId.focus()
+      } else {
+        els.channelDiscordToken.focus()
+      }
       return
     }
     if (mode === 'skill') {
@@ -4282,6 +4603,295 @@ function renderMcpList() {
   })
 }
 
+function currentAcpOverview() {
+  return state.bootstrap?.acp || {
+    settings: {
+      defaultCwd: state.bootstrap?.cwd || '',
+      codexArgsText: '',
+      claudeArgsText: '',
+      channels: [{
+        channelType: 'discord',
+        label: t('acp.channelDiscordName'),
+        enabled: false,
+        config: {
+          token: '',
+          tokenEnv: '',
+          guildId: '',
+          pollMs: 5000,
+          commandPrefix: '!oc',
+        },
+      }],
+      discordEnabled: false,
+      discordToken: '',
+      discordTokenEnv: '',
+      discordGuildId: '',
+      discordPollMs: 5000,
+      commandPrefix: '!oc',
+    },
+    discordStatus: {
+      enabled: false,
+      running: false,
+      guildId: null,
+      botUserId: null,
+      botUsername: null,
+      pollMs: 5000,
+      scannedChannels: 0,
+      lastPollStartedAtUnixMs: null,
+      lastPollCompletedAtUnixMs: null,
+      lastError: null,
+    },
+    threads: [],
+  }
+}
+
+function acpBridgeStatusLabel(status) {
+  if (!status?.enabled) return t('acp.statusDisabled')
+  if (status?.lastError) return t('acp.statusError')
+  return status?.running ? t('acp.statusRunning') : t('acp.statusIdle')
+}
+
+function acpThreadStatusLabel(thread) {
+  const raw = String(thread?.status || 'idle')
+  if (raw === 'running') return t('acp.statusRunning')
+  if (raw === 'error') return t('acp.statusError')
+  return t('acp.statusIdle')
+}
+
+function acpLastPollLabel(status) {
+  const started = status?.lastPollStartedAtUnixMs
+  const completed = status?.lastPollCompletedAtUnixMs
+  if (!started && !completed) return '-'
+  const parts = []
+  if (started) parts.push(t('acp.lastPollStarted', { time: toLocaleTimestamp(started) }))
+  if (completed) parts.push(t('acp.lastPollCompleted', { time: toLocaleTimestamp(completed) }))
+  return parts.join(' / ')
+}
+
+function applyAcpOverview(overview) {
+  if (!state.bootstrap) {
+    state.bootstrap = { acp: overview }
+  } else {
+    state.bootstrap.acp = overview
+  }
+  renderAcpPanel()
+}
+
+function renderAcpPanel() {
+  const overview = currentAcpOverview()
+  const settings = overview.settings || {}
+  const status = overview.discordStatus || {}
+  const channels = currentAcpChannels(settings)
+  if (!channels.some((channel) => channel.channelType === state.selectedChannelType) && channels[0]?.channelType) {
+    state.selectedChannelType = channels[0].channelType
+  }
+  const selectedChannel = getAcpChannelSnapshot(state.selectedChannelType, settings, status)
+  const threads = [...(overview.threads || [])].sort((left, right) =>
+    Number(right?.updatedAtUnixMs || 0) - Number(left?.updatedAtUnixMs || 0)
+  )
+
+  if (els.acpDefaultCwd) els.acpDefaultCwd.value = settings.defaultCwd || state.bootstrap?.cwd || ''
+  if (els.acpCodexArgs) els.acpCodexArgs.value = settings.codexArgsText || ''
+  if (els.acpClaudeArgs) els.acpClaudeArgs.value = settings.claudeArgsText || ''
+  if (els.acpCommandPrefix) els.acpCommandPrefix.textContent = settings.commandPrefix || '!oc'
+  if (els.acpSelectedChannelChip) els.acpSelectedChannelChip.textContent = selectedChannel.title
+  if (els.acpChannelStatus) els.acpChannelStatus.textContent = selectedChannel.detail.status
+  if (els.acpChannelBot) els.acpChannelBot.textContent = selectedChannel.detail.bot
+  if (els.acpChannelLastPoll) els.acpChannelLastPoll.textContent = selectedChannel.detail.lastPoll
+  if (els.acpChannelError) els.acpChannelError.textContent = selectedChannel.detail.lastError
+  if (els.acpChannelMeta) els.acpChannelMeta.textContent = selectedChannel.detail.meta
+  if (els.acpCommandHelp) {
+    const prefix = settings.commandPrefix || '!oc'
+    els.acpCommandHelp.textContent = t('acp.helpText', { prefix })
+  }
+  renderAcpChannelsList(settings, status)
+  renderAcpChannelEditor(settings)
+  renderAcpThreadsList(threads)
+}
+
+function renderAcpChannelsList(settings = {}, status = {}) {
+  const channels = currentAcpChannels(settings)
+  if (els.acpChannelCountChip) {
+    els.acpChannelCountChip.textContent = t('acp.channelsCount', {
+      visible: channels.length,
+      total: channels.length,
+    })
+  }
+  if (!els.acpChannelList) return
+
+  els.acpChannelList.innerHTML = ''
+  channels.forEach((channel) => {
+    const snapshot = getAcpChannelSnapshot(channel.channelType, settings, status)
+    const card = document.createElement('article')
+    card.className = `settings-list-card${state.selectedChannelType === channel.channelType ? ' is-selected' : ''}`
+    card.addEventListener('click', () => {
+      state.selectedChannelType = channel.channelType
+      renderAcpPanel()
+    })
+
+    const header = document.createElement('div')
+    header.className = 'settings-list-header'
+
+    const titleBlock = document.createElement('div')
+    titleBlock.className = 'settings-list-copy'
+    const title = document.createElement('h4')
+    title.textContent = snapshot.title
+    const description = document.createElement('p')
+    description.textContent = snapshot.description
+    titleBlock.appendChild(title)
+    titleBlock.appendChild(description)
+
+    const actions = document.createElement('div')
+    actions.className = 'page-actions'
+    const editButton = document.createElement('button')
+    editButton.type = 'button'
+    editButton.className = 'ghost-button'
+    editButton.textContent = t('common.edit')
+    editButton.addEventListener('click', (event) => {
+      event.stopPropagation()
+      openAcpChannelDrawer(channel.channelType)
+    })
+    actions.appendChild(editButton)
+
+    header.appendChild(titleBlock)
+    header.appendChild(actions)
+
+    const meta = document.createElement('div')
+    meta.className = 'settings-chip-row'
+    snapshot.chips.forEach((item) => {
+      const chip = document.createElement('span')
+      chip.className = `status-tag${item.tone === 'running' ? ' status-tag--accent' : ''}${item.tone === 'error' ? ' status-tag--danger' : ''}`
+      chip.textContent = item.text
+      meta.appendChild(chip)
+    })
+
+    const copy = document.createElement('p')
+    copy.className = 'page-copy acp-thread-copy'
+    copy.textContent = snapshot.summary
+
+    card.appendChild(header)
+    card.appendChild(meta)
+    card.appendChild(copy)
+    els.acpChannelList.appendChild(card)
+  })
+}
+
+function renderAcpChannelEditor(settings = currentAcpOverview().settings || {}) {
+  const channel = findAcpChannelConfig(state.selectedChannelType, settings)
+  const definition = getAcpChannelDefinition(channel?.channelType)
+  const config = channel?.config || {}
+  if (els.channelType) {
+    els.channelType.value = channel?.label || t(definition.nameKey)
+  }
+  if (els.channelEditorState) {
+    els.channelEditorState.textContent = t('acp.channelDrawerState', {
+      name: channel?.label || t(definition.nameKey),
+    })
+  }
+  if (els.channelFormNote) {
+    els.channelFormNote.textContent = t('acp.channelDrawerNote')
+  }
+  if (els.channelDiscordToken) {
+    els.channelDiscordToken.value = config.token || ''
+  }
+  if (els.channelDiscordGuildId) {
+    els.channelDiscordGuildId.value = config.guildId || ''
+  }
+  if (els.channelDiscordPollMs) {
+    els.channelDiscordPollMs.value = String(config.pollMs || 5000)
+  }
+}
+
+function openAcpChannelDrawer(channelType = 'discord') {
+  state.selectedChannelType = channelType
+  renderAcpPanel()
+  renderAcpChannelEditor()
+  openDrawer('channel')
+}
+
+function renderAcpThreadsList(threads) {
+  if (els.acpThreadCount) {
+    els.acpThreadCount.textContent = String(threads.length)
+  }
+  if (!els.acpThreadList) {
+    return
+  }
+  els.acpThreadList.innerHTML = ''
+  if (!threads.length) {
+    els.acpThreadList.innerHTML = `<div class="settings-empty">${t('acp.threadsEmpty')}</div>`
+    return
+  }
+
+  threads.forEach((thread) => {
+    const card = document.createElement('article')
+    card.className = 'settings-list-card'
+
+    const header = document.createElement('div')
+    header.className = 'settings-list-header'
+
+    const titleBlock = document.createElement('div')
+    titleBlock.className = 'settings-list-copy'
+    const title = document.createElement('h4')
+    title.textContent = thread.title || thread.channelName || thread.id
+    const description = document.createElement('p')
+    description.textContent = `${thread.runtime} -> ${thread.channelName || thread.channelId}`
+    titleBlock.appendChild(title)
+    titleBlock.appendChild(description)
+
+    const actions = document.createElement('div')
+    actions.className = 'page-actions'
+
+    const resetButton = document.createElement('button')
+    resetButton.type = 'button'
+    resetButton.className = 'ghost-button'
+    resetButton.textContent = t('common.reset')
+    resetButton.addEventListener('click', () => {
+      void resetAcpThread(thread.id)
+    })
+
+    const deleteButton = document.createElement('button')
+    deleteButton.type = 'button'
+    deleteButton.className = 'ghost-button ghost-button--danger'
+    deleteButton.textContent = t('common.delete')
+    deleteButton.addEventListener('click', () => {
+      void deleteAcpThread(thread.id, thread.title || thread.channelId)
+    })
+
+    actions.appendChild(resetButton)
+    actions.appendChild(deleteButton)
+    header.appendChild(titleBlock)
+    header.appendChild(actions)
+
+    const meta = document.createElement('div')
+    meta.className = 'settings-chip-row'
+    ;[
+      { text: acpThreadStatusLabel(thread), tone: thread.status },
+      { text: thread.channelId, tone: '' },
+      { text: thread.providerSessionId || t('acp.noProviderSession'), tone: '' },
+      { text: toLocaleTimestamp(thread.updatedAtUnixMs), tone: '' },
+    ].forEach((item) => {
+      const chip = document.createElement('span')
+      chip.className = `status-tag${item.tone === 'running' ? ' status-tag--accent' : ''}${item.tone === 'error' ? ' status-tag--danger' : ''}`
+      chip.textContent = item.text
+      meta.appendChild(chip)
+    })
+
+    const cwd = document.createElement('div')
+    cwd.className = 'memory-doc-path'
+    cwd.textContent = thread.cwd || '-'
+    cwd.title = thread.cwd || ''
+
+    const copy = document.createElement('p')
+    copy.className = 'page-copy acp-thread-copy'
+    copy.textContent = thread.lastError || thread.lastResultPreview || t('acp.threadNeverRun')
+
+    card.appendChild(header)
+    card.appendChild(meta)
+    card.appendChild(cwd)
+    card.appendChild(copy)
+    els.acpThreadList.appendChild(card)
+  })
+}
+
 function renderAll() {
   renderShellMeta()
   renderSidebarSessions()
@@ -4302,6 +4912,7 @@ function renderAll() {
   renderSkillsList()
   renderMcpEditor()
   renderMcpList()
+  renderAcpPanel()
   renderMemoryPanel()
   updateComposerState()
   syncComposerHeight()
@@ -4872,6 +5483,11 @@ async function executeSlashInput(rawInput) {
       setView('settings')
       setSettingsTab('memory')
       return true
+    case 'acp':
+      finishSlash('slash.executed', { command: input })
+      setView('settings')
+      setSettingsTab('acp')
+      return true
     case 'tools':
       await showToolManifest()
       finishSlash('slash.executed', { command: input })
@@ -5280,6 +5896,146 @@ async function deleteMcp() {
   }
 }
 
+async function refreshAcp() {
+  try {
+    const overview = await request('/api/acp')
+    applyAcpOverview(overview)
+    setComposerStatus(t('acp.refreshDone'))
+  } catch (error) {
+    setComposerStatus(error.message || t('acp.refreshFailed'), true)
+  }
+}
+
+function buildAcpSettingsPayload({ source = 'defaults' } = {}) {
+  const settings = currentAcpOverview().settings || {}
+  const channels = currentAcpChannels(settings)
+  const useDrawerValues = source === 'channel'
+  const nextChannels = channels.map((channel) => {
+    if (channel.channelType !== state.selectedChannelType || !useDrawerValues) {
+      return {
+        channelType: channel.channelType,
+        label: channel.label,
+        config: channel.config || {},
+      }
+    }
+    switch (channel.channelType) {
+      case 'discord':
+        return {
+          channelType: channel.channelType,
+          label: channel.label || t('acp.channelDiscordName'),
+          config: {
+            ...(channel.config || {}),
+            token: els.channelDiscordToken?.value.trim() || '',
+            guildId: els.channelDiscordGuildId?.value.trim() || '',
+            pollMs: els.channelDiscordPollMs?.value ? Number(els.channelDiscordPollMs.value) : 5000,
+          },
+        }
+      default:
+        return {
+          channelType: channel.channelType,
+          label: channel.label,
+          config: channel.config || {},
+        }
+    }
+  })
+
+  return {
+    defaultCwd: els.acpDefaultCwd.value.trim() || null,
+    codexArgsText: els.acpCodexArgs.value,
+    claudeArgsText: els.acpClaudeArgs.value,
+    channels: nextChannels,
+  }
+}
+
+async function saveAcpSettings({ source = 'defaults' } = {}) {
+  try {
+    const overview = await request('/api/acp', {
+      method: 'POST',
+      body: JSON.stringify(buildAcpSettingsPayload({ source })),
+    })
+    applyAcpOverview(overview)
+    if (source === 'channel') {
+      setDrawerStatus(t('acp.channelSaved'))
+      setComposerStatus(t('acp.channelSaved'))
+      renderAcpChannelEditor(overview.settings || {})
+    } else {
+      setComposerStatus(t('acp.defaultsSaved'))
+    }
+  } catch (error) {
+    if (source === 'channel') {
+      setDrawerStatus(error.message || t('acp.saveFailed'), true)
+    } else {
+      setComposerStatus(error.message || t('acp.saveFailed'), true)
+    }
+  }
+}
+
+async function saveChannelSettings(event) {
+  event.preventDefault()
+  await saveAcpSettings({ source: 'channel' })
+}
+
+function resetChannelEditor() {
+  renderAcpChannelEditor()
+  setDrawerStatus(t('drawer.ready'))
+}
+
+async function createAcpThread() {
+  const channelId = els.acpThreadChannelId.value.trim()
+  if (!channelId) {
+    setComposerStatus(t('acp.channelIdRequired'), true)
+    els.acpThreadChannelId.focus()
+    return
+  }
+
+  try {
+    const overview = await request('/api/acp/threads', {
+      method: 'POST',
+      body: JSON.stringify({
+        title: els.acpThreadTitle.value.trim() || null,
+        runtime: els.acpThreadRuntime.value,
+        channelId,
+        channelName: els.acpThreadChannelName.value.trim() || null,
+        cwd: els.acpThreadCwd.value.trim() || null,
+      }),
+    })
+    applyAcpOverview(overview)
+    els.acpThreadTitle.value = ''
+    els.acpThreadChannelName.value = ''
+    els.acpThreadCwd.value = ''
+    setComposerStatus(t('acp.threadBound', { channelId }))
+  } catch (error) {
+    setComposerStatus(error.message || t('acp.threadCreateFailed'), true)
+  }
+}
+
+async function resetAcpThread(threadId) {
+  try {
+    const overview = await request(`/api/acp/threads/${encodeURIComponent(threadId)}/reset`, {
+      method: 'POST',
+    })
+    applyAcpOverview(overview)
+    setComposerStatus(t('acp.threadReset', { threadId }))
+  } catch (error) {
+    setComposerStatus(error.message || t('acp.threadResetFailed'), true)
+  }
+}
+
+async function deleteAcpThread(threadId, label = threadId) {
+  const confirmed = window.confirm(t('acp.threadDeleteConfirm', { label }))
+  if (!confirmed) return
+
+  try {
+    const overview = await request(`/api/acp/threads/${encodeURIComponent(threadId)}`, {
+      method: 'DELETE',
+    })
+    applyAcpOverview(overview)
+    setComposerStatus(t('acp.threadDeleted', { threadId }))
+  } catch (error) {
+    setComposerStatus(error.message || t('acp.threadDeleteFailed'), true)
+  }
+}
+
 // EVENTS
 els.sidebarToggleButton.addEventListener('click', toggleSidebar)
 els.newSessionButton.addEventListener('click', startNewSession)
@@ -5467,6 +6223,11 @@ els.overviewLocaleCard.addEventListener('click', () => {
 els.localeCardButton.addEventListener('click', toggleLocale)
 els.copySettingsPathButton.addEventListener('click', () => copyProjectPath('config'))
 els.copySkillsDirButton.addEventListener('click', () => copyProjectPath('skills'))
+els.saveAcpButton.addEventListener('click', saveAcpSettings)
+els.refreshAcpButton.addEventListener('click', refreshAcp)
+els.channelForm.addEventListener('submit', saveChannelSettings)
+els.resetChannelButton.addEventListener('click', resetChannelEditor)
+els.createAcpThreadButton.addEventListener('click', createAcpThread)
 els.memoryRefreshButton.addEventListener('click', refreshMemory)
 els.memoryCreateButton.addEventListener('click', createMemoryDocument)
 els.memoryCopyPathButton.addEventListener('click', copyMemoryPath)

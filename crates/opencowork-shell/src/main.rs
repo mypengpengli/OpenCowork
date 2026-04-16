@@ -1,3 +1,8 @@
+mod acp;
+
+use crate::acp::{
+    AcpCoordinator, AcpOverviewView, AcpSettingsUpdateRequest, AcpThreadCreateRequest,
+};
 use anyhow::Context;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{header, HeaderValue, StatusCode};
@@ -30,6 +35,7 @@ const APP_JS: &str = include_str!("../static/app.js");
 struct ShellState {
     cwd: PathBuf,
     config_home: PathBuf,
+    acp: AcpCoordinator,
 }
 
 #[derive(Debug, Serialize)]
@@ -47,6 +53,7 @@ struct BootstrapResponse {
     sessions: Vec<SessionListItem>,
     skills: Vec<SkillView>,
     mcp_servers: Vec<McpServerView>,
+    acp: AcpOverviewView,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -387,12 +394,18 @@ impl IntoResponse for ApiError {
 async fn main() -> anyhow::Result<()> {
     let cwd = env::current_dir().context("failed to resolve current directory")?;
     let config_home = default_config_home();
+    let acp = AcpCoordinator::new(cwd.clone(), config_home.clone());
+    acp.spawn_background_worker();
     let port = env::var("OPENCOWORK_SHELL_PORT")
         .ok()
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or(33211);
     ensure_shell_defaults(&cwd).map_err(|error| anyhow::anyhow!(error.message))?;
-    let state = ShellState { cwd, config_home };
+    let state = ShellState {
+        cwd,
+        config_home,
+        acp,
+    };
 
     let app = Router::new()
         .route("/", get(index))
@@ -433,6 +446,13 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/skills/:slug", get(get_skill).delete(delete_skill))
         .route("/api/mcp", get(list_mcp).post(save_mcp))
         .route("/api/mcp/:name", axum::routing::delete(delete_mcp))
+        .route("/api/acp", get(get_acp).post(save_acp_settings))
+        .route("/api/acp/threads", post(create_acp_thread))
+        .route("/api/acp/threads/:id/reset", post(reset_acp_thread))
+        .route(
+            "/api/acp/threads/:id",
+            axum::routing::delete(delete_acp_thread),
+        )
         .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
@@ -472,6 +492,7 @@ async fn get_bootstrap(
     let config = load_config(&state)?;
     let model = config.model().unwrap_or("gpt-5.4-mini").to_string();
     let settings = read_settings(&state.cwd)?;
+    let acp = state.acp.overview(&settings).map_err(ApiError::internal)?;
     let (provider_profiles, active_provider_profile_id) =
         provider_profile_views(&settings, &provider_view(&config, &model));
     let sync_status = tokio::task::spawn_blocking({
@@ -503,7 +524,61 @@ async fn get_bootstrap(
         sessions: session_items(&state)?,
         skills: skill_views(&state),
         mcp_servers: mcp_views(&config),
+        acp,
     }))
+}
+
+async fn get_acp(State(state): State<ShellState>) -> Result<Json<AcpOverviewView>, ApiError> {
+    let settings = read_settings(&state.cwd)?;
+    let overview = state.acp.overview(&settings).map_err(ApiError::internal)?;
+    Ok(Json(overview))
+}
+
+async fn save_acp_settings(
+    State(state): State<ShellState>,
+    Json(payload): Json<AcpSettingsUpdateRequest>,
+) -> Result<Json<AcpOverviewView>, ApiError> {
+    let mut settings = read_settings(&state.cwd)?;
+    state
+        .acp
+        .apply_settings_update(&mut settings, &payload)
+        .map_err(ApiError::bad_request)?;
+    write_settings(&state.cwd, &settings)?;
+    let overview = state.acp.overview(&settings).map_err(ApiError::internal)?;
+    Ok(Json(overview))
+}
+
+async fn create_acp_thread(
+    State(state): State<ShellState>,
+    Json(payload): Json<AcpThreadCreateRequest>,
+) -> Result<Json<AcpOverviewView>, ApiError> {
+    let settings = read_settings(&state.cwd)?;
+    state
+        .acp
+        .create_thread(&settings, &payload)
+        .map_err(acp_action_error)?;
+    let overview = state.acp.overview(&settings).map_err(ApiError::internal)?;
+    Ok(Json(overview))
+}
+
+async fn reset_acp_thread(
+    State(state): State<ShellState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<AcpOverviewView>, ApiError> {
+    state.acp.reset_thread(&id).map_err(acp_action_error)?;
+    let settings = read_settings(&state.cwd)?;
+    let overview = state.acp.overview(&settings).map_err(ApiError::internal)?;
+    Ok(Json(overview))
+}
+
+async fn delete_acp_thread(
+    State(state): State<ShellState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<AcpOverviewView>, ApiError> {
+    state.acp.delete_thread(&id).map_err(acp_action_error)?;
+    let settings = read_settings(&state.cwd)?;
+    let overview = state.acp.overview(&settings).map_err(ApiError::internal)?;
+    Ok(Json(overview))
 }
 
 async fn get_provider(
@@ -2425,6 +2500,14 @@ fn skill_roots(cwd: &Path, config_home: &Path) -> Vec<PathBuf> {
 
 fn internal_error(error: impl std::fmt::Display) -> ApiError {
     ApiError::internal(error.to_string())
+}
+
+fn acp_action_error(message: String) -> ApiError {
+    if message.contains("was not found") {
+        ApiError::not_found(message)
+    } else {
+        ApiError::bad_request(message)
+    }
 }
 
 #[cfg(test)]

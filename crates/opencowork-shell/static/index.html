@@ -345,6 +345,7 @@
             <button class="settings-tab" type="button" data-settings-tab="skills" data-i18n="settings.tab.skills">Skills</button>
             <button class="settings-tab" type="button" data-settings-tab="mcp" data-i18n="settings.tab.mcp">MCP</button>
             <button class="settings-tab" type="button" data-settings-tab="memory" data-i18n="settings.tab.memory">Memory</button>
+            <button class="settings-tab" type="button" data-settings-tab="acp" data-i18n="settings.tab.acp">渠道/ACP</button>
             <button class="settings-tab" type="button" data-settings-tab="environment" data-i18n="settings.tab.environment">
               环境
             </button>
@@ -617,6 +618,177 @@
             </div>
           </section>
 
+          <section id="settings-acp-panel" class="settings-panel is-hidden">
+            <header class="collection-header acp-section-header">
+              <div>
+                <h3 data-i18n="acp.sectionChannelTitle">1. 渠道配置</h3>
+                <p class="settings-card-copy" data-i18n="acp.sectionChannelCopy">
+                  先把 Discord 接入为远程开发渠道。只完成这一步时，未绑定 ACP 的频道会按普通助理模式工作，每个频道各自保留聊天上下文。
+                </p>
+                <p class="field-hint" data-i18n="acp.sectionChannelHint">
+                  单个机器人 Token + 单个服务器 ID 就够了。不绑定 ACP 也能直接在频道里当普通助理用；之后对某个频道执行 `!oc bind codex` 或 `!oc bind claude`，才会切到直连模式。
+                </p>
+              </div>
+            </header>
+
+            <div class="settings-card-list">
+              <article class="settings-card">
+                <div class="settings-card-header">
+                  <div>
+                    <h3 data-i18n="acp.channelsTitle">渠道列表</h3>
+                    <p class="settings-card-copy" data-i18n="acp.channelsCopy">
+                      各个远程渠道统一在这里管理。当前先支持 Discord，后面要接微信、Telegram 也会继续放在这一层。
+                    </p>
+                  </div>
+                  <span id="acp-channel-count-chip" class="status-tag">1 / 1</span>
+                </div>
+                <div id="acp-channel-list" class="settings-list"></div>
+              </article>
+
+              <article class="settings-card">
+                <div class="settings-card-header">
+                  <div>
+                    <h3 data-i18n="acp.defaultsTitle">ACP 默认配置</h3>
+                    <p class="settings-card-copy" data-i18n="acp.defaultsCopy">
+                      这些默认项只作用于绑定后的 ACP 直连线程，不影响未绑定频道的普通助理模式。
+                    </p>
+                  </div>
+                </div>
+                <div class="drawer-form acp-form-grid">
+                  <label class="acp-form-span">
+                    <span data-i18n="acp.defaultCwd">默认工作目录</span>
+                    <input id="acp-default-cwd" type="text" data-i18n-placeholder="acp.defaultCwdPlaceholder" placeholder="d:/your/project" />
+                    <small class="field-hint" data-i18n="acp.defaultCwdHint">新绑定 Discord 频道时，如果没单独指定路径，就使用这里。</small>
+                  </label>
+                  <label class="acp-form-span">
+                    <span data-i18n="acp.codexArgs">Codex CLI 参数</span>
+                    <textarea id="acp-codex-args" rows="4" placeholder="-s workspace-write&#10;-a never"></textarea>
+                    <small class="field-hint" data-i18n="acp.codexArgsHint">每行一个参数。留空则使用内置的 Codex ACP 默认参数。</small>
+                  </label>
+                  <label class="acp-form-span">
+                    <span data-i18n="acp.claudeArgs">Claude Code CLI 参数</span>
+                    <textarea id="acp-claude-args" rows="4" placeholder="--permission-mode acceptEdits"></textarea>
+                    <small class="field-hint" data-i18n="acp.claudeArgsHint">每行一个参数。留空则使用内置的 Claude ACP 默认参数。</small>
+                  </label>
+                </div>
+
+                <div class="page-actions settings-card-actions">
+                  <button id="save-acp-button" class="primary-button" type="button" data-i18n="acp.saveDefaults">保存 ACP 默认配置</button>
+                </div>
+              </article>
+
+              <article class="settings-card">
+                <div class="settings-card-header">
+                  <div>
+                    <h3 data-i18n="acp.runtimeTitle">渠道运行状态</h3>
+                    <p class="settings-card-copy" data-i18n="acp.runtimeCopy">
+                      配置完成后，Discord 会作为远程开发渠道使用：未绑定 ACP 的频道走普通助理模式，绑定后改为把普通消息转发给对应的 CLI 会话。
+                    </p>
+                  </div>
+                  <span id="acp-selected-channel-chip" class="status-tag">Discord</span>
+                </div>
+
+                <dl class="meta-list">
+                  <div>
+                    <dt data-i18n="acp.bridgeStatus">桥接状态</dt>
+                    <dd id="acp-channel-status" data-i18n="acp.statusDisabled">未启用</dd>
+                  </div>
+                  <div>
+                    <dt data-i18n="acp.botIdentity">机器人身份</dt>
+                    <dd id="acp-channel-bot">-</dd>
+                  </div>
+                  <div>
+                    <dt data-i18n="acp.lastPoll">最近轮询</dt>
+                    <dd id="acp-channel-last-poll">-</dd>
+                  </div>
+                  <div>
+                    <dt data-i18n="acp.lastError">最近错误</dt>
+                    <dd id="acp-channel-error">-</dd>
+                  </div>
+                </dl>
+
+                <div class="settings-chip-row">
+                  <span id="acp-command-prefix" class="status-tag">!oc</span>
+                  <span id="acp-channel-meta" class="status-tag" data-i18n="acp.noChannelsScanned">还没有扫描到频道</span>
+                </div>
+
+                <pre id="acp-command-help" class="field-hint acp-command-help"></pre>
+                <div class="page-actions settings-card-actions">
+                  <button id="refresh-acp-button" class="ghost-button" type="button" data-i18n="acp.refresh">刷新状态</button>
+                </div>
+              </article>
+            </div>
+
+            <header class="collection-header acp-section-header">
+              <div>
+                <h3 data-i18n="acp.sectionThreadTitle">2. ACP 线程接入</h3>
+                <p class="settings-card-copy" data-i18n="acp.sectionThreadCopy">
+                  ACP 线程用于把某个 Discord 频道切换成直连的远程编程通道。绑定后，该频道里的普通消息不再走普通助理，而是继续对应的 CLI 会话。
+                </p>
+                <p class="field-hint" data-i18n="acp.sectionThreadHint">
+                  绑定方式有两种：1. 在 Discord 频道里发送 `!oc bind codex` 或 `!oc bind claude`；2. 在下面手动填写频道 ID 直接绑定。解绑后，该频道会回到普通助理模式。
+                </p>
+              </div>
+            </header>
+
+            <div class="settings-card-list">
+              <article class="settings-card">
+                <div class="settings-card-header">
+                  <div>
+                    <h3 data-i18n="acp.manualTitle">渠道绑定</h3>
+                    <p class="settings-card-copy" data-i18n="acp.manualCopy">
+                      手动把某个 Discord 频道绑定到 ACP 线程。适合提前完成直连模式配置。
+                    </p>
+                  </div>
+                </div>
+
+                <div class="drawer-form acp-form-grid">
+                  <label>
+                    <span data-i18n="acp.runtime">运行时</span>
+                    <select id="acp-thread-runtime">
+                      <option value="codex">codex</option>
+                      <option value="claude">claude</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span data-i18n="acp.channelId">Discord 频道 ID</span>
+                    <input id="acp-thread-channel-id" type="text" placeholder="123456789012345678" />
+                  </label>
+                  <label>
+                    <span data-i18n="acp.channelName">Discord 频道名</span>
+                    <input id="acp-thread-channel-name" type="text" data-i18n-placeholder="acp.channelNamePlaceholder" placeholder="remote-dev" />
+                  </label>
+                  <label>
+                    <span data-i18n="acp.threadTitle">线程标题</span>
+                    <input id="acp-thread-title" type="text" data-i18n-placeholder="acp.threadTitlePlaceholder" placeholder="Remote Codex thread" />
+                  </label>
+                  <label class="acp-form-span">
+                    <span data-i18n="acp.overrideCwd">工作目录覆盖</span>
+                    <input id="acp-thread-cwd" type="text" data-i18n-placeholder="acp.overrideCwdPlaceholder" placeholder="留空则使用默认 ACP 工作目录" />
+                  </label>
+                </div>
+
+                <div class="page-actions settings-card-actions">
+                  <button id="create-acp-thread-button" class="primary-button" type="button" data-i18n="acp.createThread">创建或重绑线程</button>
+                </div>
+              </article>
+
+              <article class="settings-card">
+                <div class="settings-card-header">
+                  <div>
+                    <h3 data-i18n="acp.threadsTitle">渠道线程</h3>
+                    <p class="settings-card-copy" data-i18n="acp.threadsCopy">
+                      下面每张卡片都是一个独立 ACP 线程，底层连接到 Codex CLI 或 Claude Code CLI。
+                    </p>
+                  </div>
+                  <span id="acp-thread-count" class="status-tag">0</span>
+                </div>
+
+                <div id="acp-thread-list" class="acp-thread-list"></div>
+              </article>
+            </div>
+          </section>
+
           <section id="settings-environment-panel" class="settings-panel is-hidden">
             <div class="settings-card-list">
               <article id="locale-card" class="settings-card">
@@ -778,6 +950,43 @@
             <button id="delete-provider-profile-button" class="ghost-button ghost-button--danger" type="button" data-i18n="common.delete">
               删除
             </button>
+          </div>
+        </form>
+      </section>
+
+      <section id="drawer-channel-panel" class="drawer-panel is-hidden">
+        <p id="channel-editor-state" class="drawer-note">编辑 Discord 渠道。</p>
+        <p id="channel-form-note" class="drawer-note">这里不再单独做启用开关。保存后会根据配置自动生效：填好服务器 ID 和 Token 就开始轮询；清空其一即可停用。后续微信、Telegram 也会放在这里管理。</p>
+        <form id="channel-form" class="drawer-form">
+          <label>
+            <span data-i18n="acp.channelType">渠道类型</span>
+            <input id="channel-type" type="text" value="Discord" readonly />
+            <small class="field-hint" data-i18n="acp.channelTypeHint">当前只有 Discord，一个机器人就能同时支持普通助理模式和 ACP 直连模式。</small>
+          </label>
+          <label>
+            <span data-i18n="acp.discordToken">Discord 机器人 Token</span>
+            <input
+              id="channel-discord-token"
+              type="password"
+              autocomplete="off"
+              data-i18n-placeholder="acp.discordTokenPlaceholder"
+              placeholder="Bot token"
+            />
+            <small class="field-hint" data-i18n="acp.discordTokenHint">这里直接填写机器人的 Token。系统会自动优先读取内置环境变量 `DISCORD_BOT_TOKEN`，不需要额外填写变量名。</small>
+          </label>
+          <label>
+            <span data-i18n="acp.discordGuildId">服务器 ID</span>
+            <input id="channel-discord-guild-id" type="text" placeholder="123456789012345678" />
+            <small class="field-hint" data-i18n="acp.channelGuildHint">保存后会自动开始监听这个服务器下的频道和线程。</small>
+          </label>
+          <label>
+            <span data-i18n="acp.pollMs">轮询间隔（毫秒）</span>
+            <input id="channel-discord-poll-ms" type="number" min="1000" step="1000" placeholder="5000" />
+            <small class="field-hint" data-i18n="acp.channelPollHint">一般保持 5000 即可；更小会更快，但请求也会更多。</small>
+          </label>
+          <div class="drawer-actions">
+            <button id="save-channel-button" class="primary-button" type="submit" data-i18n="acp.channelSave">保存渠道配置</button>
+            <button id="reset-channel-button" class="ghost-button" type="button" data-i18n="common.reset">重置</button>
           </div>
         </form>
       </section>
