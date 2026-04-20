@@ -23,7 +23,7 @@ fn main() -> anyhow::Result<()> {
 
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
-        .with_title("OpenClaw Desktop")
+        .with_title("OpenCowork Desktop")
         .with_inner_size(LogicalSize::new(1480.0, 980.0))
         .with_min_inner_size(LogicalSize::new(1100.0, 760.0))
         .build(&event_loop)
