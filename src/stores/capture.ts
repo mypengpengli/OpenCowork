@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref } from 'vue'
 import { translate } from '../i18n'
 import { useLocaleStore } from './locale'
 

@@ -4,8 +4,6 @@ import { marked } from 'marked'
 marked.setOptions({
   gfm: true,
   breaks: true,
-  mangle: false,
-  headerIds: false,
 })
 
 const allowedTags = [

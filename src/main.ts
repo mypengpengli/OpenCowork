@@ -35,7 +35,7 @@ const startupGraceMs = 2000
 let lastAlertTimestamp: string | null = formatLocalTimestamp(new Date(Date.now() - startupGraceMs))
 
 watch(
-  localeStore.locale,
+  () => localeStore.locale,
   (locale) => {
     document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en'
   },

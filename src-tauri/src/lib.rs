@@ -19,6 +19,7 @@ use commands::{
     delete_skill,
     ensure_bash_runtime,
     focus_main_window,
+    get_agent_task,
     get_capture_status,
     get_config,
     get_recent_alerts,
@@ -27,6 +28,7 @@ use commands::{
     get_summaries,
     get_system_locale,
     invoke_skill,
+    list_agent_tasks,
     list_profiles,
     // Skills 相关命令
     list_skills,
@@ -36,14 +38,17 @@ use commands::{
     open_release_page,
     open_screenshots_dir,
     open_skills_dir,
+    preview_task_artifact,
     read_image_base64,
     save_clipboard_image,
     save_config,
     save_profile,
     // 通知窗口相关命令
     show_notification,
+    start_agent_task,
     start_capture,
     stop_capture,
+    test_mcp_connections,
     test_model_connection,
     AppState,
 };
@@ -84,6 +89,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            start_agent_task,
+            list_agent_tasks,
+            get_agent_task,
+            preview_task_artifact,
+            test_mcp_connections,
             get_config,
             get_system_locale,
             log_ui_locale,

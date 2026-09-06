@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted } from 'vue'
 import {
   NLayout, NLayoutContent, NTimeline, NTimelineItem,
   NCard, NEmpty, NDatePicker, NSpace, NButton, NTag,

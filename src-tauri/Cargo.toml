@@ -39,10 +39,14 @@ zip = "0.6"
 quick-xml = "0.31"
 urlencoding = "2"
 notify = "6"
+futures-util = "0.3"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.60", features = ["Win32_Globalization"] }
+windows-sys = { version = "0.60", features = ["Win32_Globalization", "Win32_Foundation", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Security"] }
 
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

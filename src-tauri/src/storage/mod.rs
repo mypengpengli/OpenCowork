@@ -1,4 +1,4 @@
-use chrono::{DateTime, Local, Duration, Timelike};
+use chrono::{DateTime, Duration, Local, Timelike};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -24,10 +24,10 @@ pub struct Config {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalPromptItem {
-    pub id: String,           // 唯一标识 (UUID)
-    pub name: String,         // 提示词名称（如"个人信息"、"公司信息"）
-    pub content: String,      // 提示词内容
-    pub enabled: bool,        // 是否启用
+    pub id: String,      // 唯一标识 (UUID)
+    pub name: String,    // 提示词名称（如"个人信息"、"公司信息"）
+    pub content: String, // 提示词内容
+    pub enabled: bool,   // 是否启用
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -45,6 +45,8 @@ pub struct ModelConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiConfig {
+    #[serde(default = "default_max_output_tokens")]
+    pub max_output_tokens: u32,
     #[serde(rename = "type")]
     pub api_type: String,
     #[serde(default = "default_api_request_format")]
@@ -56,6 +58,10 @@ pub struct ApiConfig {
     pub endpoint: String,
     pub api_key: String,
     pub model: String,
+}
+
+fn default_max_output_tokens() -> u32 {
+    8192
 }
 
 fn default_api_request_format() -> String {
@@ -74,25 +80,25 @@ pub struct CaptureConfig {
     pub interval_ms: u64,
     pub compress_quality: u8,
     #[serde(default = "default_skip_unchanged")]
-    pub skip_unchanged: bool,  // 跳过无变化的画面，节省token
+    pub skip_unchanged: bool, // 跳过无变化的画面，节省token
     #[serde(default = "default_change_threshold")]
-    pub change_threshold: f32,  // 变化阈值 (0.0-1.0)，越小越敏感
+    pub change_threshold: f32, // 变化阈值 (0.0-1.0)，越小越敏感
     #[serde(default = "default_recent_summary_limit")]
-    pub recent_summary_limit: usize,  // 近期摘要条数（用于上下文参考）
+    pub recent_summary_limit: usize, // 近期摘要条数（用于上下文参考）
     #[serde(default = "default_recent_detail_limit")]
-    pub recent_detail_limit: usize,  // 近期 detail 条数（用于截图分析上下文）
+    pub recent_detail_limit: usize, // 近期 detail 条数（用于截图分析上下文）
     #[serde(default = "default_alert_confidence_threshold")]
-    pub alert_confidence_threshold: f32,  // issue 提醒触发阈值
+    pub alert_confidence_threshold: f32, // issue 提醒触发阈值
     #[serde(default = "default_alert_cooldown_seconds")]
-    pub alert_cooldown_seconds: u64,  // issue 提醒冷却时间（秒）
+    pub alert_cooldown_seconds: u64, // issue 提醒冷却时间（秒）
 }
 
 fn default_skip_unchanged() -> bool {
-    true  // 默认启用，节省token
+    true // 默认启用，节省token
 }
 
 fn default_change_threshold() -> f32 {
-    0.95  // 相似度超过95%认为无变化
+    0.95 // 相似度超过95%认为无变化
 }
 
 fn default_recent_summary_limit() -> usize {
@@ -122,11 +128,11 @@ pub struct StorageConfig {
     #[serde(default = "default_context_compress_trigger_ratio")]
     pub context_compress_trigger_ratio: f32,
     #[serde(default)]
-    pub auto_clear_on_start: bool,  // 启动时自动清空历史
+    pub auto_clear_on_start: bool, // 启动时自动清空历史
     #[serde(default = "default_context_mode")]
-    pub context_mode: String,  // 对话上下文模式：auto | always | off
+    pub context_mode: String, // 对话上下文模式：auto | always | off
     #[serde(default = "default_context_detail_hours")]
-    pub context_detail_hours: u32,  // detail 仅保留最近 N 小时
+    pub context_detail_hours: u32, // detail 仅保留最近 N 小时
 }
 
 fn default_max_context_chars() -> usize {
@@ -169,12 +175,22 @@ impl Default for UiConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolConfig {
+    #[serde(default)]
+    pub mcp_servers: Vec<crate::commands::McpServerConfig>,
+    #[serde(default)]
+    pub browser_server: Option<String>,
+    #[serde(default = "default_parallel_reads")]
+    pub parallel_reads: usize,
     #[serde(default = "default_tool_mode")]
     pub mode: String, // unset | whitelist | allow_all
     #[serde(default)]
     pub allowed_commands: Vec<String>,
     #[serde(default)]
     pub allowed_dirs: Vec<String>,
+}
+
+fn default_parallel_reads() -> usize {
+    4
 }
 
 fn default_tool_mode() -> String {
@@ -185,6 +201,9 @@ impl Default for ToolConfig {
     fn default() -> Self {
         Self {
             mode: default_tool_mode(),
+            mcp_servers: Vec::new(),
+            browser_server: None,
+            parallel_reads: default_parallel_reads(),
             allowed_commands: Vec::new(),
             allowed_dirs: Vec::new(),
         }
@@ -197,6 +216,7 @@ impl Default for Config {
             model: ModelConfig {
                 provider: "api".to_string(),
                 api: ApiConfig {
+                    max_output_tokens: default_max_output_tokens(),
                     api_type: "openai".to_string(),
                     request_format: default_api_request_format(),
                     responses_query_params: HashMap::new(),
@@ -233,6 +253,9 @@ impl Default for Config {
             },
             tools: ToolConfig {
                 mode: default_tool_mode(),
+                mcp_servers: Vec::new(),
+                browser_server: None,
+                parallel_reads: default_parallel_reads(),
                 allowed_commands: Vec::new(),
                 allowed_dirs: Vec::new(),
             },
@@ -268,13 +291,13 @@ pub struct SummaryRecord {
     pub detail_ref: String,
     // 意图识别相关字段
     #[serde(default)]
-    pub intent: String,           // 用户意图（如：安装软件、写作、出行规划、代码开发）
+    pub intent: String, // 用户意图（如：安装软件、写作、出行规划、代码开发）
     #[serde(default)]
-    pub scene: String,            // 场景标识（如：github-install、writing、travel、coding）
+    pub scene: String, // 场景标识（如：github-install、writing、travel、coding）
     #[serde(default)]
-    pub urgency: String,          // 紧急程度: high/medium/low
+    pub urgency: String, // 紧急程度: high/medium/low
     #[serde(default)]
-    pub related_skill: String,    // 预留：相关 Skill 名称
+    pub related_skill: String, // 预留：相关 Skill 名称
 }
 
 /// 聚合记录（5分钟级别）
@@ -282,12 +305,12 @@ pub struct SummaryRecord {
 pub struct AggregatedRecord {
     pub start_time: String,
     pub end_time: String,
-    pub summary: String,           // 这5分钟的概要
-    pub apps: Vec<String>,         // 使用的应用列表
-    pub main_activities: Vec<String>, // 主要活动
-    pub keywords: Vec<String>,     // 关键词
-    pub record_count: u32,         // 原始记录数量
-    pub has_errors: bool,          // 是否有错误
+    pub summary: String,               // 这5分钟的概要
+    pub apps: Vec<String>,             // 使用的应用列表
+    pub main_activities: Vec<String>,  // 主要活动
+    pub keywords: Vec<String>,         // 关键词
+    pub record_count: u32,             // 原始记录数量
+    pub has_errors: bool,              // 是否有错误
     pub error_summary: Option<String>, // 错误概要
 }
 
@@ -339,8 +362,7 @@ impl StorageManager {
         ];
 
         for dir in dirs {
-            fs::create_dir_all(&dir)
-                .map_err(|e| format!("创建目录失败 {:?}: {}", dir, e))?;
+            fs::create_dir_all(&dir).map_err(|e| format!("创建目录失败 {:?}: {}", dir, e))?;
         }
 
         Ok(())
@@ -377,10 +399,9 @@ impl StorageManager {
         let config_path = self.data_dir.join("config.json");
 
         if config_path.exists() {
-            let content = fs::read_to_string(&config_path)
-                .map_err(|e| format!("读取配置失败: {}", e))?;
-            serde_json::from_str(&content)
-                .map_err(|e| format!("解析配置失败: {}", e))
+            let content =
+                fs::read_to_string(&config_path).map_err(|e| format!("读取配置失败: {}", e))?;
+            serde_json::from_str(&content).map_err(|e| format!("解析配置失败: {}", e))
         } else {
             Ok(Config::default())
         }
@@ -389,10 +410,9 @@ impl StorageManager {
     pub fn save_config(&self, config: &Config) -> Result<(), String> {
         self.ensure_dirs()?;
         let config_path = self.data_dir.join("config.json");
-        let content = serde_json::to_string_pretty(config)
-            .map_err(|e| format!("序列化配置失败: {}", e))?;
-        fs::write(&config_path, content)
-            .map_err(|e| format!("保存配置失败: {}", e))
+        let content =
+            serde_json::to_string_pretty(config).map_err(|e| format!("序列化配置失败: {}", e))?;
+        fs::write(&config_path, content).map_err(|e| format!("保存配置失败: {}", e))
     }
 
     // ============ 配置方案管理 ============
@@ -402,8 +422,8 @@ impl StorageManager {
         let profiles_dir = self.data_dir.join("profiles");
 
         let mut profiles = Vec::new();
-        let entries = fs::read_dir(&profiles_dir)
-            .map_err(|e| format!("读取配置方案失败: {}", e))?;
+        let entries =
+            fs::read_dir(&profiles_dir).map_err(|e| format!("读取配置方案失败: {}", e))?;
 
         for entry in entries {
             let entry = entry.map_err(|e| format!("读取配置方案失败: {}", e))?;
@@ -426,18 +446,15 @@ impl StorageManager {
         let path = self.profile_path(&safe_name)?;
         let content = serde_json::to_string_pretty(config)
             .map_err(|e| format!("序列化配置方案失败: {}", e))?;
-        fs::write(&path, content)
-            .map_err(|e| format!("保存配置方案失败: {}", e))
+        fs::write(&path, content).map_err(|e| format!("保存配置方案失败: {}", e))
     }
 
     pub fn load_profile(&self, name: &str) -> Result<Config, String> {
         self.ensure_dirs()?;
         let safe_name = sanitize_profile_name(name)?;
         let path = self.profile_path(&safe_name)?;
-        let content = fs::read_to_string(&path)
-            .map_err(|e| format!("读取配置方案失败: {}", e))?;
-        serde_json::from_str(&content)
-            .map_err(|e| format!("解析配置方案失败: {}", e))
+        let content = fs::read_to_string(&path).map_err(|e| format!("读取配置方案失败: {}", e))?;
+        serde_json::from_str(&content).map_err(|e| format!("解析配置方案失败: {}", e))
     }
 
     pub fn delete_profile(&self, name: &str) -> Result<(), String> {
@@ -454,23 +471,29 @@ impl StorageManager {
         if name.is_empty() {
             return Err("配置名不能为空".to_string());
         }
-        Ok(self.data_dir.join("profiles").join(format!("{}.json", name)))
+        Ok(self
+            .data_dir
+            .join("profiles")
+            .join(format!("{}.json", name)))
     }
 
     // ============ 原始记录管理 ============
 
     pub fn get_summaries(&self, date: &str) -> Result<Vec<SummaryRecord>, String> {
-        let summary_path = self.data_dir.join("summaries").join(format!("{}.json", date));
+        let summary_path = self
+            .data_dir
+            .join("summaries")
+            .join(format!("{}.json", date));
 
         if !summary_path.exists() {
             return Ok(Vec::new());
         }
 
-        let content = fs::read_to_string(&summary_path)
-            .map_err(|e| format!("读取摘要失败: {}", e))?;
+        let content =
+            fs::read_to_string(&summary_path).map_err(|e| format!("读取摘要失败: {}", e))?;
 
-        let daily: DailySummary = serde_json::from_str(&content)
-            .map_err(|e| format!("解析摘要失败: {}", e))?;
+        let daily: DailySummary =
+            serde_json::from_str(&content).map_err(|e| format!("解析摘要失败: {}", e))?;
 
         Ok(daily.records)
     }
@@ -512,11 +535,14 @@ impl StorageManager {
         self.ensure_dirs()?;
 
         let date = &record.timestamp[..10];
-        let summary_path = self.data_dir.join("summaries").join(format!("{}.json", date));
+        let summary_path = self
+            .data_dir
+            .join("summaries")
+            .join(format!("{}.json", date));
 
         let mut daily = if summary_path.exists() {
-            let content = fs::read_to_string(&summary_path)
-                .map_err(|e| format!("读取摘要失败: {}", e))?;
+            let content =
+                fs::read_to_string(&summary_path).map_err(|e| format!("读取摘要失败: {}", e))?;
             serde_json::from_str(&content).unwrap_or(DailySummary {
                 date: date.to_string(),
                 records: Vec::new(),
@@ -539,24 +565,26 @@ impl StorageManager {
             self.trigger_aggregation(&mut daily)?;
         }
 
-        let content = serde_json::to_string_pretty(&daily)
-            .map_err(|e| format!("序列化摘要失败: {}", e))?;
+        let content =
+            serde_json::to_string_pretty(&daily).map_err(|e| format!("序列化摘要失败: {}", e))?;
 
-        fs::write(&summary_path, content)
-            .map_err(|e| format!("保存摘要失败: {}", e))
+        fs::write(&summary_path, content).map_err(|e| format!("保存摘要失败: {}", e))
     }
 
     pub fn delete_summaries_for_date(&self, date: &str) -> Result<usize, String> {
         self.ensure_dirs()?;
-        let summary_path = self.data_dir.join("summaries").join(format!("{}.json", date));
+        let summary_path = self
+            .data_dir
+            .join("summaries")
+            .join(format!("{}.json", date));
         if !summary_path.exists() {
             return Ok(0);
         }
 
-        let content = fs::read_to_string(&summary_path)
-            .map_err(|e| format!("读取摘要失败: {}", e))?;
-        let daily: DailySummary = serde_json::from_str(&content)
-            .map_err(|e| format!("解析摘要失败: {}", e))?;
+        let content =
+            fs::read_to_string(&summary_path).map_err(|e| format!("读取摘要失败: {}", e))?;
+        let daily: DailySummary =
+            serde_json::from_str(&content).map_err(|e| format!("解析摘要失败: {}", e))?;
 
         let mut removed = 0usize;
         for record in daily.records {
@@ -569,8 +597,7 @@ impl StorageManager {
             }
         }
 
-        fs::remove_file(&summary_path)
-            .map_err(|e| format!("删除摘要失败: {}", e))?;
+        fs::remove_file(&summary_path).map_err(|e| format!("删除摘要失败: {}", e))?;
 
         Ok(removed)
     }
@@ -583,8 +610,8 @@ impl StorageManager {
         }
 
         let mut total_removed = 0usize;
-        let entries = fs::read_dir(&summaries_dir)
-            .map_err(|e| format!("读取摘要目录失败: {}", e))?;
+        let entries =
+            fs::read_dir(&summaries_dir).map_err(|e| format!("读取摘要目录失败: {}", e))?;
 
         for entry in entries {
             let entry = entry.map_err(|e| format!("读取摘要目录失败: {}", e))?;
@@ -623,11 +650,7 @@ impl StorageManager {
 
     fn trigger_aggregation(&self, daily: &mut DailySummary) -> Result<(), String> {
         // 获取最后300条记录进行聚合
-        let records_to_aggregate: Vec<_> = daily.records.iter()
-            .rev()
-            .take(300)
-            .cloned()
-            .collect();
+        let records_to_aggregate: Vec<_> = daily.records.iter().rev().take(300).cloned().collect();
 
         if records_to_aggregate.is_empty() {
             return Ok(());
@@ -640,8 +663,14 @@ impl StorageManager {
     }
 
     fn aggregate_records(&self, records: &[SummaryRecord]) -> AggregatedRecord {
-        let start_time = records.last().map(|r| r.timestamp.clone()).unwrap_or_default();
-        let end_time = records.first().map(|r| r.timestamp.clone()).unwrap_or_default();
+        let start_time = records
+            .last()
+            .map(|r| r.timestamp.clone())
+            .unwrap_or_default();
+        let end_time = records
+            .first()
+            .map(|r| r.timestamp.clone())
+            .unwrap_or_default();
 
         // 统计应用使用
         let mut app_counts: HashMap<String, u32> = HashMap::new();
@@ -715,7 +744,8 @@ impl StorageManager {
                 let cutoff = Local::now() - Duration::minutes(minutes as i64);
                 let cutoff_str = cutoff.format("%Y-%m-%dT%H:%M:%S").to_string();
 
-                let filtered: Vec<_> = records.into_iter()
+                let filtered: Vec<_> = records
+                    .into_iter()
                     .filter(|r| r.timestamp >= cutoff_str)
                     .filter(|r| query.matches_keywords(r))
                     .collect();
@@ -732,7 +762,9 @@ impl StorageManager {
 
                 if !query.keywords.is_empty() {
                     // 有关键词：搜索原始记录
-                    let filtered: Vec<_> = daily.records.into_iter()
+                    let filtered: Vec<_> = daily
+                        .records
+                        .into_iter()
                         .filter(|r| query.matches_keywords(r))
                         .collect();
                     Ok(SearchResult {
@@ -756,7 +788,8 @@ impl StorageManager {
 
                 for i in 0..days {
                     let date = (Local::now() - Duration::days(i as i64))
-                        .format("%Y-%m-%d").to_string();
+                        .format("%Y-%m-%d")
+                        .to_string();
                     if let Ok(daily) = self.load_daily(&date) {
                         all_aggregated.extend(daily.aggregated);
                     }
@@ -772,7 +805,10 @@ impl StorageManager {
     }
 
     fn load_daily(&self, date: &str) -> Result<DailySummary, String> {
-        let path = self.data_dir.join("summaries").join(format!("{}.json", date));
+        let path = self
+            .data_dir
+            .join("summaries")
+            .join(format!("{}.json", date));
 
         if !path.exists() {
             return Ok(DailySummary {
@@ -783,11 +819,9 @@ impl StorageManager {
             });
         }
 
-        let content = fs::read_to_string(&path)
-            .map_err(|e| format!("读取失败: {}", e))?;
+        let content = fs::read_to_string(&path).map_err(|e| format!("读取失败: {}", e))?;
 
-        serde_json::from_str(&content)
-            .map_err(|e| format!("解析失败: {}", e))
+        serde_json::from_str(&content).map_err(|e| format!("解析失败: {}", e))
     }
 }
 
@@ -796,8 +830,7 @@ fn migrate_legacy_data_dir(legacy_dir: &Path, new_dir: &Path) -> Result<(), Stri
         return Ok(());
     }
     if let Some(parent) = new_dir.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Create data dir parent failed: {}", e))?;
+        fs::create_dir_all(parent).map_err(|e| format!("Create data dir parent failed: {}", e))?;
     }
 
     match fs::rename(legacy_dir, new_dir) {
@@ -848,15 +881,17 @@ fn sanitize_profile_name(name: &str) -> Result<String, String> {
     }
 
     let invalid_chars = ['\\', '/', ':', '*', '?', '"', '<', '>', '|'];
-    if base.chars().any(|c| c.is_control() || invalid_chars.contains(&c)) {
+    if base
+        .chars()
+        .any(|c| c.is_control() || invalid_chars.contains(&c))
+    {
         return Err("配置名包含非法字符".to_string());
     }
 
     let upper = base.to_uppercase();
     let reserved = [
-        "CON", "PRN", "AUX", "NUL",
-        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
     ];
     if reserved.contains(&upper.as_str()) {
         return Err("配置名不可用".to_string());
@@ -883,9 +918,9 @@ fn sanitize_log_prefix(prefix: &str) -> String {
 
 #[derive(Debug, Clone)]
 pub enum TimeRange {
-    Recent(u32),  // 最近N分钟
-    Today,        // 今天
-    Days(u32),    // 最近N天
+    Recent(u32), // 最近N分钟
+    Today,       // 今天
+    Days(u32),   // 最近N天
 }
 
 #[derive(Debug, Clone)]
@@ -901,13 +936,17 @@ impl SearchQuery {
             return true;
         }
 
-        let text = format!("{} {} {}",
+        let text = format!(
+            "{} {} {}",
             record.summary,
             record.app,
             format!("{} {}", record.detail, record.keywords.join(" "))
-        ).to_lowercase();
+        )
+        .to_lowercase();
 
-        self.keywords.iter().any(|kw| text.contains(&kw.to_lowercase()))
+        self.keywords
+            .iter()
+            .any(|kw| text.contains(&kw.to_lowercase()))
     }
 }
 

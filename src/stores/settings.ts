@@ -5,6 +5,7 @@ export interface AppConfig {
   model: {
     provider: 'api' | 'ollama'
     api: {
+      max_output_tokens: number
       type: 'openai' | 'claude' | 'custom'
       request_format: 'chat_completions' | 'responses'
       responses_query_params: Record<string, string>
@@ -40,6 +41,9 @@ export interface AppConfig {
     context_detail_hours: number
   }
   tools: {
+    parallel_reads: number
+    mcp_servers: { name: string; enabled: boolean; command: string; args: string[]; env: Record<string, string>; allowed_tools: string[] }[]
+    browser_server: string | null
     mode: 'unset' | 'whitelist' | 'allow_all'
     allowed_commands: string[]
     allowed_dirs: string[]
@@ -55,6 +59,7 @@ export const useSettingsStore = defineStore('settings', () => {
       provider: 'api',
       api: {
         type: 'openai',
+        max_output_tokens: 8192,
         request_format: 'chat_completions',
         responses_query_params: {},
         responses_headers: {},
@@ -90,6 +95,9 @@ export const useSettingsStore = defineStore('settings', () => {
     },
     tools: {
       mode: 'unset',
+      parallel_reads: 4,
+      mcp_servers: [],
+      browser_server: null,
       allowed_commands: [],
       allowed_dirs: [],
     },

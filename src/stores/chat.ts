@@ -33,6 +33,7 @@ export interface ToolStep {
 }
 
 export interface ChatMessage {
+  taskId?: string
   role: 'user' | 'assistant'
   content: string
   timestamp: string
@@ -54,7 +55,6 @@ export interface SavedConversation {
 
 const STORAGE_KEY = 'opencowork-conversations'
 const LEGACY_STORAGE_KEY = 'screen-assistant-conversations'
-const MAX_HISTORY_FOR_CONTEXT = 50  // 发送给模型的最大对话轮�?
 
 export const useChatStore = defineStore('chat', () => {
   const messages = ref<ChatMessage[]>([])
@@ -67,19 +67,25 @@ export const useChatStore = defineStore('chat', () => {
     translate(localeStore.locale, key, params)
 
   // 获取用于发送给模型的对话历史（只取最近N轮，不包含alert�?
-  const chatHistoryForModel = computed(() => {
-    const nonAlertMessages = messages.value.filter(m => !m.isAlert)
-    // 取最近的对话（最�?MAX_HISTORY_FOR_CONTEXT * 2 条消息，因为一轮包含user+assistant�?
-    const maxMessages = MAX_HISTORY_FOR_CONTEXT * 2
-    if (nonAlertMessages.length <= maxMessages) {
-      return nonAlertMessages
-    }
-    return nonAlertMessages.slice(-maxMessages)
-  })
+  const chatHistoryForModel = computed(() => messages.value.filter(m => !m.isAlert))
 
   function addMessage(message: ChatMessage) {
     messages.value.push(message)
     saveCurrentConversation()
+  }
+
+  function addMessageToConversation(id: string, message: ChatMessage) {
+    if (activeConversationId.value === id) {
+      if (!message.taskId || !messages.value.some(m => m.taskId === message.taskId)) addMessage(message)
+      return true
+    }
+    const conversation = savedConversations.value.find(c => c.id === id)
+    if (!conversation) return false
+    if (message.taskId && conversation.messages.some(m => m.taskId === message.taskId)) return true
+    conversation.messages.push(message)
+    conversation.updatedAt = new Date().toISOString()
+    persistConversations()
+    return true
   }
 
   function addAlert(message: ChatMessage) {
@@ -209,6 +215,7 @@ export const useChatStore = defineStore('chat', () => {
     savedConversations,
     chatHistoryForModel,
     addMessage,
+    addMessageToConversation,
     addAlert,
     clearMessages,
     newConversation,

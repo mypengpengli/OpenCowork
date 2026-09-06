@@ -172,7 +172,7 @@ function goSettings() {
                 <template #icon>
                   <NIcon><LanguageOutline /></NIcon>
                 </template>
-                <span v-if="!collapsed">{{ locale.value === 'zh' ? 'EN' : '中文' }}</span>
+                <span v-if="!collapsed">{{ locale === 'zh' ? 'EN' : '中文' }}</span>
               </NButton>
             </div>
           </div>

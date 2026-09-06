@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import TaskPanel from '../components/Chat/TaskPanel.vue'
+import { useAgentTasksStore } from '../stores/agentTasks'
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import {
   NLayout,
@@ -6,7 +8,6 @@ import {
   NInput,
   NButton,
   NSpace,
-  NSpin,
   NTag,
   NIcon,
   NModal,
@@ -17,7 +18,7 @@ import {
 } from 'naive-ui'
 import { Send, PlayCircleOutline, StopCircleOutline, AttachOutline, CloseOutline, DocumentOutline } from '@vicons/ionicons5'
 import { open } from '@tauri-apps/plugin-dialog'
-import { useChatStore, type ChatAttachment, type AttachmentKind, type ToolStep } from '../stores/chat'
+import { useChatStore, type ChatAttachment, type AttachmentKind } from '../stores/chat'
 import { useCaptureStore } from '../stores/capture'
 import { useSkillsStore } from '../stores/skills'
 import MessageItem from '../components/Chat/MessageItem.vue'
@@ -32,6 +33,8 @@ const { t } = useI18n()
 const inputMessage = ref('')
 const messagesContainer = ref<HTMLElement | null>(null)
 const processListContainer = ref<HTMLElement | null>(null)
+const agentTasks = useAgentTasksStore()
+const currentTask = computed(() => agentTasks.tasks.find(task => task.conversation_id === chatStore.activeConversationId && task.status === 'running'))
 const isLoading = ref(false)
 const isHistoryLoading = ref(false)
 const attachments = ref<ChatAttachment[]>([])
@@ -73,8 +76,6 @@ const DOCUMENT_FILE_EXTENSIONS = [
   'pptx',
 ]
 const ALL_ATTACHMENT_FILE_EXTENSIONS = IMAGE_FILE_EXTENSIONS.concat(DOCUMENT_FILE_EXTENSIONS)
-const TOOL_MODE_UNSET_ERROR = 'TOOLS_MODE_UNSET'
-const REQUEST_CANCELLED_ERROR = 'REQUEST_CANCELLED'
 const cancelledRequestIds = new Set<string>()
 const CLIPBOARD_IMAGE_EXT: Record<string, string> = {
   'image/png': 'png',
@@ -171,32 +172,6 @@ function clearProcessFallback() {
   }
 }
 
-function appendLocalProcessItem(
-  message: string,
-  detail?: string,
-  stage: ProgressEventPayload['stage'] = 'info'
-) {
-  const requestId = activeRequestId.value
-  if (!requestId) return
-  appendProcessItem({
-    request_id: requestId,
-    stage,
-    message,
-    detail: detail || null,
-    timestamp: new Date().toISOString(),
-  })
-}
-
-function scheduleProcessFallback() {
-  clearProcessFallback()
-  fallbackTimer = window.setTimeout(() => {
-    if (!isLoading.value) return
-  clearProcessFallback()
-    if (backendProgressSeen.value) return
-    appendLocalProcessItem(t('main.progress.waiting'))
-  }, 1200)
-}
-
 function appendProcessItem(payload: ProgressEventPayload) {
   if (!showProcessPanel.value) return
   if (cancelledRequestIds.has(payload.request_id)) return
@@ -240,7 +215,7 @@ function parseExplicitSkillCommand(messageText: string): ParsedSkillCommand | nu
 }
 
 function buildHistoryForModel(
-  messages: typeof chatStore.chatHistoryForModel.value,
+  messages: typeof chatStore.chatHistoryForModel,
 ): PendingRequest['history'] {
   const history: PendingRequest['history'] = []
   for (const messageItem of messages) {
@@ -285,56 +260,12 @@ function resetProcessPanelState() {
   processStatus.value = 'idle'
 }
 
-async function cancelActiveRequestSilently() {
-  const requestId = activeRequestId.value
-  if (!requestId) return
-
-  cancelledRequestIds.add(requestId)
-  isLoading.value = false
-  activeRequestId.value = null
-  pendingRequest.value = null
-  toolModeModalVisible.value = false
-  clearProcessFallback()
-
-  try {
-    const { invoke } = await import('@tauri-apps/api/core')
-    await invoke('cancel_request', { requestId })
-  } catch (error) {
-    console.error('Failed to cancel request silently:', error)
-  }
-}
-
 function toggleProcessExpanded() {
   processExpanded.value = !processExpanded.value
   if (processExpanded.value) {
     scrollProcessListToBottom()
   }
 }
-
-function truncateText(value: string, max = 80): string {
-  const trimmed = value.trim()
-  if (trimmed.length <= max) return trimmed
-  return trimmed.slice(0, max).trimEnd() + '...'
-}
-
-function buildCancelledSummary(): string {
-  const steps = processItems.value.filter(item => item.stage === 'step')
-  const recent = steps.slice(-5)
-  const lines = recent.map(item => {
-    const detail = item.detail ? ` (${truncateText(item.detail, 60)})` : ''
-    return `- ${item.message}${detail}`
-  })
-  const summary = lines.length > 0 ? lines.join('\n') : t('main.chat.cancelledNoSteps')
-  return `${t('main.chat.cancelledSummaryTitle')}\n${summary}\n\n${t('main.chat.cancelledResumeHint')}`
-}
-
-function collectToolSteps(): ToolStep[] {
-  if (!showProcessPanel.value) return []
-  return processItems.value
-    .filter(item => item.stage === 'step')
-    .map(item => ({ title: item.message, detail: item.detail || undefined }))
-}
-
 
 async function loadProcessSetting() {
   try {
@@ -526,169 +457,54 @@ watch(
     attachments.value = []
     attachmentPreviews.value = {}
     inputMessage.value = ''
-    if (isLoading.value) {
-      await cancelActiveRequestSilently()
-    }
+    isLoading.value = Boolean(currentTask.value)
+    activeRequestId.value = currentTask.value?.id || null
     resetProcessPanelState()
   }
 )
 
+watch(currentTask, (task) => {
+  isLoading.value = Boolean(task)
+  activeRequestId.value = task?.id || null
+}, { immediate: true })
+
 async function executeRequest(payload: PendingRequest, includeUserMessage: boolean) {
   if (isLoading.value) return
-
-  activeRequestId.value = payload.requestId
-  await loadProcessSetting()
-  processItems.value = []
-  if (showProcessPanel.value) {
-    startProcessPanel()
-    appendLocalProcessItem(
-      t('main.progress.requestSent'),
-      payload.isSkill && payload.skillName ? `/${payload.skillName}` : undefined,
-      'start'
-    )
-    scheduleProcessFallback()
-  }
-
   if (includeUserMessage) {
-    chatStore.addMessage({
-      role: 'user',
-      content: payload.message,
-      timestamp: new Date().toISOString(),
-      attachments: payload.attachments.length > 0 ? payload.attachments : undefined,
-    })
+    chatStore.addMessage({ role: 'user', content: payload.message, timestamp: new Date().toISOString(), attachments: payload.attachments.length ? payload.attachments : undefined })
   }
-
+  const conversationId = chatStore.activeConversationId
+  if (!conversationId) return
   isLoading.value = true
-  let placeholderAdded = false
-  let wasCancelled = false
-
   try {
     const { invoke } = await import('@tauri-apps/api/core')
-    const attachmentsPayload = payload.attachments.map(item => ({
-      path: item.path,
-      name: item.name,
-      kind: item.kind,
-    }))
-
-    let response: string
-    if (payload.isSkill) {
-      const skillName = payload.skillName || ''
-      chatStore.addMessage({
-        role: 'assistant',
-        content: t('main.chat.invokingSkill', { skill: skillName }),
-        timestamp: new Date().toISOString(),
-      })
-      placeholderAdded = true
-
-      response = await invoke<string>('invoke_skill', {
-        name: skillName.toLowerCase(),
-        args: payload.skillArgs || null,
-        history: payload.history.length > 0 ? payload.history : null,
-        attachments: attachmentsPayload.length > 0 ? attachmentsPayload : null,
-        requestId: payload.requestId,
-      })
-      chatStore.messages.pop()
-      placeholderAdded = false
-    } else {
-      response = await invoke<string>('chat_with_assistant', {
-        message: payload.message,
-        history: payload.history.length > 0 ? payload.history : null,
-        attachments: attachmentsPayload.length > 0 ? attachmentsPayload : null,
-        requestId: payload.requestId,
-      })
-    }
-
-    if (cancelledRequestIds.has(payload.requestId)) {
-      cancelledRequestIds.delete(payload.requestId)
-      wasCancelled = true
-      return
-    }
-
-    const toolStepsSnapshot = collectToolSteps()
-
-    // 解析 JSON 响应，提取 tool_context
-    let responseText = response
-    let toolContext: import('../stores/chat').ToolContextMessage[] | undefined
-    let activeSkill: string | undefined = payload.isSkill ? payload.skillName?.toLowerCase() : undefined
-    try {
-      const parsed = JSON.parse(response)
-      if (parsed && typeof parsed.response === 'string') {
-        responseText = parsed.response
-        toolContext = parsed.tool_context
-        activeSkill = parsed.active_skill
-      }
-    } catch {
-      // 不是 JSON，使用原始响应
-    }
-
-    chatStore.addMessage({
-      role: 'assistant',
-      content: responseText,
-      timestamp: new Date().toISOString(),
-      toolSteps: toolStepsSnapshot.length > 0 ? toolStepsSnapshot : undefined,
-      toolContext: toolContext && toolContext.length > 0 ? toolContext : undefined,
-      activeSkill,
-    })
-  } catch (error) {
-    const errorText = String(error)
-    if (errorText.includes(REQUEST_CANCELLED_ERROR) || cancelledRequestIds.has(payload.requestId)) {
-      cancelledRequestIds.delete(payload.requestId)
-      wasCancelled = true
-      return
-    }
-    if (errorText.includes(TOOL_MODE_UNSET_ERROR)) {
-      if (placeholderAdded) {
-        chatStore.messages.pop()
-      }
-      finishProcessPanel('error')
+    const config = await invoke<any>('get_config')
+    if (config.tools.mode === 'unset') {
       pendingRequest.value = payload
       toolModeModalVisible.value = true
       return
     }
-
-    chatStore.addMessage({
-      role: 'assistant',
-      content: t('main.chat.error', { error: errorText }),
-      timestamp: new Date().toISOString(),
+    await loadProcessSetting()
+    startProcessPanel()
+    const id = await agentTasks.start({
+      conversation_id: conversationId, message: payload.message, history: payload.history,
+      attachments: payload.attachments.map(item => ({ path: item.path, name: item.name, kind: item.kind })),
+      skill_name: payload.isSkill ? payload.skillName?.toLowerCase() : null,
+      skill_args: payload.skillArgs || null, resume_from: null,
     })
-  } finally {
-    isLoading.value = false
-    activeRequestId.value = null
-    if (showProcessPanel.value && !wasCancelled) {
-      finishProcessPanel('done')
-    }
-    await nextTick()
-    scrollToBottom()
-  }
+    if (chatStore.activeConversationId === conversationId) activeRequestId.value = id
+  } catch (error) {
+    chatStore.addMessageToConversation(conversationId, { role: 'assistant', content: t('main.chat.error', { error: String(error) }), timestamp: new Date().toISOString() })
+  } finally { isLoading.value = Boolean(currentTask.value) }
 }
 
 async function stopRequest() {
-  if (!isLoading.value) return
-  const requestId = activeRequestId.value
-  if (!requestId) return
-
-  cancelledRequestIds.add(requestId)
-  isLoading.value = false
-  activeRequestId.value = null
-  if (showProcessPanel.value) {
-    finishProcessPanel('error')
-  }
-  pendingRequest.value = null
-  toolModeModalVisible.value = false
-
+  const id = activeRequestId.value
+  if (!id) return
   try {
-    const { invoke } = await import('@tauri-apps/api/core')
-    await invoke('cancel_request', { requestId })
-  } catch (error) {
-    console.error('Failed to cancel request:', error)
-  }
-
-  message.info(t('main.chat.cancelled'))
-  chatStore.addMessage({
-    role: 'assistant',
-    content: buildCancelledSummary(),
-    timestamp: new Date().toISOString(),
-  })
+    await agentTasks.stop(id)
+    message.info(t('main.chat.cancelled'))
+  } catch (error) { message.error(String(error)) }
 }
 
 async function applyToolModeSelection() {
@@ -924,6 +740,7 @@ async function toggleCapture() {
 }
 
 onMounted(async () => {
+  agentTasks.startPolling()
   scrollToBottom()
   captureStore.startStatusPolling()
   try {
@@ -961,6 +778,7 @@ onUnmounted(() => {
 <template>
   <NLayout class="main-layout">
     <NLayoutContent class="main-content">
+      <TaskPanel />
       <!-- 状态栏 -->
       <div class="status-bar">
         <NSpace justify="space-between" align="center" style="width: 100%">

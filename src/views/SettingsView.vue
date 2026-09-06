@@ -20,7 +20,6 @@ import {
   NSpin,
   NTabs,
   NTabPane,
-  NEmpty,
   NModal,
   useMessage,
 } from 'naive-ui'
@@ -93,6 +92,10 @@ const formValue = ref({
   apiEndpoint: 'https://api.openai.com/v1',
   apiKey: '',
   apiModel: 'gpt-4-vision-preview',
+  maxOutputTokens: 8192,
+  parallelReads: 4,
+  mcpServers: '[]',
+  browserServer: '',
   ollamaEndpoint: 'http://localhost:11434',
   ollamaModel: 'llava',
 
@@ -224,6 +227,7 @@ function normalizeConfig(raw: any) {
       provider: raw?.model?.provider || 'api',
       api: {
         type: raw?.model?.api?.type || 'openai',
+        max_output_tokens: raw?.model?.api?.max_output_tokens || 8192,
         request_format: raw?.model?.api?.request_format || 'chat_completions',
         responses_query_params: raw?.model?.api?.responses_query_params || {},
         responses_headers: raw?.model?.api?.responses_headers || {},
@@ -259,6 +263,9 @@ function normalizeConfig(raw: any) {
     },
     tools: {
       mode: raw?.tools?.mode || 'unset',
+      parallel_reads: raw?.tools?.parallel_reads || 4,
+      mcp_servers: raw?.tools?.mcp_servers || [],
+      browser_server: raw?.tools?.browser_server || null,
       allowed_commands: raw?.tools?.allowed_commands || [],
       allowed_dirs: raw?.tools?.allowed_dirs || [],
     },
@@ -283,6 +290,10 @@ function applyConfigToForm(config: any) {
     apiEndpoint: normalized.model.api.endpoint,
     apiKey: normalized.model.api.api_key,
     apiModel: normalized.model.api.model,
+    maxOutputTokens: normalized.model.api.max_output_tokens,
+    parallelReads: normalized.tools.parallel_reads,
+    mcpServers: JSON.stringify(normalized.tools.mcp_servers, null, 2),
+    browserServer: normalized.tools.browser_server || '',
     ollamaEndpoint: normalized.model.ollama.endpoint,
     ollamaModel: normalized.model.ollama.model,
     captureEnabled: normalized.capture.enabled,
@@ -321,6 +332,7 @@ function buildConfigFromForm() {
         endpoint: formValue.value.apiEndpoint,
         api_key: formValue.value.apiKey,
         model: formValue.value.apiModel,
+        max_output_tokens: formValue.value.maxOutputTokens,
       },
       ollama: {
         endpoint: formValue.value.ollamaEndpoint,
@@ -350,6 +362,9 @@ function buildConfigFromForm() {
     },
     tools: {
       mode: formValue.value.toolMode,
+      parallel_reads: formValue.value.parallelReads,
+      mcp_servers: JSON.parse(formValue.value.mcpServers || '[]'),
+      browser_server: formValue.value.browserServer || null,
       allowed_commands: textToList(formValue.value.toolAllowedCommands),
       allowed_dirs: textToList(formValue.value.toolAllowedDirs),
     },
@@ -731,15 +746,6 @@ async function openSkillsFolder() {
   }
 }
 
-async function openReleasePage() {
-  try {
-    const { invoke } = await import('@tauri-apps/api/core')
-    await invoke('open_release_page')
-  } catch (error) {
-    message.error(t('settings.update.openFailed', { error: String(error) }))
-  }
-}
-
 function resetUpdateState() {
   pendingUpdate = null
   updateAvailable.value = false
@@ -789,6 +795,14 @@ async function installUpdate() {
     updateInstalling.value = false
   }
 }
+async function testMcp() {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const result = await invoke<string>('test_mcp_connections')
+    message.info(result, { duration: 10000 })
+  } catch (error) { message.error(String(error)) }
+}
+
 </script>
 
 <template>
@@ -1033,6 +1047,10 @@ async function installUpdate() {
                 <NFormItem :label="t('settings.form.modelName')">
                   <NInput v-model:value="formValue.apiModel" placeholder="gpt-4-vision-preview" />
                 </NFormItem>
+                <NFormItem :label="t('agent.outputBudget')">
+                  <NInputNumber v-model:value="formValue.maxOutputTokens" :min="256" :max="131072" :step="1024" />
+                </NFormItem>
+
               </template>
 
               <template v-else>
@@ -1242,6 +1260,18 @@ async function installUpdate() {
               <NFormItem :label="t('settings.form.toolsMode')">
                 <NSelect v-model:value="formValue.toolMode" :options="toolModeOptions" />
               </NFormItem>
+
+              <NFormItem :label="t('agent.parallelReads')">
+                <NInputNumber v-model:value="formValue.parallelReads" :min="1" :max="8" />
+              </NFormItem>
+              <NFormItem :label="t('agent.mcpServers')">
+                <NInput v-model:value="formValue.mcpServers" type="textarea" :autosize="{ minRows: 5, maxRows: 14 }" :placeholder="t('agent.mcpExample')" />
+              </NFormItem>
+              <p class="agent-settings-hint">{{ t('agent.mcpHint') }}</p>
+              <NFormItem :label="t('agent.browserServer')">
+                <NInput v-model:value="formValue.browserServer" :placeholder="t('agent.browserHint')" />
+              </NFormItem>
+              <NButton @click="testMcp">{{ t('agent.testMcp') }}</NButton>
               <NFormItem :label="t('settings.form.toolsAllowedCommands')">
                 <NInput
                   v-model:value="formValue.toolAllowedCommands"
