@@ -53,6 +53,15 @@ impl SessionStore {
     }
 
     pub fn list(&self) -> Result<Vec<SessionDescriptor>, SessionError> {
+        self.map_sessions(|descriptor, _session| descriptor)
+    }
+
+    /// Project each session while it is loaded, retaining only the projected values.
+    /// Results have the same newest-first order as `list`.
+    pub fn map_sessions<T>(
+        &self,
+        mut project: impl FnMut(SessionDescriptor, Session) -> T,
+    ) -> Result<Vec<T>, SessionError> {
         if !self.root.exists() {
             return Ok(Vec::new());
         }
@@ -75,15 +84,16 @@ impl SessionStore {
                 .ok()
                 .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
                 .map_or(0, |value| value.as_millis());
-            descriptors.push(SessionDescriptor {
+            let descriptor = SessionDescriptor {
                 id,
                 path,
                 message_count: session.messages.len(),
                 updated_at_unix_ms,
-            });
+            };
+            descriptors.push((updated_at_unix_ms, project(descriptor, session)));
         }
-        descriptors.sort_by(|left, right| right.updated_at_unix_ms.cmp(&left.updated_at_unix_ms));
-        Ok(descriptors)
+        descriptors.sort_by(|left, right| right.0.cmp(&left.0));
+        Ok(descriptors.into_iter().map(|(_, value)| value).collect())
     }
 }
 
@@ -121,5 +131,40 @@ mod tests {
         assert_eq!(store.load("demo").expect("load"), session.with_id("demo"));
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn projects_sessions_with_metadata_in_newest_first_order() {
+        let root = temp_dir();
+        let store = SessionStore::new(&root);
+        assert!(store
+            .map_sessions(|descriptor, _| descriptor.id)
+            .unwrap()
+            .is_empty());
+
+        for (id, seconds) in [("older", 1_700_000_000), ("newer", 1_700_000_010)] {
+            let session = Session::from_messages(vec![ConversationMessage::user(id)]);
+            let saved = store.save_named(id, &session).unwrap();
+            fs::File::options()
+                .write(true)
+                .open(saved.path)
+                .unwrap()
+                .set_times(
+                    fs::FileTimes::new()
+                        .set_modified(UNIX_EPOCH + std::time::Duration::from_secs(seconds)),
+                )
+                .unwrap();
+        }
+        fs::write(root.join("ignore.txt"), "not a session").unwrap();
+        let projected = store
+            .map_sessions(|descriptor, session| {
+                assert_eq!(descriptor.message_count, session.messages.len());
+                assert_eq!(session, store.load(&descriptor.id).unwrap());
+                descriptor.id
+            })
+            .unwrap();
+        assert_eq!(projected, vec!["newer", "older"]);
+        assert_eq!(store.list().unwrap()[0].id, "newer");
+        fs::remove_dir_all(root).unwrap();
     }
 }

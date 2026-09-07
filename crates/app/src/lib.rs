@@ -121,6 +121,20 @@ impl AppRuntime {
         team_memory_sync_status()
     }
 
+    /// Read local sync state without constructing a runtime or contacting MCP servers.
+    pub fn current_team_memory_sync_status() -> TeamMemorySyncStatus {
+        team_memory_sync_status()
+    }
+
+    /// Initialize team memory independently of model and tool discovery.
+    pub fn initialize_team_memory_sync(cwd: &Path) -> Result<TeamMemorySyncStatus, String> {
+        let config = ConfigLoader::default_for(cwd)
+            .load()
+            .map_err(|error| error.to_string())?;
+        start_team_memory_sync(cwd, &default_config_home(), &config)?;
+        Ok(team_memory_sync_status())
+    }
+
     #[must_use]
     pub fn model(&self) -> &str {
         self.config.model().unwrap_or("gpt-5.4-mini")

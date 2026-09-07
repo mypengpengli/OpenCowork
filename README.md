@@ -105,9 +105,24 @@ Start-OpenClaw.bat
 
 The launcher resolves the project root from its own location, so it still works if the repository is moved to a different folder. It will:
 
-- build the desktop shell first
+- run the existing binaries directly, without invoking Cargo on normal startup
+- build on the first launch, or when the shared build cache belongs to another checkout
 - start `opencowork-desktop` when the desktop host is available
-- fall back to the web shell and open `http://127.0.0.1:33211/` if the desktop host cannot be started
+- fall back to the web shell and open `http://127.0.0.1:33211/` if the desktop executable is missing
+
+After pulling changes or editing source files, rebuild explicitly:
+
+```powershell
+.\Build-OpenCowork.bat
+# Or rebuild and launch in one step:
+.\Start-OpenClaw.bat --build
+```
+
+The launcher, build script, and commands below share `%LOCALAPPDATA%\OpenClaw\target`.
+Normal startup uses the last successful build; it does not check source files for changes.
+The desktop host waits only for `/api/health` before opening its window. The page then
+loads local session and skill data, while team memory sync runs independently.
+MCP tool discovery is deferred until a runtime or tool manifest is requested.
 
 ### What a new Windows machine needs
 
@@ -129,19 +144,49 @@ Useful notes:
 ## Commands
 
 ```powershell
-cargo run --target-dir "$env:TEMP\opencowork-target" -p opencowork-shell
-cargo run --target-dir "$env:TEMP\opencowork-target" -p opencowork-desktop
+cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-shell
+cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-desktop
 cargo fmt
-cargo test --target-dir "$env:TEMP\opencowork-target"
-cargo run --target-dir "$env:TEMP\opencowork-target" -p opencowork-cli -- provider
-cargo run --target-dir "$env:TEMP\opencowork-target" -p opencowork-cli -- mcp
-cargo run --target-dir "$env:TEMP\opencowork-target" -p opencowork-cli -- mcp auth
-cargo run --target-dir "$env:TEMP\opencowork-target" -p opencowork-cli -- mcp resources
-cargo run --target-dir "$env:TEMP\opencowork-target" -p opencowork-cli -- handoffs create
-cargo run --target-dir "$env:TEMP\opencowork-target" -p opencowork-cli -- handoffs worker nobody --max-jobs 1
-cargo run --target-dir "$env:TEMP\opencowork-target" -p opencowork-cli -- handoffs service status
-cargo run --target-dir "$env:TEMP\opencowork-target" -p opencowork-cli -- prompt "inspect this workspace"
+cargo test --target-dir "$env:LOCALAPPDATA\OpenClaw\target"
+cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-cli -- provider
+cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-cli -- mcp
+cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-cli -- mcp auth
+cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-cli -- mcp resources
+cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-cli -- handoffs create
+cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-cli -- handoffs worker nobody --max-jobs 1
+cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-cli -- handoffs service status
+cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-cli -- prompt "inspect this workspace"
 ```
+
+## Chat streaming and cancellation
+
+The desktop and web chat render model text and tool events as they arrive. Use
+Stop to cancel an active turn, including its model request and owned subprocesses.
+Received partial output is saved so the conversation can continue. Closing the
+connection also cancels the turn; abrupt termination of the shell host is not a
+checkpoint/recovery mechanism.
+
+`POST /api/chat` returns NDJSON (`started`, `event`, then `complete`).
+`POST /api/chat/:turn_id/cancel` requests cancellation. A session can have only
+one active turn. Builtin `bash` accepts `timeoutMs` from 100 to 600000, with a
+120000 ms default; timeout results include `timed_out: true`.
+
+## Regression checks
+
+Startup regression checks (Python 3 is only needed for these checks):
+
+```powershell
+python scripts/check-launcher.py
+python scripts/check-startup.py "$env:LOCALAPPDATA\OpenClaw\target\debug\opencowork-shell.exe"
+python scripts/check-chat.py "$env:LOCALAPPDATA\OpenClaw\target\debug\opencowork-shell.exe"
+node scripts/check-chat-stream.mjs
+```
+
+These checks use temporary directories, mock launcher commands, and a loopback
+team-memory/provider services. They do not use your provider credentials or launch
+MCP servers. Chat checks cover early deltas, cancellation, partial-history saving,
+provider failures, and tool timeouts; process-tree termination is verified on
+Windows. The stream-parser check additionally requires Node.js.
 
 ## Config knobs
 

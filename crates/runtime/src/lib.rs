@@ -6,6 +6,7 @@ mod hooks;
 mod memory;
 mod model_context;
 mod permissions;
+mod process;
 mod prompt;
 mod provider_bridge;
 mod session;
@@ -55,6 +56,7 @@ pub use model_context::{
 pub use permissions::{
     PermissionDecision, PermissionMode, PermissionPolicy, PermissionPrompter, PermissionRequest,
 };
+pub use process::ProcessTree;
 pub use prompt::{
     discover_instruction_sources, discover_nested_instruction_sources,
     skill_instruction_source_from_output, skill_instruction_sources_from_session,

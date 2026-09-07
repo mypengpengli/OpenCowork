@@ -14,33 +14,25 @@ if errorlevel 1 (
   exit /b 1
 )
 
-where cargo >nul 2>nul
+rem Daily startup runs the existing binaries. Rebuild explicitly after source changes.
+if /I "%~1"=="--build" goto :build
+if not exist "%SHELL_EXE%" goto :build
+if not exist "%TARGET_DIR%\build-root.txt" goto :build
+set /p BUILT_ROOT=<"%TARGET_DIR%\build-root.txt"
+if /I not "%BUILT_ROOT%"=="%ROOT%" goto :build
+if not exist "%DESKTOP_EXE%" goto :fallback_web
+goto :launch
+
+:build
+call "%ROOT%Build-OpenCowork.bat"
 if errorlevel 1 (
-  echo [OpenClaw] cargo was not found.
-  echo [OpenClaw] Install the Rust toolchain first: rustup + cargo.
-  echo [OpenClaw] See README ^> Windows Quick Start.
+  echo [OpenClaw] Build failed. See the output above.
   pause
   popd >nul
   exit /b 1
 )
 
-where rustc >nul 2>nul
-if errorlevel 1 (
-  echo [OpenClaw] rustc was not found.
-  echo [OpenClaw] Install the Rust toolchain first: rustup + cargo.
-  echo [OpenClaw] See README ^> Windows Quick Start.
-  pause
-  popd >nul
-  exit /b 1
-)
-
-echo [OpenClaw] Building local shell...
-cargo build --target-dir "%TARGET_DIR%" -p opencowork-shell
-if errorlevel 1 goto :fallback_web
-
-echo [OpenClaw] Building desktop host...
-cargo build --target-dir "%TARGET_DIR%" -p opencowork-desktop
-if errorlevel 1 goto :fallback_web
+:launch
 
 if not exist "%DESKTOP_EXE%" (
   echo [OpenClaw] Desktop executable was not found. Falling back to web shell...
@@ -59,16 +51,6 @@ exit /b 0
 
 :fallback_web
 echo [OpenClaw] Desktop host is unavailable. Starting web shell instead...
-echo [OpenClaw] Building web shell...
-cargo build --target-dir "%TARGET_DIR%" -p opencowork-shell
-if errorlevel 1 (
-  echo [OpenClaw] Web shell build failed.
-  echo [OpenClaw] Make sure Rust, MSVC Build Tools, and WebView2 Runtime are installed.
-  pause
-  popd >nul
-  exit /b 1
-)
-
 if not exist "%SHELL_EXE%" (
   echo [OpenClaw] Web shell executable was not found: %SHELL_EXE%
   pause

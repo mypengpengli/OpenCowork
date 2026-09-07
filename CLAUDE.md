@@ -28,22 +28,31 @@ OpenCoWork is being rebuilt around these runtime concerns:
 
 ## Commands
 
+On Windows, daily startup is `Start-OpenClaw.bat` and does not invoke Cargo when a
+build for this checkout exists. After source changes, use `Build-OpenCowork.bat`
+or `Start-OpenClaw.bat --build`. Keep all Windows build commands on the shared
+`$env:LOCALAPPDATA\OpenClaw\target` cache used by these scripts.
+
 ```powershell
 cargo fmt
-cargo test --target-dir "$env:TEMP\opencowork-target"
-cargo run --target-dir "$env:TEMP\opencowork-target" -p opencowork-cli -- help
-cargo run --target-dir "$env:TEMP\opencowork-target" -p opencowork-cli -- prompt-plan
-cargo run --target-dir "$env:TEMP\opencowork-target" -p opencowork-cli -- provider
-cargo run --target-dir "$env:TEMP\opencowork-target" -p opencowork-cli -- mcp
-cargo run --target-dir "$env:TEMP\opencowork-target" -p opencowork-cli -- mcp auth
-cargo run --target-dir "$env:TEMP\opencowork-target" -p opencowork-cli -- handoffs create
-cargo run --target-dir "$env:TEMP\opencowork-target" -p opencowork-cli -- handoffs worker nobody --max-jobs 1
-cargo run --target-dir "$env:TEMP\opencowork-target" -p opencowork-cli -- handoffs service status
+cargo test --target-dir "$env:LOCALAPPDATA\OpenClaw\target"
+cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-cli -- help
+cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-cli -- prompt-plan
+cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-cli -- provider
+cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-cli -- mcp
+cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-cli -- mcp auth
+cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-cli -- handoffs create
+cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-cli -- handoffs worker nobody --max-jobs 1
+cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-cli -- handoffs service status
 ```
 
 ## Notes
 
-- On this machine, provider-side dependencies compile reliably when Cargo uses `--target-dir "$env:TEMP\opencowork-target"`.
+- Track completed optimizations, open requirements, and proposed priorities in `TODOLIST.md`.
+- Z Code is a reference for product interaction (context references, file review, task progress, and background memory), not a reason to replace the Rust runtime. Use verified public documentation and distinguish proposed features from implemented behavior.
+- Startup optimization and P0 streaming/cancellation are complete. The shell forwards NDJSON events from an isolated chat worker; stopping a turn terminates its process tree and saves received partial history. Keep this behavior covered by `scripts/check-chat.py` and `scripts/check-chat-stream.mjs`.
+
+- On this machine, provider-side dependencies compile reliably when Cargo uses `--target-dir "$env:LOCALAPPDATA\OpenClaw\target"`.
 - Context loading is configurable through `context.*` settings, especially `instructionFiles`, `preserveRecentMessages`, token budgets, `compactReserveTokens`, and large-message collapse settings.
 - Remote MCP auth state is stored under `OPENCOWORK_CONFIG_HOME/mcp-auth`.
 - Persistent worker-service state is stored under `OPENCOWORK_CONFIG_HOME/worker-service`.

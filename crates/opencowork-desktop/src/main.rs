@@ -99,7 +99,7 @@ fn wait_for_shell(shell_url: &str, shell_child: &mut Child) -> anyhow::Result<()
         .timeout(Duration::from_secs(2))
         .build()
         .context("failed to build readiness HTTP client")?;
-    let bootstrap_url = format!("{shell_url}api/bootstrap");
+    let health_url = format!("{shell_url}api/health");
     let start = Instant::now();
 
     while start.elapsed() < READY_TIMEOUT {
@@ -110,7 +110,11 @@ fn wait_for_shell(shell_url: &str, shell_child: &mut Child) -> anyhow::Result<()
             bail!("opencowork-shell exited before readiness with status {status}");
         }
 
-        if client.get(&bootstrap_url).send().is_ok() {
+        if client
+            .get(&health_url)
+            .send()
+            .is_ok_and(|response| response.status().is_success())
+        {
             return Ok(());
         }
 

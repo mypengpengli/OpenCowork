@@ -1,3 +1,5 @@
+import { readChatStream, appendChatEvent } from '/chat-stream.mjs'
+
 function loadPaneState() {
   try {
     const raw = JSON.parse(localStorage.getItem('opencowork-shell-pane-state') || '{}')
@@ -24,6 +26,8 @@ const state = {
   currentSessionId: null,
   currentSession: null,
   sending: false,
+  activeTurnId: null,
+  stopping: false,
   slashCatalog: {
     loaded: false,
     loading: false,
@@ -149,6 +153,7 @@ const els = {
   clearInputButton: document.querySelector('#clear-input-button'),
   composerStatus: document.querySelector('#composer-status'),
   sendButton: document.querySelector('#send-button'),
+  stopButton: document.querySelector('#stop-button'),
   historyRefreshButton: document.querySelector('#history-refresh-button'),
   historyNewSessionButton: document.querySelector('#history-new-session-button'),
   historySearch: document.querySelector('#history-search'),
@@ -558,6 +563,10 @@ const MESSAGES = {
     'composer.placeholder': '继续使用当前运行时。Enter 发送，Ctrl + Enter 换行。',
     'composer.ready': '就绪。',
     'composer.send': '发送',
+    'composer.stop': '停止',
+    'composer.stopping': '正在停止…',
+    'composer.stopped': '已停止，已保留收到的结果。',
+    'composer.stopFirst': '请先停止当前任务，再切换或删除会话。',
     'composer.clear': '清空输入',
     'composer.shortcut': 'Enter 发送，Ctrl + Enter 换行。',
     'composer.empty': '请先输入内容。',
@@ -1150,6 +1159,10 @@ const MESSAGES = {
     'composer.placeholder': 'Continue on the existing runtime. Enter sends, Ctrl + Enter adds a new line.',
     'composer.ready': 'Ready.',
     'composer.send': 'Send',
+    'composer.stop': 'Stop',
+    'composer.stopping': 'Stopping…',
+    'composer.stopped': 'Stopped. Received results have been saved.',
+    'composer.stopFirst': 'Stop the current turn before switching or deleting sessions.',
     'composer.clear': 'Clear Input',
     'composer.shortcut': 'Enter sends, Ctrl + Enter adds a new line.',
     'composer.empty': 'Enter some input first.',
@@ -1866,10 +1879,6 @@ function lineCount(value) {
   return text ? text.split('\n').length : 0
 }
 
-function wait(ms) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms))
-}
-
 function shellSlashActions() {
   return [
     { key: 'new', title: t('slash.action.new'), subtitle: t('slash.action.newSummary'), action: { type: 'new-session' } },
@@ -2096,6 +2105,9 @@ function updateComposerState() {
     : t('composer.send')
   els.sendButton.classList.toggle('is-busy', state.sending)
   els.composerInput.readOnly = state.sending
+  els.stopButton.classList.toggle('is-hidden', !state.sending)
+  els.stopButton.disabled = !state.activeTurnId || state.stopping
+  els.stopButton.textContent = t(state.stopping ? 'composer.stopping' : 'composer.stop')
   if (els.clearInputButton) {
     els.clearInputButton.disabled = state.sending || !els.composerInput.value.length
   }
@@ -2350,7 +2362,6 @@ function visibleSessionCount() {
 
 function buildPendingMessages() {
   if (!state.pendingTurn) return []
-  const assistantText = state.pendingTurn.assistantText || t('message.waitingResponse')
   return [
     {
       role: 'user',
@@ -2358,55 +2369,17 @@ function buildPendingMessages() {
       __pending: true,
       __pendingState: 'user',
     },
-    {
+    ...(state.pendingTurn.messages.length ? state.pendingTurn.messages : [{
       role: 'assistant',
-      blocks: [{ type: 'text', text: assistantText }],
+      blocks: [{ type: 'text', text: t('message.waitingResponse') }],
       __pending: true,
-      __pendingState: state.pendingTurn.phase === 'streaming' ? 'streaming' : 'waiting',
-    },
+      __pendingState: 'waiting',
+    }]),
   ]
 }
 
 function buildVisibleMessages() {
   return [...(state.currentSession?.messages || []), ...buildPendingMessages()]
-}
-
-function extractLatestAssistantText(session) {
-  const messages = session?.messages || []
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]
-    if (String(message?.role || '').toLowerCase() !== 'assistant') continue
-    const text = (message.blocks || [])
-      .filter((block) => block.type === 'text')
-      .map((block) => getValue(block, 'text') || '')
-      .join('\n\n')
-      .trim()
-    if (text) return text
-  }
-  return ''
-}
-
-function splitReplayText(text, preferredChunk = 28, maxSegments = 72) {
-  const normalized = String(text || '')
-  if (!normalized) return []
-  const chunkSize = Math.max(preferredChunk, Math.ceil(normalized.length / maxSegments))
-  const parts = []
-  for (let index = 0; index < normalized.length; index += chunkSize) {
-    parts.push(normalized.slice(index, index + chunkSize))
-  }
-  return parts
-}
-
-function buildAssistantReplaySegments(events, session) {
-  const segments = []
-  ;(events || []).forEach((event) => {
-    if (event?.type !== 'assistant_text_delta') return
-    splitReplayText(getValue(event, 'text') || '', 18, 36).forEach((segment) => {
-      if (segment) segments.push(segment)
-    })
-  })
-  if (segments.length) return segments
-  return splitReplayText(extractLatestAssistantText(session), 24, 52)
 }
 
 function renderConversationSurface() {
@@ -4977,8 +4950,38 @@ async function selectMemoryDocument(document, { preserveDraft = false, skipRende
   }
 }
 
+let teamMemoryRefresh = null
+
+function refreshTeamMemorySync() {
+  // Coalesce refreshes while the initial network sync is still running.
+  if (teamMemoryRefresh) return
+  teamMemoryRefresh = request('/api/team-memory-sync')
+    .then((status) => {
+      if (state.bootstrap) state.bootstrap.teamMemorySync = status
+    })
+    .catch((error) => {
+      if (state.bootstrap) {
+        state.bootstrap.teamMemorySync = {
+          ...state.bootstrap.teamMemorySync,
+          last_error: error.message,
+        }
+      }
+    })
+    .finally(() => {
+      teamMemoryRefresh = null
+      renderShellMeta()
+      renderWorkspaceMeta()
+    })
+}
+
 async function loadBootstrap({ allowAutoSelect = false } = {}) {
   state.bootstrap = await request('/api/bootstrap')
+  refreshTeamMemorySync()
+  if (state.sending) {
+    renderShellMeta()
+    renderSidebarSessions()
+    return
+  }
   state.slashCatalog.loaded = false
   state.slashCatalog.tools = []
 
@@ -5037,6 +5040,7 @@ async function loadBootstrap({ allowAutoSelect = false } = {}) {
 }
 
 async function loadSession(sessionId, rerender = true) {
+  if (state.sending) return setComposerStatus(t('composer.stopFirst'), true)
   state.currentSessionId = sessionId
   state.currentSession = await request(`/api/sessions/${encodeURIComponent(sessionId)}`)
   state.lastEvents = []
@@ -5072,9 +5076,13 @@ async function submitChat(event) {
   }
 
   state.sending = true
+  state.stopping = false
+  state.activeTurnId = null
+  state.lastEvents = []
+  const turnId = crypto.randomUUID()
   state.pendingTurn = {
     userInput: input,
-    assistantText: '',
+    messages: [],
     phase: 'waiting',
   }
   els.composerInput.value = ''
@@ -5085,13 +5093,36 @@ async function submitChat(event) {
   setComposerStatus(t('composer.waiting'))
 
   try {
-    const response = await request('/api/chat', {
+    const stream = await fetch('/api/chat', {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        turnId,
         sessionId: state.currentSessionId,
         input,
         model: els.providerModel.value.trim() || undefined,
       }),
+    })
+    let renderScheduled = false
+    const response = await readChatStream(stream, (message) => {
+      if (message.type === 'started') {
+        state.activeTurnId = message.turn_id
+        state.currentSessionId = message.session_id
+        updateComposerState()
+      } else if (message.type === 'event' && state.pendingTurn) {
+        state.pendingTurn.phase = 'streaming'
+        state.lastEvents.push(message.event)
+        appendChatEvent(state.pendingTurn.messages, message.event)
+        if (!renderScheduled) {
+          renderScheduled = true
+          requestAnimationFrame(() => {
+            renderScheduled = false
+            state.forceMessageScroll = true
+            renderConversationSurface()
+          })
+        }
+        if (!state.stopping) setComposerStatus(t('composer.streaming'))
+      }
     })
 
     state.lastEvents = response.events || []
@@ -5100,19 +5131,6 @@ async function submitChat(event) {
       estimatedPromptTokens: response.estimatedPromptTokens ?? null,
       compacted: response.compacted ?? null,
     }
-    if (state.pendingTurn) {
-      state.pendingTurn.phase = 'streaming'
-      renderConversationSurface()
-      setComposerStatus(t('composer.streaming'))
-      for (const segment of buildAssistantReplaySegments(response.events || [], response.session)) {
-        if (!state.pendingTurn) break
-        state.pendingTurn.assistantText += segment
-        state.forceMessageScroll = true
-        renderConversationSurface()
-        await wait(segment.includes('\n') ? 24 : 14)
-      }
-    }
-
     state.currentSessionId = response.sessionId
     state.currentSession = response.session
     state.pendingTurn = null
@@ -5120,28 +5138,49 @@ async function submitChat(event) {
     state.expandedBlocks.clear()
     renderConversationSurface()
 
-    await loadBootstrap({ allowAutoSelect: false })
+    await loadBootstrap({ allowAutoSelect: false }).catch(() => {})
     setView('chat')
-    setComposerStatus(t('composer.done', {
+    setComposerStatus(response.status === 'cancelled' ? t('composer.stopped') : response.error || t('composer.done', {
       iterations: response.iterations,
       tokens: response.estimatedPromptTokens,
-    }))
+    }), response.status === 'failed')
   } catch (error) {
     if (state.pendingTurn) {
-      els.composerInput.value = state.pendingTurn.userInput
-      persistComposerDraft()
-      syncComposerHeight()
+      if (state.activeTurnId) {
+        state.currentSession = { ...state.currentSession, messages: buildVisibleMessages() }
+      } else {
+        els.composerInput.value = state.pendingTurn.userInput
+        persistComposerDraft()
+        syncComposerHeight()
+      }
     }
     state.pendingTurn = null
     renderConversationSurface()
     setComposerStatus(error.message || t('composer.sendFailed'), true)
   } finally {
     state.sending = false
+    state.activeTurnId = null
+    state.stopping = false
     updateComposerState()
   }
 }
 
+async function stopChat() {
+  if (!state.activeTurnId || state.stopping) return
+  state.stopping = true
+  updateComposerState()
+  setComposerStatus(t('composer.stopping'))
+  try {
+    await request(`/api/chat/${encodeURIComponent(state.activeTurnId)}/cancel`, { method: 'POST' })
+  } catch (error) {
+    state.stopping = false
+    updateComposerState()
+    setComposerStatus(error.message, true)
+  }
+}
+
 function startNewSession() {
+  if (state.sending) return setComposerStatus(t('composer.stopFirst'), true)
   setView('chat')
   state.currentSessionId = null
   state.currentSession = null
@@ -5551,6 +5590,7 @@ async function executeSlashItem(item) {
 }
 
 async function deleteSession(sessionId) {
+  if (state.sending) return setComposerStatus(t('composer.stopFirst'), true)
   const confirmed = window.confirm(t('confirm.deleteSession', { id: sessionId }))
   if (!confirmed) return
 
@@ -6078,6 +6118,10 @@ els.examplePills.forEach((button) => {
 })
 els.expandAllButton.addEventListener('click', toggleExpandAll)
 els.composerForm.addEventListener('submit', submitChat)
+els.stopButton.addEventListener('click', stopChat)
+window.addEventListener('beforeunload', () => {
+  if (state.activeTurnId) navigator.sendBeacon(`/api/chat/${encodeURIComponent(state.activeTurnId)}/cancel`)
+})
 els.composerInput.addEventListener('input', () => {
   persistComposerDraft()
   syncComposerHeight()

@@ -158,7 +158,21 @@ impl Session {
     }
 
     pub fn save_to_path(&self, path: impl AsRef<Path>) -> Result<(), SessionError> {
-        fs::write(path, serde_json::to_string_pretty(self)?)?;
+        let path = path.as_ref();
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let temporary = path.with_extension(format!("pending-{}-{stamp}", std::process::id()));
+        let result = (|| {
+            fs::write(&temporary, serde_json::to_string_pretty(self)?)?;
+            fs::rename(&temporary, path)?;
+            Ok::<_, SessionError>(())
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        result?;
         Ok(())
     }
 

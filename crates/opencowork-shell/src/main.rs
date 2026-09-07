@@ -1,4 +1,5 @@
 mod acp;
+mod chat;
 
 use crate::acp::{
     AcpCoordinator, AcpOverviewView, AcpSettingsUpdateRequest, AcpThreadCreateRequest,
@@ -30,12 +31,14 @@ use std::time::UNIX_EPOCH;
 const INDEX_HTML: &str = include_str!("../static/index.html");
 const APP_CSS: &str = include_str!("../static/app.css");
 const APP_JS: &str = include_str!("../static/app.js");
+const CHAT_STREAM_JS: &str = include_str!("../static/chat-stream.mjs");
 
 #[derive(Clone)]
 struct ShellState {
     cwd: PathBuf,
     config_home: PathBuf,
     acp: AcpCoordinator,
+    turns: chat::TurnRegistry,
 }
 
 #[derive(Debug, Serialize)]
@@ -243,15 +246,17 @@ struct McpServerView {
     token_path: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ChatRequest {
+    #[serde(default)]
+    turn_id: Option<String>,
     session_id: Option<String>,
     input: String,
     model: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ChatResponse {
     session_id: String,
@@ -260,6 +265,8 @@ struct ChatResponse {
     iterations: usize,
     estimated_prompt_tokens: usize,
     compacted: bool,
+    status: String,
+    error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -392,6 +399,11 @@ impl IntoResponse for ApiError {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    if env::args().nth(1).as_deref() == Some("--chat-worker") {
+        return tokio::task::spawn_blocking(chat::worker_main)
+            .await?
+            .map_err(anyhow::Error::msg);
+    }
     let cwd = env::current_dir().context("failed to resolve current directory")?;
     let config_home = default_config_home();
     let acp = AcpCoordinator::new(cwd.clone(), config_home.clone());
@@ -405,13 +417,19 @@ async fn main() -> anyhow::Result<()> {
         cwd,
         config_home,
         acp,
+        turns: Default::default(),
     };
 
     let app = Router::new()
         .route("/", get(index))
         .route("/app.css", get(app_css))
         .route("/app.js", get(app_js))
+        .route("/chat-stream.mjs", get(|| async {
+            ([(header::CONTENT_TYPE, "text/javascript; charset=utf-8")], CHAT_STREAM_JS)
+        }))
+        .route("/api/health", get(|| async { StatusCode::NO_CONTENT }))
         .route("/api/bootstrap", get(get_bootstrap))
+        .route("/api/team-memory-sync", get(get_team_memory_sync))
         .route("/api/slash-specs", get(list_slash_specs))
         .route("/api/tool-manifest", get(get_tool_manifest))
         .route("/api/slash", post(run_slash_command))
@@ -437,7 +455,8 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/api/sessions", get(list_sessions))
         .route("/api/sessions/:id", get(get_session).delete(delete_session))
-        .route("/api/chat", post(run_chat))
+        .route("/api/chat", post(chat::stream_turn))
+        .route("/api/chat/:id/cancel", post(chat::cancel_turn))
         .route("/api/memory", get(get_memory_overview))
         .route("/api/memory/read", post(read_memory_document))
         .route("/api/memory/save", post(save_memory_document))
@@ -489,24 +508,22 @@ async fn app_js() -> impl IntoResponse {
 async fn get_bootstrap(
     State(state): State<ShellState>,
 ) -> Result<Json<BootstrapResponse>, ApiError> {
-    let config = load_config(&state)?;
+    // Disk scans must not block the async executor serving the window and health checks.
+    tokio::task::spawn_blocking(move || build_bootstrap(&state))
+        .await
+        .map_err(internal_error)?
+        .map(Json)
+}
+
+fn build_bootstrap(state: &ShellState) -> Result<BootstrapResponse, ApiError> {
+    let config = load_config(state)?;
     let model = config.model().unwrap_or("gpt-5.4-mini").to_string();
     let settings = read_settings(&state.cwd)?;
     let acp = state.acp.overview(&settings).map_err(ApiError::internal)?;
     let (provider_profiles, active_provider_profile_id) =
         provider_profile_views(&settings, &provider_view(&config, &model));
-    let sync_status = tokio::task::spawn_blocking({
-        let cwd = state.cwd.clone();
-        move || {
-            AppRuntime::load(&cwd)
-                .map(|app| app.team_memory_sync_status())
-                .map_err(|error| error.to_string())
-        }
-    })
-    .await
-    .map_err(internal_error)?
-    .map_err(ApiError::internal)?;
-    Ok(Json(BootstrapResponse {
+    let sync_status = AppRuntime::current_team_memory_sync_status();
+    Ok(BootstrapResponse {
         app_name: "OpenCowork",
         cwd: state.cwd.display().to_string(),
         settings_file: shell_settings_path(&state.cwd).display().to_string(),
@@ -521,11 +538,23 @@ async fn get_bootstrap(
         provider_profiles,
         active_provider_profile_id,
         team_memory_sync: serde_json::to_value(sync_status).map_err(internal_error)?,
-        sessions: session_items(&state)?,
-        skills: skill_views(&state),
+        sessions: session_items(state)?,
+        skills: skill_views(state),
         mcp_servers: mcp_views(&config),
         acp,
-    }))
+    })
+}
+
+async fn get_team_memory_sync(
+    State(state): State<ShellState>,
+) -> Result<Json<Value>, ApiError> {
+    let status = tokio::task::spawn_blocking(move || {
+        AppRuntime::initialize_team_memory_sync(&state.cwd)
+    })
+    .await
+    .map_err(internal_error)?
+    .map_err(ApiError::internal)?;
+    Ok(Json(serde_json::to_value(status).map_err(internal_error)?))
 }
 
 async fn get_acp(State(state): State<ShellState>) -> Result<Json<AcpOverviewView>, ApiError> {
@@ -973,6 +1002,9 @@ async fn delete_session(
     State(state): State<ShellState>,
     AxumPath(session_id): AxumPath<String>,
 ) -> Result<Json<Vec<SessionListItem>>, ApiError> {
+    if state.turns.lock().map_err(internal_error)?.values().any(|turn| turn.session_id == session_id) {
+        return Err(ApiError { status: StatusCode::CONFLICT, message: "Stop the running turn before deleting this session.".into() });
+    }
     let path = state
         .config_home
         .join("sessions")
@@ -984,21 +1016,6 @@ async fn delete_session(
     }
     fs::remove_file(path).map_err(internal_error)?;
     Ok(Json(session_items(&state)?))
-}
-
-async fn run_chat(
-    State(state): State<ShellState>,
-    Json(payload): Json<ChatRequest>,
-) -> Result<Json<ChatResponse>, ApiError> {
-    if payload.input.trim().is_empty() {
-        return Err(ApiError::bad_request("input must not be empty"));
-    }
-
-    let response = tokio::task::spawn_blocking(move || run_chat_blocking(state, payload))
-        .await
-        .map_err(|error| ApiError::internal(error.to_string()))?
-        .map_err(ApiError::internal)?;
-    Ok(Json(response))
 }
 
 async fn get_memory_overview(
@@ -1084,37 +1101,33 @@ async fn delete_memory_document(
     )?))
 }
 
-fn run_chat_blocking(state: ShellState, payload: ChatRequest) -> Result<ChatResponse, String> {
-    apply_shell_api_key_override(&state.cwd)?;
-    let app = AppRuntime::load(&state.cwd).map_err(|error| error.to_string())?;
+fn run_chat_blocking(
+    cwd: &Path,
+    payload: ChatRequest,
+    session: Session,
+    on_event: &mut dyn FnMut(AppEvent),
+) -> Result<ChatResponse, String> {
+    apply_shell_api_key_override(cwd)?;
+    let app = AppRuntime::load(cwd).map_err(|error| error.to_string())?;
     let model = payload.model.unwrap_or_else(|| app.model().to_string());
-    let store = SessionStore::new(state.config_home.join("sessions"));
-    let session = match payload.session_id.as_deref() {
-        Some(session_id) => store.load(session_id).map_err(|error| error.to_string())?,
-        None => Session::new(),
-    };
 
     let mut events = Vec::new();
-    let mut sink = |event| events.push(event);
+    let mut sink = |event: AppEvent| {
+        on_event(event.clone());
+        events.push(event);
+    };
     let execution = app
         .run_turn(&model, session, &payload.input, Some(&mut sink))
         .map_err(|error| error.to_string())?;
-    let descriptor = match payload.session_id.as_deref() {
-        Some(session_id) => store
-            .save_named(session_id, &execution.session)
-            .map_err(|error| error.to_string())?,
-        None => store
-            .save(&execution.session)
-            .map_err(|error| error.to_string())?,
-    };
-
     Ok(ChatResponse {
-        session_id: descriptor.id,
+        session_id: payload.session_id.ok_or("worker session ID is missing")?,
         session: execution.session,
         events,
         iterations: execution.summary.iterations,
         estimated_prompt_tokens: execution.prompt.estimated_tokens,
         compacted: execution.prompt.compacted,
+        status: "completed".to_string(),
+        error: None,
     })
 }
 
@@ -1129,9 +1142,7 @@ fn apply_shell_api_key_override(cwd: &Path) -> Result<(), String> {
     if let Some(profile) = active_profile {
         // SAFETY: this local shell config bridges a stored API key into the env-var based runtime.
         unsafe {
-            if profile.api_key.trim().is_empty() {
-                env::remove_var(&profile.api_key_env);
-            } else {
+            if !profile.api_key.trim().is_empty() {
                 env::set_var(&profile.api_key_env, &profile.api_key);
             }
         }
@@ -1542,19 +1553,10 @@ fn write_provider_profiles(
 
 fn session_items(state: &ShellState) -> Result<Vec<SessionListItem>, ApiError> {
     let store = SessionStore::new(state.config_home.join("sessions"));
-    Ok(store
-        .list()
-        .map_err(internal_error)?
-        .into_iter()
-        .map(|descriptor| {
-            let session = store.load(&descriptor.id).ok();
-            let title = session
-                .as_ref()
-                .map(|session| derive_session_title(session, &descriptor.id))
-                .unwrap_or_else(|| descriptor.id.clone());
-            let preview = session
-                .as_ref()
-                .and_then(derive_session_preview)
+    store
+        .map_sessions(|descriptor, session| {
+            let title = derive_session_title(&session, &descriptor.id);
+            let preview = derive_session_preview(&session)
                 .filter(|value| !value.eq_ignore_ascii_case(&title));
             SessionListItem {
                 id: descriptor.id,
@@ -1564,7 +1566,7 @@ fn session_items(state: &ShellState) -> Result<Vec<SessionListItem>, ApiError> {
                 updated_at_unix_ms: descriptor.updated_at_unix_ms,
             }
         })
-        .collect())
+        .map_err(internal_error)
 }
 
 fn build_memory_overview(

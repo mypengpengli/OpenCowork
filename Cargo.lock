@@ -1841,11 +1841,13 @@ dependencies = [
 name = "opencowork-runtime"
 version = "0.5.0"
 dependencies = [
+ "libc",
  "opencowork-api",
  "opencowork-mcp",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1854,6 +1856,7 @@ version = "0.5.0"
 dependencies = [
  "anyhow",
  "axum",
+ "futures-core",
  "opencowork-api",
  "opencowork-app",
  "opencowork-commands",

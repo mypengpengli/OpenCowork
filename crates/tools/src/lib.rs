@@ -1,3 +1,4 @@
+mod process;
 mod team_memory;
 mod team_memory_sync;
 
@@ -16,7 +17,6 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use team_memory::guard_team_memory_write;
 use team_memory_sync::notify_team_memory_write_if_needed;
 pub use team_memory_sync::{
@@ -517,7 +517,8 @@ pub fn builtin_specs() -> Vec<ToolSpec> {
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "command": { "type": "string" }
+                    "command": { "type": "string" },
+                    "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 600000, "default": 120000 }
                 },
                 "required": ["command"]
             }),
@@ -865,23 +866,13 @@ fn execute_builtin(
 
 fn run_bash(input: &Value) -> Result<String, ToolError> {
     let command = required_string(input, "command")?;
-    #[cfg(windows)]
-    let output = Command::new("powershell")
-        .args(["-NoLogo", "-NoProfile", "-Command", command])
-        .output()
-        .map_err(|error| ToolError::new(error.to_string()))?;
-    #[cfg(not(windows))]
-    let output = Command::new("sh")
-        .args(["-lc", command])
-        .output()
-        .map_err(|error| ToolError::new(error.to_string()))?;
-
-    Ok(json!({
-        "stdout": String::from_utf8_lossy(&output.stdout).trim(),
-        "stderr": String::from_utf8_lossy(&output.stderr).trim(),
-        "success": output.status.success()
-    })
-    .to_string())
+    let timeout_ms = input.get("timeoutMs").and_then(Value::as_u64).unwrap_or(120_000);
+    if !(100..=600_000).contains(&timeout_ms) {
+        return Err(ToolError::new("timeoutMs must be between 100 and 600000"));
+    }
+    process::run_shell(command, std::time::Duration::from_millis(timeout_ms))
+        .map(|output| output.to_string())
+        .map_err(|error| ToolError::new(error.to_string()))
 }
 
 fn read_file(input: &Value) -> Result<String, ToolError> {
