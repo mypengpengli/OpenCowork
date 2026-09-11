@@ -51,6 +51,9 @@ cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-cli -- 
 - Track completed optimizations, open requirements, and proposed priorities in `TODOLIST.md`.
 - Z Code is a reference for product interaction (context references, file review, task progress, and background memory), not a reason to replace the Rust runtime. Use verified public documentation and distinguish proposed features from implemented behavior.
 - Startup optimization and P0 streaming/cancellation are complete. The shell forwards NDJSON events from an isolated chat worker; stopping a turn terminates its process tree and saves received partial history. Keep this behavior covered by `scripts/check-chat.py` and `scripts/check-chat-stream.mjs`.
+- P1/P2 baseline is implemented: workspace previews/diffs, explicit file/session references, context diagnostics, optional background extraction, portable packaging, and persisted task progress. Cover it with `scripts/check-features.py` and the Windows-only `scripts/check-computer-input.ps1`.
+- Windows computer control is local, enabled by default, and governed by `computer.enabled` plus existing tool permissions. Background extraction is separately opt-in through `memory.backgroundEnabled`; keep extraction off the foreground response path.
+- Package shell and desktop together using `scripts/package-windows.ps1`; retain the shared Cargo cache and timestamped output directories.
 
 - On this machine, provider-side dependencies compile reliably when Cargo uses `--target-dir "$env:LOCALAPPDATA\OpenClaw\target"`.
 - Context loading is configurable through `context.*` settings, especially `instructionFiles`, `preserveRecentMessages`, token budgets, `compactReserveTokens`, and large-message collapse settings.

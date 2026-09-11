@@ -117,6 +117,37 @@ pub struct TurnSummary {
     pub usage: TokenUsage,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TurnLimits {
+    pub max_iterations: usize,
+    pub max_tokens: u32,
+    pub max_seconds: u64,
+    pub repeated_results: usize,
+}
+impl Default for TurnLimits {
+    fn default() -> Self {
+        Self {
+            max_iterations: 80,
+            max_tokens: 250_000,
+            max_seconds: 900,
+            repeated_results: 3,
+        }
+    }
+}
+impl TurnLimits {
+    pub fn from_settings(settings: &Value) -> Self {
+        let mut v: Self =
+            serde_json::from_value(settings.get("execution").cloned().unwrap_or(Value::Null))
+                .unwrap_or_default();
+        v.max_iterations = v.max_iterations.clamp(1, 1000);
+        v.max_tokens = v.max_tokens.clamp(100, 10_000_000);
+        v.max_seconds = v.max_seconds.clamp(1, 86400);
+        v.repeated_results = v.repeated_results.clamp(2, 20);
+        v
+    }
+}
+
 pub struct ConversationRuntime<C, T> {
     session: Session,
     api_client: C,
@@ -124,16 +155,20 @@ pub struct ConversationRuntime<C, T> {
     permission_policy: PermissionPolicy,
     system_prompt: Vec<String>,
     max_iterations: usize,
+    limits: TurnLimits,
     usage_tracker: UsageTracker,
     hooks: HookRunner,
     prompt_augmenter: Option<Box<dyn RuntimePromptAugmenter>>,
     tool_result_budget: ToolResultBudgetConfig,
+    user_context: Option<String>,
 }
 
 pub trait RuntimeObserver {
     fn on_assistant_event(&mut self, _event: &AssistantEvent) {}
 
     fn on_tool_result(&mut self, _message: &ConversationMessage) {}
+
+    fn on_user_message(&mut self, _id: &str, _text: &str) {}
 }
 
 impl<C, T> ConversationRuntime<C, T>
@@ -157,12 +192,20 @@ where
             tool_executor,
             permission_policy,
             system_prompt,
-            max_iterations: usize::MAX,
+            max_iterations: 80,
+            limits: TurnLimits::default(),
             usage_tracker,
             hooks,
             prompt_augmenter: None,
             tool_result_budget: ToolResultBudgetConfig::default(),
+            user_context: None,
         }
+    }
+
+    pub fn with_limits(mut self, limits: TurnLimits) -> Self {
+        self.max_iterations = limits.max_iterations;
+        self.limits = limits;
+        self
     }
 
     #[must_use]
@@ -183,6 +226,12 @@ where
     #[must_use]
     pub fn with_tool_result_budget(mut self, config: ToolResultBudgetConfig) -> Self {
         self.tool_result_budget = config;
+        self
+    }
+
+    /// Add bounded, explicitly attached reference data to the next user message.
+    pub fn with_user_context(mut self, context: &str) -> Self {
+        self.user_context = (!context.is_empty()).then(|| context.to_string());
         self
     }
 
@@ -220,12 +269,57 @@ where
         self.session
             .messages
             .push(ConversationMessage::user(user_input));
+        if let Some(context) = self.user_context.take() {
+            self.session
+                .messages
+                .last_mut()
+                .expect("user message")
+                .blocks
+                .push(ContentBlock::Text { text: context });
+        }
 
         let mut assistant_messages = Vec::new();
         let mut tool_results = Vec::new();
         let mut iterations = 0;
+        let start = std::time::Instant::now();
+        let initial_tokens = self.usage_tracker.cumulative().total_tokens();
+        let mut previous_result = String::new();
+        let mut repeats = 0usize;
+        let mut consumed = self.session.delivered_user_messages.clone();
 
         loop {
+            if let Ok(path) = std::env::var("OPENCOWORK_STEERING_FILE") {
+                if let Ok(value) = std::fs::read_to_string(path).and_then(|s| {
+                    serde_json::from_str::<Vec<Value>>(&s).map_err(std::io::Error::other)
+                }) {
+                    for item in value
+                        .iter()
+                        .filter(|x| x["mode"] == "steer" && x["status"] == "pending")
+                    {
+                        let id = item["id"].as_str().unwrap_or("");
+                        let text = item["text"].as_str().unwrap_or("");
+                        if !id.is_empty() && !text.is_empty() && consumed.insert(id.to_string()) {
+                            self.session.delivered_user_messages.insert(id.to_string());
+                            self.session.messages.push(ConversationMessage::user(text));
+                            if let Some(ref mut sink) = observer {
+                                sink.on_user_message(id, text);
+                            }
+                        }
+                    }
+                }
+            }
+            if start.elapsed().as_secs() >= self.limits.max_seconds
+                || self
+                    .usage_tracker
+                    .cumulative()
+                    .total_tokens()
+                    .saturating_sub(initial_tokens)
+                    >= self.limits.max_tokens
+            {
+                return Err(RuntimeError::new(
+                    "turn_budget_reached: progress saved; adjust execution budget or resume",
+                ));
+            }
             iterations += 1;
             if iterations > self.max_iterations {
                 return Err(RuntimeError::new(
@@ -261,6 +355,19 @@ where
             }
 
             for pending_tool in pending {
+                if start.elapsed().as_secs() >= self.limits.max_seconds
+                    || self
+                        .usage_tracker
+                        .cumulative()
+                        .total_tokens()
+                        .saturating_sub(initial_tokens)
+                        >= self.limits.max_tokens
+                {
+                    return Err(RuntimeError::new(
+                        "turn_budget_reached: tool not executed; progress saved",
+                    ));
+                }
+                let operation = format!("{}:{}", pending_tool.name, pending_tool.input);
                 let decision = if let Some(ref mut prompt) = prompter {
                     self.permission_policy.authorize(
                         &pending_tool.name,
@@ -296,7 +403,24 @@ where
                 if let Some(ref mut observer) = observer {
                     observer.on_tool_result(&message);
                 }
+                let signature = format!("{}:{:?}", operation, message.blocks);
+                // Tool-call IDs vary each time; only compare the action and actual output.
+                let signature = match message.blocks.first() {
+                    Some(ContentBlock::ToolResult {
+                        output, is_error, ..
+                    }) => format!("{}:{}:{}", operation, is_error, output),
+                    _ => signature,
+                };
+                if signature == previous_result {
+                    repeats += 1;
+                } else {
+                    previous_result = signature;
+                    repeats = 1;
+                }
                 self.session.messages.push(message.clone());
+                if repeats >= self.limits.repeated_results {
+                    return Err(RuntimeError::new("no_progress: repeated identical action/results; inspect state before resuming"));
+                }
                 self.apply_prompt_updates(&message)?;
                 tool_results.push(message);
             }

@@ -74,6 +74,10 @@ pub struct Session {
     pub version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub delivered_user_messages: std::collections::BTreeSet<String>,
     pub messages: Vec<ConversationMessage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_session_memory: Option<String>,
@@ -101,6 +105,8 @@ impl Session {
         Self {
             version: 1,
             id: None,
+            workspace: None,
+            delivered_user_messages: Default::default(),
             messages: Vec::new(),
             current_session_memory: None,
             session_memory_state: SessionMemoryState::default(),
@@ -115,6 +121,8 @@ impl Session {
         Self {
             version: 1,
             id: None,
+            workspace: None,
+            delivered_user_messages: Default::default(),
             messages,
             current_session_memory: None,
             session_memory_state: SessionMemoryState::default(),
@@ -129,6 +137,8 @@ impl Session {
         Self {
             version: self.version,
             id: self.id.clone(),
+            workspace: self.workspace.clone(),
+            delivered_user_messages: self.delivered_user_messages.clone(),
             messages,
             current_session_memory: self.current_session_memory.clone(),
             session_memory_state: self.session_memory_state.clone(),

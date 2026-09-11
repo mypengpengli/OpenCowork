@@ -169,6 +169,9 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
+    if env::args().nth(1).as_deref() == Some("--computer-capture") {
+        return opencowork_tools::computer_capture_worker().map_err(Into::into);
+    }
     let cwd = env::current_dir()?;
     let config = ConfigLoader::default_for(&cwd).load()?;
     let config_home = default_config_home();

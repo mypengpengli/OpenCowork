@@ -6,6 +6,8 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+base64 = "0.22"
+tungstenite.workspace = true
 glob.workspace = true
 lsp-types.workspace = true
 regex.workspace = true
@@ -21,3 +23,6 @@ opencowork-mcp = { path = "../mcp" }
 opencowork-plugins = { path = "../plugins" }
 opencowork-runtime = { path = "../runtime" }
 opencowork-skills = { path = "../skills" }
+
+[target."cfg(windows)".dependencies]
+windows-capture = "2.0.1"

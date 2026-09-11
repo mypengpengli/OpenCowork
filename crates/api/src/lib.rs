@@ -25,6 +25,8 @@ pub struct InputToolCall {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InputMessage {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub image_urls: Vec<String>,
     pub role: String,
     pub content: Option<String>,
     #[serde(default)]
@@ -54,6 +56,8 @@ pub enum StreamEvent {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProviderRequest {
+    #[serde(default)]
+    pub max_output_tokens: Option<usize>,
     pub model: String,
     pub system_prompt: Vec<String>,
     pub messages: Vec<InputMessage>,
@@ -156,6 +160,7 @@ mod tests {
         }]);
         let response = client
             .execute(super::ProviderRequest {
+                max_output_tokens: None,
                 model: "demo".to_string(),
                 system_prompt: Vec::new(),
                 messages: Vec::new(),

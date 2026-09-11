@@ -6,6 +6,8 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+opencowork-tools = { path = "../tools" }
+walkdir.workspace = true
 anyhow.workspace = true
 axum.workspace = true
 futures-core = "0.3"
@@ -20,3 +22,5 @@ opencowork-commands = { path = "../commands" }
 opencowork-mcp = { path = "../mcp" }
 opencowork-runtime = { path = "../runtime" }
 opencowork-skills = { path = "../skills" }
+chrono = "0.4"
+chrono-tz = "0.10"

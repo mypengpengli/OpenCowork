@@ -119,6 +119,10 @@ impl<'a> CliTurnRenderer<'a> {
 
     pub fn on_app_event(&mut self, event: &AppEvent) {
         match event {
+            AppEvent::UserMessage { text, .. } => {
+                self.flush_markdown();
+                self.write_all(format!("\n[user] {text}\n").as_bytes());
+            }
             AppEvent::AssistantTextDelta { text } => {
                 if let Some(rendered) = self.markdown_stream.push(&self.renderer, text) {
                     self.write_all(rendered.as_bytes());

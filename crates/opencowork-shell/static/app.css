@@ -2294,3 +2294,49 @@ button:disabled {
     align-items: stretch;
   }
 }
+
+/* Workspace review, explicit references and resumable task progress. */
+.workspace-tools { margin: 0 0 10px; display: grid; gap: 6px; font-size: 12px; }
+.feature-disclosure { border: 1px solid var(--line); border-radius: 9px; padding: 7px 10px; background: var(--bg-elevated); }
+.feature-disclosure > summary { cursor: pointer; font-weight: 600; }
+.feature-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+.feature-toolbar input:not([type=checkbox]), .feature-toolbar select { min-width: 160px; max-width: 100%; border: 1px solid #dce2e9; border-radius: 6px; padding: 6px; }
+.feature-toggle { display: flex; align-items: center; gap: 8px; padding: 7px 0; }
+.feature-toggle input[type=checkbox] { width: 17px; height: 17px; accent-color: #365fa5; }
+.feature-file-grid { display: grid; grid-template-columns: minmax(140px, 32%) minmax(0,1fr); gap: 12px; }
+.feature-file-list { display: flex; flex-direction: column; overflow: auto; max-height: 250px; }
+.feature-file-list button { text-align: left; white-space: nowrap; font-family: monospace; flex-shrink: 0; }
+.feature-file-detail { min-width: 0; }
+.feature-file-detail strong { overflow-wrap: anywhere; }
+.feature-file-preview { white-space: pre; overflow: auto; max-height: 210px; margin: 0; padding: 10px; background: var(--bg); color: var(--text); font: 12px/1.6 Consolas, monospace; border-radius: 6px; }
+.feature-references { display: flex; flex-wrap: wrap; gap: 5px; }
+.feature-references button { max-width: 100%; overflow-wrap: anywhere; }
+.feature-budget { color: #66768b; }
+.feature-task, .feature-diagnostics { max-height: 180px; overflow: auto; }
+.feature-step { padding: 8px 0; border-bottom: 1px solid #e7ebf0; }
+.feature-step p, .feature-diagnostics p { margin: 4px 0; overflow-wrap: anywhere; }
+@media(max-width: 700px) { .feature-file-grid { grid-template-columns: 1fr; } .feature-file-list { max-height: 100px; } }
+
+.feature-toolbar input:not([type=checkbox]), .feature-toolbar select { background: var(--bg-elevated); color: var(--text); border-color: var(--line); }
+.computer-preview { margin: 8px 0; }
+.computer-preview summary { cursor: pointer; overflow-wrap: anywhere; }
+.computer-preview img { display: block; max-width: 100%; height: auto; margin-top: 8px; border-radius: 6px; }
+
+.workflow-panels { display: grid; gap: 8px; }
+.workflow-panels textarea { width: 100%; min-height: 64px; resize: vertical; padding: 8px; }
+.workflow-panels input:not([type=checkbox]), .feature-settings input:not([type=checkbox]) { min-width: 100px; max-width: 100%; }
+.workflow-panels .feature-toolbar { flex-wrap: wrap; }
+.workflow-panels p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.workflow-panels article { padding: 8px 0; border-bottom: 1px solid var(--border-color, #4444); }
+.workflow-panels small { display: block; overflow-wrap: anywhere; }
+
+.workflow-settings input:not([type=checkbox]), .workflow-settings select, .workflow-panels textarea {
+  background: var(--bg-elevated); color: var(--text); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: 8px 10px; min-height: 36px;
+}
+.workflow-settings .feature-toggle:has(input[type=number]) { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(120px, 180px); }
+.workflow-settings .feature-toggle:has(input[type=number]) span { grid-column: 1; grid-row: 1; }
+.workflow-settings input[type=number] { grid-column: 2; grid-row: 1; width: 100%; }
+.workflow-settings > input[type=text] { width: min(100%, 380px); margin: 8px 8px 8px 0; }
+.workflow-settings input:focus, .workflow-settings select:focus, .workflow-panels textarea:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 600px) { .workflow-settings .feature-toggle:has(input[type=number]) { grid-template-columns: 1fr 120px; } }

@@ -1,4 +1,22 @@
+mod browser;
+mod computer;
+#[cfg(windows)]
+mod computer_capture;
+pub mod file_history;
+
+/// Internal one-frame capture entrypoint for shell/CLI child processes.
+pub fn computer_capture_worker() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        computer_capture::worker()
+    }
+    #[cfg(not(windows))]
+    {
+        Err("Computer capture requires Windows".into())
+    }
+}
 mod process;
+mod task_plan;
 mod team_memory;
 mod team_memory_sync;
 
@@ -92,6 +110,8 @@ pub struct GlobalToolRegistry {
     lsp_service: Option<LazyLspService>,
     active_deferred_tools: BTreeSet<String>,
     tool_search: ToolSearchSettings,
+    browser: Option<browser::BrowserSession>,
+    computer: Option<computer::ComputerHelper>,
 }
 
 struct LazyLspService {
@@ -111,6 +131,8 @@ impl GlobalToolRegistry {
             lsp_service: None,
             active_deferred_tools: BTreeSet::new(),
             tool_search: ToolSearchSettings::default(),
+            browser: None,
+            computer: None,
         }
     }
 
@@ -167,6 +189,8 @@ impl GlobalToolRegistry {
             lsp_service: None,
             active_deferred_tools: BTreeSet::new(),
             tool_search: ToolSearchSettings::default(),
+            browser: None,
+            computer: None,
         })
     }
 
@@ -182,9 +206,11 @@ impl GlobalToolRegistry {
         let builtin = builtin_specs()
             .into_iter()
             .filter(|spec| {
-                spec.exposure == ToolExposure::Core
-                    || deferred_tools_inline
-                    || self.active_deferred_tools.contains(spec.name)
+                (spec.name != "Computer" || computer::enabled())
+                    && (spec.name != "Browser" || browser::enabled())
+                    && (spec.exposure == ToolExposure::Core
+                        || deferred_tools_inline
+                        || self.active_deferred_tools.contains(spec.name))
             })
             .map(|spec| {
                 (
@@ -510,6 +536,9 @@ pub fn lsp_servers_from_runtime(
 #[must_use]
 pub fn builtin_specs() -> Vec<ToolSpec> {
     vec![
+        computer::spec(),
+        browser::spec(),
+        task_plan::spec(),
         ToolSpec {
             name: "bash",
             aliases: &["BashTool"],
@@ -547,7 +576,8 @@ pub fn builtin_specs() -> Vec<ToolSpec> {
                 "type": "object",
                 "properties": {
                     "path": { "type": "string" },
-                    "content": { "type": "string" }
+                    "content": { "type": "string" },
+                    "expectedVersion": { "type": "string", "description":"Version from read_file, or missing for a new file" }
                 },
                 "required": ["path", "content"]
             }),
@@ -563,7 +593,8 @@ pub fn builtin_specs() -> Vec<ToolSpec> {
                 "properties": {
                     "path": { "type": "string" },
                     "old_string": { "type": "string" },
-                    "new_string": { "type": "string" }
+                    "new_string": { "type": "string" },
+                    "expectedVersion": { "type": "string", "description":"Version returned by read_file" }
                 },
                 "required": ["path", "old_string", "new_string"]
             }),
@@ -840,6 +871,9 @@ fn execute_builtin(
     input: &Value,
 ) -> Result<String, ToolError> {
     match name {
+        "Computer" => computer::execute(&mut registry.computer, input),
+        "Browser" => browser::execute(&mut registry.browser, input),
+        "UpdatePlan" => task_plan::execute(input),
         "bash" => run_bash(input),
         "read_file" => read_file(input),
         "write_file" => write_file(input),
@@ -866,7 +900,10 @@ fn execute_builtin(
 
 fn run_bash(input: &Value) -> Result<String, ToolError> {
     let command = required_string(input, "command")?;
-    let timeout_ms = input.get("timeoutMs").and_then(Value::as_u64).unwrap_or(120_000);
+    let timeout_ms = input
+        .get("timeoutMs")
+        .and_then(Value::as_u64)
+        .unwrap_or(120_000);
     if !(100..=600_000).contains(&timeout_ms) {
         return Err(ToolError::new("timeoutMs must be between 100 and 600000"));
     }
@@ -880,7 +917,8 @@ fn read_file(input: &Value) -> Result<String, ToolError> {
     let content = fs::read_to_string(&path).map_err(|error| ToolError::new(error.to_string()))?;
     Ok(json!({
         "path": path.display().to_string(),
-        "content": content
+        "content": content,
+        "version": file_history::version(content.as_bytes())
     })
     .to_string())
 }
@@ -889,16 +927,10 @@ fn write_file(input: &Value) -> Result<String, ToolError> {
     let path = PathBuf::from(required_string(input, "path")?);
     let content = required_string(input, "content")?;
     guard_team_memory_write(&path.display().to_string(), content).map_err(ToolError::new)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| ToolError::new(error.to_string()))?;
-    }
-    fs::write(&path, content).map_err(|error| ToolError::new(error.to_string()))?;
+    let output = file_history::write(&path, content, input["expectedVersion"].as_str())
+        .map_err(ToolError::new)?;
     notify_team_memory_write_if_needed(&path.display().to_string()).map_err(ToolError::new)?;
-    Ok(json!({
-        "path": path.display().to_string(),
-        "written": true
-    })
-    .to_string())
+    Ok(output.to_string())
 }
 
 fn edit_file(input: &Value) -> Result<String, ToolError> {
@@ -906,16 +938,26 @@ fn edit_file(input: &Value) -> Result<String, ToolError> {
     let old_string = required_string(input, "old_string")?;
     let new_string = required_string(input, "new_string")?;
     let content = fs::read_to_string(&path).map_err(|error| ToolError::new(error.to_string()))?;
-    if !content.contains(old_string) {
-        return Err(ToolError::new("old_string not found"));
+    if old_string.is_empty() || content.matches(old_string).count() != 1 {
+        return Err(ToolError::new(
+            "old_string must match exactly once; include more context",
+        ));
     }
     let updated = content.replacen(old_string, new_string, 1);
     guard_team_memory_write(&path.display().to_string(), &updated).map_err(ToolError::new)?;
-    fs::write(&path, updated).map_err(|error| ToolError::new(error.to_string()))?;
+    let read_version = file_history::version(content.as_bytes());
+    let result = file_history::write(
+        &path,
+        &updated,
+        Some(input["expectedVersion"].as_str().unwrap_or(&read_version)),
+    )
+    .map_err(ToolError::new)?;
     notify_team_memory_write_if_needed(&path.display().to_string()).map_err(ToolError::new)?;
     Ok(json!({
         "path": path.display().to_string(),
-        "updated": true
+        "updated": true,
+        "version": result["version"],
+        "snapshotId": result["snapshotId"]
     })
     .to_string())
 }

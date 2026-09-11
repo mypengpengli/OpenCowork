@@ -611,6 +611,12 @@ fn ensure_stdio_ready<'a>(
             process.request(request_id, "initialize", Some(default_initialize_params()))?
         };
         read_jsonrpc_result(response, server_name, "initialize")?;
+        state
+            .servers
+            .get_mut(server_name)
+            .and_then(|s| s.stdio.as_mut())
+            .ok_or("MCP process missing")?
+            .write_message(&json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
         let server = state
             .servers
             .get_mut(server_name)
@@ -996,6 +1002,11 @@ impl McpStdioProcess {
             command.env(key, value);
         }
 
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000);
+        }
         let mut child = command.spawn().map_err(|error| error.to_string())?;
         let stdin = child
             .stdin
@@ -1019,48 +1030,53 @@ impl McpStdioProcess {
         method: impl Into<String>,
         params: Option<TParams>,
     ) -> Result<JsonRpcResponse<TResult>, String> {
-        let payload = serde_json::to_vec(&JsonRpcRequest::new(id, method, params))
+        let payload = serde_json::to_vec(&JsonRpcRequest::new(id.clone(), method, params))
             .map_err(|error| error.to_string())?;
-        let header = format!("Content-Length: {}\r\n\r\n", payload.len());
         self.stdin
-            .write_all(header.as_bytes())
-            .and_then(|_| self.stdin.write_all(&payload))
+            .write_all(&payload)
+            .and_then(|_| self.stdin.write_all(b"\n"))
             .and_then(|_| self.stdin.flush())
-            .map_err(|error| error.to_string())?;
+            .map_err(|e| e.to_string())?;
+        loop {
+            let frame = self.read_frame()?;
+            let value: Value = serde_json::from_slice(&frame).map_err(|e| e.to_string())?;
+            if value.get("method").is_some() {
+                if let Some(request_id) = value.get("id") {
+                    let response = json!({"jsonrpc":"2.0","id":request_id,"error":{"code":-32601,"message":"Client request not supported"}});
+                    self.write_message(&response)?;
+                }
+                continue;
+            }
+            let response: JsonRpcResponse<TResult> =
+                serde_json::from_value(value).map_err(|e| e.to_string())?;
+            if response.id == id {
+                return Ok(response);
+            }
+        }
+    }
 
-        let frame = self.read_frame()?;
-        serde_json::from_slice(&frame).map_err(|error| error.to_string())
+    fn write_message(&mut self, value: &Value) -> Result<(), String> {
+        let mut payload = serde_json::to_vec(value).map_err(|e| e.to_string())?;
+        payload.push(b'\n');
+        self.stdin
+            .write_all(&payload)
+            .and_then(|_| self.stdin.flush())
+            .map_err(|e| e.to_string())
     }
 
     fn read_frame(&mut self) -> Result<Vec<u8>, String> {
-        let mut content_length = None;
-        loop {
-            let mut line = String::new();
-            let read = self
-                .stdout
-                .read_line(&mut line)
-                .map_err(|error| error.to_string())?;
-            if read == 0 {
-                return Err("MCP stdio stream closed while reading headers".to_string());
-            }
-            if line == "\r\n" {
-                break;
-            }
-            if let Some(value) = line.strip_prefix("Content-Length:") {
-                let parsed = value
-                    .trim()
-                    .parse::<usize>()
-                    .map_err(|error| error.to_string())?;
-                content_length = Some(parsed);
-            }
+        let mut payload = Vec::new();
+        // Bound each line, including image-bearing tool results.
+        let count = (&mut self.stdout)
+            .take(16 * 1024 * 1024 + 1)
+            .read_until(b'\n', &mut payload)
+            .map_err(|e| e.to_string())?;
+        if count == 0 {
+            return Err("MCP stdio stream closed".into());
         }
-
-        let content_length =
-            content_length.ok_or_else(|| "missing Content-Length header".to_string())?;
-        let mut payload = vec![0_u8; content_length];
-        self.stdout
-            .read_exact(&mut payload)
-            .map_err(|error| error.to_string())?;
+        if count > 16 * 1024 * 1024 {
+            return Err("MCP message exceeds 16 MB".into());
+        }
         Ok(payload)
     }
 
@@ -1134,26 +1150,22 @@ mod tests {
             [
                 "import json, sys",
                 "def read_frame():",
-                "    length = None",
-                "    while True:",
-                "        line = sys.stdin.buffer.readline()",
-                "        if not line:",
-                "            raise SystemExit(0)",
-                "        if line == b'\\r\\n':",
-                "            break",
-                "        if line.startswith(b'Content-Length:'):",
-                "            length = int(line.split(b':', 1)[1].strip())",
-                "    return json.loads(sys.stdin.buffer.read(length))",
+                "    line = sys.stdin.buffer.readline()",
+                "    if not line: raise SystemExit(0)",
+                "    return json.loads(line)",
                 "def write_frame(payload):",
-                "    data = json.dumps(payload).encode()",
-                "    sys.stdout.buffer.write(f'Content-Length: {len(data)}\\r\\n\\r\\n'.encode() + data)",
+                "    sys.stdout.buffer.write(json.dumps(payload).encode() + b'\\n')",
                 "    sys.stdout.buffer.flush()",
                 "while True:",
                 "    request = read_frame()",
                 "    method = request['method']",
                 "    if method == 'initialize':",
                 "        write_frame({'jsonrpc':'2.0','id':request['id'],'result':{'ok':True}})",
+                "    elif method == 'notifications/initialized':",
+                "        initialized = True",
                 "    elif method == 'tools/list':",
+                "        assert initialized",
+                "        write_frame({'jsonrpc':'2.0','method':'notifications/tools/list_changed'})",
                 "        write_frame({'jsonrpc':'2.0','id':request['id'],'result':{'tools':[{'name':'status','description':'status','inputSchema':{'type':'object'}}]}})",
                 "    elif method == 'tools/call':",
                 "        args = request.get('params', {}).get('arguments', {})",

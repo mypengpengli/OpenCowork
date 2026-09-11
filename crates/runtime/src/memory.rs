@@ -996,9 +996,11 @@ fn select_memory_candidates_with_provider<P: ProviderClient>(
 ) -> Result<Vec<String>, String> {
     let manifest = format_memory_manifest(candidates);
     let response = provider.execute(ProviderRequest {
+        max_output_tokens: None,
         model: model.to_string(),
         system_prompt: vec![MEMORY_SELECTOR_SYSTEM_PROMPT.to_string()],
         messages: vec![InputMessage {
+            image_urls: Vec::new(),
             role: "user".to_string(),
             content: Some(format!(
                 "Query: {user_query}\n\nAvailable memories:\n{manifest}"

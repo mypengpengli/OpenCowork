@@ -29,7 +29,7 @@ def check_chat(executable):
             def do_POST(self):
                 payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 messages = payload["messages"]
-                prompt = next(m["content"] for m in reversed(messages) if m["role"] == "user")
+                prompt = next(m["content"] for m in reversed(messages) if m["role"] == "user").split("\n", 1)[0]
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
                 self.end_headers()
@@ -97,8 +97,8 @@ def check_chat(executable):
             assert line, "Stream ended without completion"
             return json.loads(line)
 
-        def begin(prompt, turn_id):
-            connection, response = request("/api/chat", {"input": prompt, "turnId": turn_id})
+        def begin(prompt, turn_id, references=None):
+            connection, response = request("/api/chat", {"input": prompt, "turnId": turn_id, "references": references or []})
             assert response.status == 200, response.read()
             started = read_message(response)
             assert started["type"] == "started", started
@@ -154,17 +154,23 @@ def check_chat(executable):
                 print("PASS: real incremental output, saved final session, concurrency protection")
 
                 release.clear()
-                connection, response, session = begin("cancel", "cancel-test")
+                (project / "reference.txt").write_text("Cancellation reference fixture", encoding="utf-8")
+                connection, listing = request("/api/workspace")
+                assert "reference.txt" in json.loads(listing.read())["files"]
+                connection.close()
+                connection, response, session = begin("cancel", "cancel-test", [{"kind": "file", "path": "reference.txt"}])
                 until(response, lambda m: m["type"] == "event")
                 start = time.monotonic()
                 stop("cancel-test")
                 completed, _ = until(response, lambda m: m["type"] == "complete")
                 assert completed["response"]["status"] == "cancelled"
                 assert "第一段" in json.dumps(completed["response"]["session"], ensure_ascii=False)
+                saved = json.loads((config / "sessions" / f"{session}.json").read_text(encoding="utf-8"))
+                assert "Cancellation reference fixture" in json.dumps(saved)
                 assert time.monotonic() - start < 4
                 connection.close()
                 release.set()
-                print("PASS: stop interrupts a waiting model and retains partial output")
+                print("PASS: non-Git workspace listing; stop retains partial output and attached reference context")
 
                 connection, response, session = begin("failure", "failure-test")
                 completed, _ = until(response, lambda m: m["type"] == "complete")

@@ -1,4 +1,6 @@
 import { readChatStream, appendChatEvent } from '/chat-stream.mjs'
+import { initFeaturePanels } from '/features.mjs'
+let featurePanels
 
 function loadPaneState() {
   try {
@@ -509,7 +511,7 @@ const MESSAGES = {
     'locale.current.zh': '中文',
     'locale.current.en': 'English',
     'empty.title': 'OpenCowork',
-    'empty.copy': '在不改后端运行时的前提下，用更清爽的工作台外壳继续处理上下文、记忆、工具和会话。',
+    'empty.copy': '描述你的目标，使用文件、浏览器和电脑工具完成任务，并随时查看进度和更改。',
     'empty.example1': '查看当前工作区，并总结运行时状态。',
     'empty.example2': '调整 API / Provider 设置，但不要改主循环。',
     'empty.example3': '为当前项目创建或更新本地 Skill。',
@@ -593,7 +595,7 @@ const MESSAGES = {
     'history.count': '{{visible}} / {{total}}',
     'settings.kicker': '配置中心',
     'settings.title': '设置',
-    'settings.copy': '保留当前运行时逻辑不变，只在外壳层处理界面、配置录入和双语体验。',
+    'settings.copy': '管理模型、执行预算、工具权限、技能与记忆。',
     'settings.editApi': '编辑 API',
     'settings.pathsTitle': '项目路径',
     'settings.pathsCopy': '把最常用的配置和 Skills 路径直接放到这里，避免来回找文件。',
@@ -1105,7 +1107,7 @@ const MESSAGES = {
     'locale.current.zh': 'Chinese',
     'locale.current.en': 'English',
     'empty.title': 'OpenCowork',
-    'empty.copy': 'Keep the backend runtime intact while using a cleaner shell for context, memory, tools, and sessions.',
+    'empty.copy': 'Describe your goal, work with files, browser and desktop tools, and review progress and changes.',
     'empty.example1': 'Inspect the workspace and summarize the current runtime.',
     'empty.example2': 'Adjust API / Provider settings without touching the loop.',
     'empty.example3': 'Create or update a local skill for this project.',
@@ -1189,7 +1191,7 @@ const MESSAGES = {
     'history.count': '{{visible}} / {{total}}',
     'settings.kicker': 'Configuration',
     'settings.title': 'Settings',
-    'settings.copy': 'Keep the runtime unchanged and handle shell UI, config entry, and bilingual UX only in the shell.',
+    'settings.copy': 'Manage models, execution budgets, tool permissions, skills and memories.',
     'settings.editApi': 'Edit API',
     'settings.pathsTitle': 'Project Paths',
     'settings.pathsCopy': 'Keep the most-used config and skill paths here so you do not have to hunt for them.',
@@ -2383,6 +2385,7 @@ function buildVisibleMessages() {
 }
 
 function renderConversationSurface() {
+  featurePanels?.refresh()
   renderChatSummary()
   renderWorkspaceMeta()
   renderTurnStats()
@@ -3960,6 +3963,27 @@ function renderMessages() {
         blockNode.appendChild(blockHeader)
       }
 
+      if (block.type === 'tool_result' && ['Computer', 'Browser'].includes(getValue(block, 'tool_name', 'toolName'))) {
+        try {
+          const raw = getValue(block, 'output')
+          const computer = typeof raw === 'string' ? JSON.parse(raw) : raw
+          const name = String(computer?.screenshotPath || '').split(/[\\/]/).pop()
+          if (/^[a-zA-Z0-9.-]+\.jpg$/.test(name)) {
+            const preview = document.createElement('details')
+            preview.className = 'computer-preview'
+            const caption = document.createElement('summary')
+            caption.textContent = (state.locale === 'zh' ? '查看电脑截图' : 'View computer screenshot') + (computer.window?.title ? ` · ${computer.window.title}` : '')
+            const picture = document.createElement('img')
+            picture.loading = 'lazy'
+            picture.alt = caption.textContent
+            picture.src = `/api/computer/screenshots/${encodeURIComponent(name)}`
+            picture.addEventListener('error', () => { picture.remove(); caption.textContent = state.locale === 'zh' ? '截图已不可用' : 'Screenshot unavailable' })
+            preview.append(caption, picture)
+            blockNode.appendChild(preview)
+          }
+        } catch { /* Keep non-JSON tool errors visible as ordinary text. */ }
+      }
+
       const contentNode = document.createElement('pre')
       contentNode.className = 'message-block-content'
       if (isCodeish) {
@@ -4866,6 +4890,7 @@ function renderAcpThreadsList(threads) {
 }
 
 function renderAll() {
+  featurePanels?.refresh()
   renderShellMeta()
   renderSidebarSessions()
   renderChatSummary()
@@ -5100,6 +5125,8 @@ async function submitChat(event) {
         turnId,
         sessionId: state.currentSessionId,
         input,
+        references: featurePanels?.references() || [],
+        ...featurePanels?.requestExtras(input),
         model: els.providerModel.value.trim() || undefined,
       }),
     })
@@ -6360,3 +6387,5 @@ loadBootstrap({ allowAutoSelect: false }).catch((error) => {
   setComposerStatus(error.message || t('composer.refreshFailed'), true)
   setDrawerStatus(error.message || t('composer.refreshFailed'), true)
 })
+
+featurePanels = initFeaturePanels({state, request, composer: els.composerInput, status: setComposerStatus, openSession: loadSession, send: () => els.composerForm.requestSubmit()})

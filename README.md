@@ -126,7 +126,13 @@ MCP tool discovery is deferred until a runtime or tool manifest is requested.
 
 ### What a new Windows machine needs
 
-For a fresh machine, the project currently needs:
+For a prebuilt portable package, extract the ZIP and run `Start-OpenCowork.bat`.
+It includes both shell and desktop executables; only Windows x64 and WebView2
+are required. Drag a project folder onto the launcher to use that workspace.
+Startup failures appear in a dialog and are logged under
+`%LOCALAPPDATA%\OpenCowork\logs`.
+
+To build from source, a fresh machine needs:
 
 - Rust toolchain (`rustup`, `cargo`, `rustc`)
 - Windows MSVC C++ build environment
@@ -140,6 +146,51 @@ Useful notes:
 - Git is only needed to clone/pull the repository, not to run an already-downloaded copy.
 - MCP servers or custom tools may need their own runtimes later, depending on what you configure.
 - The first build on a new machine will be slower because Cargo needs to compile the workspace.
+
+Build a portable distribution with `powershell -NoProfile -ExecutionPolicy Bypass
+-File scripts/package-windows.ps1`. Packages and file hash manifests are written
+to timestamped directories under `dist/packages`. The default is an optimized
+release build; `-Profile debug` creates a development build.
+
+## Computer control, workspace context, and task progress
+
+Windows computer control is enabled by default. Change it in **Settings >
+Permissions > Computer control**, or set `computer.enabled` to `false` in project
+settings. The built-in `Computer` tool can inspect windows and accessibility
+elements, capture the desktop, focus a process, click, drag, scroll, type Unicode
+text, and press keys. It uses local Windows APIs through the bundled PowerShell
+script; no Zhipu service or separate MCP server is required. Screenshot-based
+reasoning requires a model that accepts image inputs. Existing tool permission
+rules still apply. Turning the switch off cancels active chats and removes this
+tool from subsequent requests; it does not restrict the general shell tool.
+
+Computer input now requires a selected window and its latest observation ID.
+It supports indexed accessibility controls, direct value setting, secondary
+actions, two-axis scrolling and extended key chords. Targeted actions return
+fresh state. Window screenshots use Windows Graphics Capture with a reported
+compatibility fallback, and can be previewed in chat. See the
+[Codex comparison and operation guide](docs/computer-control.md) for exact
+behavior, validation and remaining differences.
+
+The workspace panel lists files and Git changes, with text previews and staged /
+unstaged read-only diffs. Files and previous sessions can be attached to a turn
+and removed before submission. References are limited to eight items, 12,000
+characters per item and 24,000 total; the panel shows truncation and approximate
+token costs. Attached text is saved with the user turn, including interrupted
+turns. Context diagnostics show included prompt layers and their reasons.
+
+Optional background memory extraction is in the same permissions panel and is
+off by default (`memory.backgroundEnabled`). After a successful turn it runs in
+a separate worker with a 768-token output budget, timeout, per-project lock and
+60-second cooldown. Extracted notes remain inspectable, editable and deletable
+in the memory UI. Main-path recall uses bounded lexical selection (up to three
+notes / 6,000 characters) with repeated-note throttling; it makes no extra model
+request to select notes.
+
+Long tasks use the `UpdatePlan` tool to persist steps, checks and completion
+evidence. The task panel shows progress and offers continuation after a stopped
+turn. Completion requires evidence; interrupted work remains resumable. This
+provides visible planning within the existing agent loop.
 
 ## Commands
 
@@ -179,6 +230,8 @@ Startup regression checks (Python 3 is only needed for these checks):
 python scripts/check-launcher.py
 python scripts/check-startup.py "$env:LOCALAPPDATA\OpenClaw\target\debug\opencowork-shell.exe"
 python scripts/check-chat.py "$env:LOCALAPPDATA\OpenClaw\target\debug\opencowork-shell.exe"
+python scripts/check-features.py "$env:LOCALAPPDATA\OpenClaw\target\debug\opencowork-shell.exe"
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-computer-input.ps1
 node scripts/check-chat-stream.mjs
 ```
 
@@ -187,6 +240,10 @@ team-memory/provider services. They do not use your provider credentials or laun
 MCP servers. Chat checks cover early deltas, cancellation, partial-history saving,
 provider failures, and tool timeouts; process-tree termination is verified on
 Windows. The stream-parser check additionally requires Node.js.
+Feature checks cover references, diffs, persisted task plans, the settings switch,
+background extraction and screenshot payloads using a mock provider. The native
+input check briefly opens its own test window and exercises focus, click, Unicode
+typing and keyboard shortcuts. It requires an interactive Windows desktop.
 
 ## Config knobs
 
@@ -207,3 +264,7 @@ The current rebuild exposes the small control knobs that matter operationally:
 - `mcpServers.<name>.timeoutMs`
 - `mcpServers.<name>.auth`
 - `mcpServers.<name>.oauth`
+
+## 自动执行与经验复用
+
+目标续跑、运行中补充要求、独立浏览器、分块审阅与恢复、中文历史全文搜索、技能候选、定时任务和隔离工作区已接入。设置 → 权限可调整预算、后台模型和功能开关。使用方法与边界见 [自动工作流说明](docs/autonomous-workflows.md)。

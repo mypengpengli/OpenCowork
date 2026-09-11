@@ -45,6 +45,8 @@ export function appendChatEvent(messages, event) {
     return message
   }
   switch (event.type) {
+    case 'user_message':
+      messages.push({role:'user',blocks:[{type:'text',text:event.text}]}); break
     case 'assistant_text_delta': {
       const message = assistant()
       const last = message.blocks.at(-1)

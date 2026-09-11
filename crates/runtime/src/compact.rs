@@ -263,6 +263,8 @@ pub fn compact_session(session: &Session, config: CompactConfig) -> CompactResul
         compacted_session: Session {
             version: session.version,
             id: session.id.clone(),
+            workspace: session.workspace.clone(),
+            delivered_user_messages: session.delivered_user_messages.clone(),
             messages: compacted_messages,
             current_session_memory: session.current_session_memory.clone(),
             session_memory_state: session.session_memory_state.clone(),
@@ -352,6 +354,8 @@ fn compact_session_with_session_memory(
         compacted_session: Session {
             version: session.version,
             id: session.id.clone(),
+            workspace: session.workspace.clone(),
+            delivered_user_messages: session.delivered_user_messages.clone(),
             messages: compacted_messages,
             current_session_memory: session.current_session_memory.clone(),
             session_memory_state,

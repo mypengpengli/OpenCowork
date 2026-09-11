@@ -154,9 +154,9 @@ impl AgentHandoffStore {
 
     pub fn save(&self, handoff: &AgentHandoff) -> Result<(), AgentStoreError> {
         fs::create_dir_all(&self.root)?;
-        fs::write(
-            self.root.join(format!("{}.json", handoff.handoff_id)),
-            serde_json::to_string_pretty(handoff)?,
+        opencowork_runtime::write_json_atomic(
+            &self.root.join(format!("{}.json", handoff.handoff_id)),
+            &serde_json::to_value(handoff)?,
         )?;
         Ok(())
     }
@@ -169,7 +169,14 @@ impl AgentHandoffStore {
         context_files: Vec<String>,
     ) -> Result<AgentHandoff, AgentStoreError> {
         let handoff = AgentHandoff {
-            handoff_id: format!("handoff-{}", now_ms()),
+            handoff_id: format!(
+                "handoff-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos()
+            ),
             task_id: assignment.task_id.clone(),
             agent_id: assignment.agent_id.clone(),
             agent_model,
@@ -212,6 +219,19 @@ impl AgentHandoffStore {
     }
 
     pub fn claim_next(&self, agent_id: &str) -> Result<Option<AgentHandoff>, AgentStoreError> {
+        let _claim =
+            match opencowork_runtime::ExclusiveLease::acquire(&self.root.join("claim.lock")) {
+                Ok(lease) => lease,
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::PermissionDenied
+                    ) =>
+                {
+                    return Ok(None)
+                }
+                Err(e) => return Err(e.into()),
+            };
         let mut handoffs = self.list()?;
         handoffs.sort_by(|left, right| left.created_at_unix_ms.cmp(&right.created_at_unix_ms));
         let Some(next) = handoffs.into_iter().find(|handoff| {
@@ -308,6 +328,43 @@ mod tests {
             .expect("time")
             .as_nanos();
         std::env::temp_dir().join(format!("opencowork-{label}-{stamp}"))
+    }
+
+    #[test]
+    fn concurrent_workers_claim_only_once() {
+        let root = temp_dir("atomic-claim");
+        let store = AgentHandoffStore::new(&root);
+        store
+            .create(
+                &super::Assignment {
+                    task_id: "task".into(),
+                    agent_id: "worker".into(),
+                    reason: "test".into(),
+                },
+                None,
+                "single claim",
+                vec![],
+            )
+            .unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(4));
+        let threads = (0..4)
+            .map(|_| {
+                let store = store.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    store.claim_next("worker")
+                })
+            })
+            .collect::<Vec<_>>();
+        let claims = threads
+            .into_iter()
+            .map(|t| t.join().unwrap())
+            .filter_map(|r| r.ok().flatten())
+            .count();
+        assert_eq!(claims, 1);
+        assert!(store.claim_next("worker").unwrap().is_none());
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

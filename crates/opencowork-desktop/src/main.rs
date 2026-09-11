@@ -14,12 +14,52 @@ use wry::WebViewBuilder;
 
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
 
-fn main() -> anyhow::Result<()> {
+fn main() {
+    if let Err(error) = run() {
+        let message = format!("OpenCowork could not start:\n{error:#}\n\nSee startup.log and shell.log in the OpenCowork logs folder.\nWebView2: https://developer.microsoft.com/microsoft-edge/webview2/");
+        let _ = std::fs::write(log_directory().join("startup.log"), &message);
+        eprintln!("{message}");
+        #[cfg(windows)]
+        unsafe {
+            #[link(name = "user32")]
+            extern "system" {
+                fn MessageBoxW(
+                    window: *mut std::ffi::c_void,
+                    text: *const u16,
+                    caption: *const u16,
+                    flags: u32,
+                ) -> i32;
+            }
+            let text: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
+            let caption: Vec<u16> = "OpenCowork startup error"
+                .encode_utf16()
+                .chain(Some(0))
+                .collect();
+            MessageBoxW(std::ptr::null_mut(), text.as_ptr(), caption.as_ptr(), 0x10);
+        }
+        std::process::exit(1);
+    }
+}
+
+fn log_directory() -> PathBuf {
+    let root = env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(env::temp_dir)
+        .join("OpenCowork/logs");
+    let _ = std::fs::create_dir_all(&root);
+    root
+}
+
+fn run() -> anyhow::Result<()> {
+    wry::webview_version().context("WebView2 Runtime is missing or unavailable. Install the Evergreen Runtime before launching OpenCowork.")?;
     let cwd = env::current_dir().context("failed to resolve current directory")?;
     let port = reserve_local_port()?;
     let shell_url = format!("http://127.0.0.1:{port}/");
     let mut shell_child = spawn_shell_process(&cwd, port)?;
-    wait_for_shell(&shell_url, &mut shell_child)?;
+    if let Err(error) = wait_for_shell(&shell_url, &mut shell_child) {
+        let _ = terminate_shell_process(&mut shell_child);
+        return Err(error);
+    }
 
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
@@ -61,12 +101,20 @@ fn reserve_local_port() -> anyhow::Result<u16> {
 
 fn spawn_shell_process(cwd: &Path, port: u16) -> anyhow::Result<Child> {
     let shell_exe = locate_shell_executable()?;
-    Command::new(shell_exe)
+    let mut command = Command::new(shell_exe);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    command
         .current_dir(cwd)
         .env("OPENCOWORK_SHELL_PORT", port.to_string())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::from(std::fs::File::create(
+            log_directory().join("shell.log"),
+        )?))
         .spawn()
         .context("failed to launch opencowork-shell.exe")
 }

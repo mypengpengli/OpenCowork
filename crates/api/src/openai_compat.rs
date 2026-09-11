@@ -18,6 +18,7 @@ pub struct OpenAiCompatProfile {
     pub base_url_env: Option<String>,
     pub base_url: String,
     pub timeout_ms: u64,
+    pub reasoning_effort: Option<String>,
 }
 
 impl OpenAiCompatProfile {
@@ -29,6 +30,7 @@ impl OpenAiCompatProfile {
             base_url_env: Some("OPENAI_BASE_URL".to_string()),
             base_url: DEFAULT_OPENAI_BASE_URL.to_string(),
             timeout_ms: 90_000,
+            reasoning_effort: None,
         }
     }
 
@@ -40,6 +42,7 @@ impl OpenAiCompatProfile {
             base_url_env: Some("XAI_BASE_URL".to_string()),
             base_url: DEFAULT_XAI_BASE_URL.to_string(),
             timeout_ms: 90_000,
+            reasoning_effort: None,
         }
     }
 
@@ -56,6 +59,7 @@ impl OpenAiCompatProfile {
             base_url_env,
             base_url: base_url.into(),
             timeout_ms: 90_000,
+            reasoning_effort: None,
         }
     }
 
@@ -110,6 +114,35 @@ impl OpenAiCompatClient {
         })
     }
 
+    fn send(&self, request: &ProviderRequest, stream: bool) -> Result<Response, String> {
+        let mut body = build_chat_completion_request(request, stream);
+        if let Some(effort) = &self.profile.reasoning_effort {
+            body["reasoning_effort"] = effort.clone().into();
+        }
+        for attempt in 0..2 {
+            let result = self
+                .http
+                .post(self.request_url())
+                .bearer_auth(&self.api_key)
+                .json(&body)
+                .send();
+            match result {
+                Ok(response) if attempt == 0 && matches!(response.status().as_u16(), 429 | 503) => {
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+                Ok(response) => return Ok(response),
+                Err(e) if attempt == 0 && e.is_connect() => {}
+                Err(e) => return Err(if e.is_timeout() {
+                    "provider_timeout: request outcome is unknown; no automatic replay"
+                } else {
+                    "provider_connection: connection failed; check provider URL, proxy and network"
+                }
+                .into()),
+            }
+        }
+        Err("provider_connection: retry exhausted".into())
+    }
+
     fn request_url(&self) -> String {
         format!(
             "{}/chat/completions",
@@ -120,14 +153,7 @@ impl OpenAiCompatClient {
 
 impl ProviderClient for OpenAiCompatClient {
     fn execute(&mut self, request: ProviderRequest) -> Result<ProviderResponse, String> {
-        let response = self
-            .http
-            .post(self.request_url())
-            .bearer_auth(&self.api_key)
-            .header("content-type", "application/json")
-            .json(&build_chat_completion_request(&request, false))
-            .send()
-            .map_err(|error| error.to_string())?;
+        let response = self.send(&request, false)?;
         let payload = read_success_payload(response, &self.profile)?;
         normalize_chat_completion_payload(&payload)
     }
@@ -141,15 +167,26 @@ impl ProviderClient for OpenAiCompatClient {
         request: ProviderRequest,
         on_event: &mut dyn FnMut(&ProviderEvent),
     ) -> Result<Vec<ProviderEvent>, String> {
-        let response = self
-            .http
-            .post(self.request_url())
-            .bearer_auth(&self.api_key)
-            .header("content-type", "application/json")
-            .json(&build_chat_completion_request(&request, true))
-            .send()
-            .map_err(|error| error.to_string())?;
+        let response = self.send(&request, true)?;
         read_stream_events(response, &self.profile, on_event)
+    }
+}
+
+// Runtime input_tokens excludes cache reads/writes. All buckets are disjoint.
+fn normalize_usage(usage: &Map<String, Value>) -> ProviderEvent {
+    let total = parse_u32_field(usage, "prompt_tokens");
+    let details = if usage.contains_key("prompt_tokens_details") {
+        "prompt_tokens_details"
+    } else {
+        "input_tokens_details"
+    };
+    let read = parse_cached_tokens(usage, details, "cached_tokens").min(total);
+    let write = parse_cached_tokens(usage, details, "cache_write_tokens").min(total - read);
+    ProviderEvent::Usage {
+        input_tokens: total - read - write,
+        output_tokens: parse_u32_field(usage, "completion_tokens"),
+        cache_creation_input_tokens: write,
+        cache_read_input_tokens: read,
     }
 }
 
@@ -166,13 +203,7 @@ fn read_success_payload(
 ) -> Result<Value, String> {
     let status = response.status();
     if !status.is_success() {
-        let body = response.text().unwrap_or_default();
-        return Err(format!(
-            "{} provider request failed with {}: {}",
-            profile.provider_name,
-            status,
-            body.trim()
-        ));
+        return Err(http_error(status.as_u16(), profile));
     }
     response.json::<Value>().map_err(|error| error.to_string())
 }
@@ -191,6 +222,9 @@ fn build_chat_completion_request(request: &ProviderRequest, stream: bool) -> Val
         "stream": stream,
     });
 
+    if let Some(limit) = request.max_output_tokens {
+        root["max_tokens"] = json!(limit);
+    }
     if stream {
         root["stream_options"] = json!({
             "include_usage": true
@@ -231,6 +265,17 @@ fn build_chat_completion_message(message: &InputMessage) -> Value {
             .map_or(Value::Null, |value| Value::String(value.clone())),
     );
 
+    if message.role == "user" && !message.image_urls.is_empty() {
+        let mut blocks =
+            vec![json!({"type":"text","text":message.content.as_deref().unwrap_or("Screenshot")})];
+        blocks.extend(
+            message
+                .image_urls
+                .iter()
+                .map(|url| json!({"type":"image_url","image_url":{"url":url}})),
+        );
+        object.insert("content".into(), Value::Array(blocks));
+    }
     if message.role == "assistant" && !message.tool_calls.is_empty() {
         object.insert(
             "tool_calls".to_string(),
@@ -313,16 +358,7 @@ fn normalize_chat_completion_payload(payload: &Value) -> Result<ProviderResponse
     }
 
     if let Some(usage) = payload.get("usage").and_then(Value::as_object) {
-        events.push(ProviderEvent::Usage {
-            input_tokens: parse_u32_field(usage, "prompt_tokens"),
-            output_tokens: parse_u32_field(usage, "completion_tokens"),
-            cache_creation_input_tokens: parse_cached_tokens(
-                usage,
-                "input_tokens_details",
-                "cached_tokens",
-            ),
-            cache_read_input_tokens: 0,
-        });
+        events.push(normalize_usage(usage));
     }
 
     events.push(ProviderEvent::MessageStop);
@@ -350,13 +386,7 @@ fn read_stream_events(
 ) -> Result<Vec<ProviderEvent>, String> {
     let status = response.status();
     if !status.is_success() {
-        let body = response.text().unwrap_or_default();
-        return Err(format!(
-            "{} provider stream failed with {}: {}",
-            profile.provider_name,
-            status,
-            body.trim()
-        ));
+        return Err(http_error(status.as_u16(), profile));
     }
 
     let mut state = StreamState::default();
@@ -414,16 +444,7 @@ impl StreamState {
         on_event: &mut dyn FnMut(&ProviderEvent),
     ) -> Result<(), String> {
         if let Some(usage) = chunk.get("usage").and_then(Value::as_object) {
-            self.usage = Some(ProviderEvent::Usage {
-                input_tokens: parse_u32_field(usage, "prompt_tokens"),
-                output_tokens: parse_u32_field(usage, "completion_tokens"),
-                cache_creation_input_tokens: parse_cached_tokens(
-                    usage,
-                    "input_tokens_details",
-                    "cached_tokens",
-                ),
-                cache_read_input_tokens: 0,
-            });
+            self.usage = Some(normalize_usage(usage));
         }
 
         let Some(choices) = chunk.get("choices").and_then(Value::as_array) else {
@@ -567,10 +588,12 @@ mod tests {
     fn serializes_tool_history_for_openai_compat_requests() {
         let payload = build_chat_completion_request(
             &ProviderRequest {
+                max_output_tokens: None,
                 model: "gpt-5.4-mini".to_string(),
                 system_prompt: vec!["system".to_string()],
                 messages: vec![
                     InputMessage {
+                        image_urls: Vec::new(),
                         role: "assistant".to_string(),
                         content: Some("Planning".to_string()),
                         tool_calls: vec![InputToolCall {
@@ -581,6 +604,7 @@ mod tests {
                         tool_call_id: None,
                     },
                     InputMessage {
+                        image_urls: Vec::new(),
                         role: "tool".to_string(),
                         content: Some("{\"content\":\"ok\"}".to_string()),
                         tool_calls: Vec::new(),
@@ -642,8 +666,8 @@ mod tests {
         ));
         assert!(matches!(
             &response.events[2],
-            ProviderEvent::Usage { input_tokens, output_tokens, cache_creation_input_tokens, .. }
-                if *input_tokens == 12 && *output_tokens == 8 && *cache_creation_input_tokens == 3
+            ProviderEvent::Usage { input_tokens, output_tokens, cache_read_input_tokens, .. }
+                if *input_tokens == 9 && *output_tokens == 8 && *cache_read_input_tokens == 3
         ));
     }
 
@@ -693,4 +717,22 @@ mod tests {
         ));
         assert!(matches!(events.last(), Some(ProviderEvent::MessageStop)));
     }
+}
+
+fn http_error(status: u16, profile: &OpenAiCompatProfile) -> String {
+    let (kind, hint) = match status {
+        401 | 403 => ("authentication", "check API key and model access"),
+        404 => ("endpoint", "check base URL and model name"),
+        429 => ("rate_limit", "wait or check quota"),
+        400 | 422 => (
+            "capability",
+            "check model tools, vision and reasoning settings",
+        ),
+        500..=599 => ("unavailable", "provider is temporarily unavailable"),
+        _ => ("http", "check provider settings"),
+    };
+    format!(
+        "provider_{kind}: {} HTTP {status}; {hint}",
+        profile.provider_name
+    )
 }

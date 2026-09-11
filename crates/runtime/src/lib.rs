@@ -2,6 +2,7 @@ mod compact;
 mod config;
 mod context;
 mod conversation;
+mod durable;
 mod hooks;
 mod memory;
 mod model_context;
@@ -31,8 +32,9 @@ pub use context::{ContextOptimizer, ContextOptimizerConfig, ContextSelection, Se
 pub use conversation::{
     ApiClient, ApiRequest, AssistantEvent, ConversationRuntime, RuntimeError, RuntimeObserver,
     RuntimePromptAugmenter, RuntimePromptUpdate, RuntimeToolDefinition, StaticToolExecutor,
-    ToolError, ToolExecutor, TurnSummary,
+    ToolError, ToolExecutor, TurnLimits, TurnSummary,
 };
+pub use durable::{write_json_atomic, ExclusiveLease};
 pub use hooks::{HookOutcome, HookRunner};
 pub use memory::{
     discover_project_memory_source, discover_relevant_memory_sources,
@@ -54,7 +56,8 @@ pub use model_context::{
     SKILL_BUDGET_CHARS_PER_TOKEN, SKILL_BUDGET_CONTEXT_PERCENT, WARNING_THRESHOLD_BUFFER_TOKENS,
 };
 pub use permissions::{
-    PermissionDecision, PermissionMode, PermissionPolicy, PermissionPrompter, PermissionRequest,
+    check_write_root, PermissionDecision, PermissionMode, PermissionPolicy, PermissionPrompter,
+    PermissionRequest,
 };
 pub use process::ProcessTree;
 pub use prompt::{
