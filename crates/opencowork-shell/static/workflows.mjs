@@ -33,14 +33,16 @@ export function initWorkflows({ state, request, composer, status, send, openSess
   host.append(takeover, goalPanel)
 
   const settings = el('article', '', 'settings-card workflow-settings'); settings.append(el('h3', '自动执行与模型能力'))
+  const advanced = detail('高级设置：预算与后台模型')
   const fields = { maxIterations: ['每轮最多迭代', 80], maxTokens: ['每轮 token 上限', 250000], maxSeconds: ['每轮秒数上限', 900], repeatedResults: ['重复结果停止阈值', 3], maxOutputTokens: ['单次最大输出 token', 8192] }
   const values = {}
-  for (const [key, [name, value]] of Object.entries(fields)) { values[key] = input(name, 'number', value); values[key].min = '1'; settings.append(label(name, values[key])) }
+  for (const [key, [name, value]] of Object.entries(fields)) { values[key] = input(name, 'number', value); values[key].min = '1'; advanced.append(label(name, values[key])) }
   const background = input('后台模型名称（留空跟随当前模型）'), reasoning = el('select'); reasoning.setAttribute('aria-label', '推理强度')
   for (const [value, name] of [['', '推理强度：提供方默认'], ['none', '无'], ['minimal', '最少'], ['low', '低'], ['medium', '中'], ['high', '高']]) { const n = el('option', name); n.value = value; reasoning.append(n) }
   const browser = input('浏览器工具', 'checkbox'), learn = input('生成技能候选', 'checkbox'), auto = input('自动采用技能', 'checkbox'); browser.checked = true
   const settingsState = el('p', '', 'settings-card-copy'), probe = el('pre', '', 'feature-file-preview')
-  settings.append(background, reasoning, label('启用独立浏览器工具（需安装 Chrome 或 Edge）', browser), label('成功流程生成技能候选（额外后台请求）', learn), label('自动采用候选技能（关闭时先审阅）', auto), row(btn('保存执行设置', async () => {
+  advanced.append(label('后台模型', background), label('推理强度', reasoning))
+  settings.append(label('启用独立浏览器工具（需安装 Chrome 或 Edge）', browser), label('成功流程生成技能候选（额外后台请求）', learn), label('自动采用候选技能（关闭时先审阅）', auto), advanced, row(btn('保存执行设置', async () => {
     const execution = Object.fromEntries(Object.entries(values).map(([k, n]) => [k, Number(n.value)])); execution.backgroundModel = background.value.trim(); execution.reasoningEffort = reasoning.value
     await call('/api/execution-settings', { execution, browser: { enabled: browser.checked }, learning: { enabled: learn.checked, autoAdopt: auto.checked } }); settingsState.textContent = '已保存，新回合生效。'
   }), btn('检测模型连接、工具、图像和流式能力', async () => { probe.textContent = '正在检测（最多 4 次小请求，可能产生用量）…'; const data = await call('/api/provider-probe', {}); probe.textContent = `${data.model} · ${data.protocol}\n` + data.checks.map(c => `${c.kind}: ${c.status} · ${c.elapsedMs} ms · ${c.tokens ?? '?'} tokens ${c.error || ''}`).join('\n') + '\n推理强度仅验证参数兼容性，不代表任务能力。' })), settingsState, probe)
@@ -95,5 +97,5 @@ export function initWorkflows({ state, request, composer, status, send, openSess
   let polling = false
   const timer = setInterval(async () => { if (document.hidden || polling) return; polling = true; try { await Promise.allSettled([...(goalPanel.open ? [refreshGoal()] : []), ...(scheduler.open ? [refreshJobs()] : [])]) } finally { polling = false } }, 3000)
   window.addEventListener('pagehide', () => clearInterval(timer))
-  return { requestExtras: text => { const enabled = goalNext.checked; goalNext.checked = false; return enabled ? { goal: text } : {} } }
+  return { panels: { goalPanel, review, search, memories, learning, scheduler, trees }, takeover, host, requestExtras: text => { const enabled = goalNext.checked; goalNext.checked = false; return enabled ? { goal: text } : {} } }
 }

@@ -22,7 +22,7 @@
 
 These were already requested in the priorities below; the startup work does not complete them:
 
-- [ ] Simplify history, chat metadata, and settings; improve code/tool block interactions.
+- [x] Simplify history, chat metadata, and settings; improve code/tool block interactions. Delivered 2026-09-11: fixed composer, grouped tool dock, date-grouped history, secondary actions and usage disclosures, advanced execution settings, keyboard navigation and compact window layout.
 - [x] Show included prompt layers, attachment budgets, truncation and context reasons; continue refining deferred-tool explanations.
 - [x] Remove extra provider calls for memory selection; add bounded lexical recall, repeated-note throttling and optional background durable-memory extraction.
 - [ ] Improve team-memory authentication, conflict handling, and large-payload behavior.

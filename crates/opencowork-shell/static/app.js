@@ -127,6 +127,7 @@ const els = {
   messageCount: document.querySelector('#message-count'),
   expandAllButton: document.querySelector('#expand-all-button'),
   messageList: document.querySelector('#message-list'),
+  messageScroll: document.querySelector('#message-list-shell'),
   workspaceCwd: document.querySelector('#workspace-cwd'),
   workspaceSettings: document.querySelector('#workspace-settings'),
   teamMemoryDetail: document.querySelector('#team-memory-detail'),
@@ -500,7 +501,7 @@ const MESSAGES = {
     'sidebar.conversations': '会话列表',
     'sidebar.refresh': '刷新会话',
     'sidebar.search': '搜索会话',
-    'sidebar.searchPlaceholder': '搜索会话编号',
+    'sidebar.searchPlaceholder': '搜索标题或内容',
     'sidebar.noMatch': '没有匹配当前筛选条件的会话。',
     'sidebar.empty': '还没有已保存的会话。',
     'menu.chat': '对话',
@@ -512,9 +513,9 @@ const MESSAGES = {
     'locale.current.en': 'English',
     'empty.title': 'OpenCowork',
     'empty.copy': '描述你的目标，使用文件、浏览器和电脑工具完成任务，并随时查看进度和更改。',
-    'empty.example1': '查看当前工作区，并总结运行时状态。',
-    'empty.example2': '调整 API / Provider 设置，但不要改主循环。',
-    'empty.example3': '为当前项目创建或更新本地 Skill。',
+    'empty.example1': '看看这个项目，告诉我从哪里开始。',
+    'empty.example2': '检查最近的代码更改，找出需要修复的问题。',
+    'empty.example3': '把我的任务拆成步骤，并逐项完成。',
     'session.kicker': '当前会话',
     'session.defaultTitle': 'OpenCowork 会话',
     'session.defaultSubtitle': '从侧边栏加载已有会话，或者新建一个继续工作。',
@@ -562,7 +563,7 @@ const MESSAGES = {
     'activity.compacted': '是否压缩',
     'activity.events': '事件数',
     'activity.empty': '当前还没有活动事件。',
-    'composer.placeholder': '继续使用当前运行时。Enter 发送，Ctrl + Enter 换行。',
+    'composer.placeholder': '描述任务，或输入 / 查看快捷操作…',
     'composer.ready': '就绪。',
     'composer.send': '发送',
     'composer.stop': '停止',
@@ -591,7 +592,12 @@ const MESSAGES = {
     'history.open': '打开',
     'history.copyId': '复制 ID',
     'history.messages': '{{count}} 条消息',
-    'history.searchPlaceholder': '搜索会话号',
+    'history.searchPlaceholder': '搜索标题、摘要或会话号',
+    'history.today': '今天',
+    'history.yesterday': '昨天',
+    'history.earlier': '更早',
+    'history.more': '更多操作',
+    'settings.overview': '配置概览',
     'history.count': '{{visible}} / {{total}}',
     'settings.kicker': '配置中心',
     'settings.title': '设置',
@@ -1096,7 +1102,7 @@ const MESSAGES = {
     'sidebar.conversations': 'Conversations',
     'sidebar.refresh': 'Refresh sessions',
     'sidebar.search': 'Search sessions',
-    'sidebar.searchPlaceholder': 'Search session id',
+    'sidebar.searchPlaceholder': 'Search titles or previews',
     'sidebar.noMatch': 'No sessions match the current filter.',
     'sidebar.empty': 'No saved sessions yet.',
     'menu.chat': 'Chat',
@@ -1108,9 +1114,9 @@ const MESSAGES = {
     'locale.current.en': 'English',
     'empty.title': 'OpenCowork',
     'empty.copy': 'Describe your goal, work with files, browser and desktop tools, and review progress and changes.',
-    'empty.example1': 'Inspect the workspace and summarize the current runtime.',
-    'empty.example2': 'Adjust API / Provider settings without touching the loop.',
-    'empty.example3': 'Create or update a local skill for this project.',
+    'empty.example1': 'Explore this project and suggest where to start.',
+    'empty.example2': 'Review recent changes and find issues to fix.',
+    'empty.example3': 'Break my task into steps and work through them.',
     'session.kicker': 'Session',
     'session.defaultTitle': 'OpenCowork Session',
     'session.defaultSubtitle': 'Load an existing session from the sidebar or start a new one.',
@@ -1158,7 +1164,7 @@ const MESSAGES = {
     'activity.compacted': 'Compacted',
     'activity.events': 'Events',
     'activity.empty': 'No turn activity yet.',
-    'composer.placeholder': 'Continue on the existing runtime. Enter sends, Ctrl + Enter adds a new line.',
+    'composer.placeholder': 'Describe a task, or type / for shortcuts…',
     'composer.ready': 'Ready.',
     'composer.send': 'Send',
     'composer.stop': 'Stop',
@@ -1187,7 +1193,12 @@ const MESSAGES = {
     'history.open': 'Open',
     'history.copyId': 'Copy ID',
     'history.messages': '{{count}} messages',
-    'history.searchPlaceholder': 'Search session id',
+    'history.searchPlaceholder': 'Search titles, previews or session IDs',
+    'history.today': 'Today',
+    'history.yesterday': 'Yesterday',
+    'history.earlier': 'Earlier',
+    'history.more': 'More actions',
+    'settings.overview': 'Configuration overview',
     'history.count': '{{visible}} / {{total}}',
     'settings.kicker': 'Configuration',
     'settings.title': 'Settings',
@@ -2418,6 +2429,7 @@ function updateLocaleControls() {
 }
 
 function applyStaticLocale() {
+  els.historySearch.setAttribute('aria-label', t('history.searchPlaceholder'))
   document.querySelectorAll('[data-i18n]').forEach((node) => {
     const key = node.dataset.i18n
     if (!key) return
@@ -2653,6 +2665,7 @@ function messageRoleLabel(role) {
   const normalized = String(role || '').toLowerCase()
   if (normalized === 'user') return t('message.user')
   if (normalized === 'assistant') return t('message.assistant')
+  if (normalized === 'tool') return state.locale === 'zh' ? '工具' : 'Tool'
   return normalized ? normalized : t('message.system')
 }
 
@@ -2675,17 +2688,22 @@ function blockLabel(block) {
     case 'text':
       return 'text'
     case 'tool_use':
-      return `tool_use / ${getValue(block, 'name') || (state.locale === 'zh' ? '未知' : 'unknown')}`
+      return `${state.locale === 'zh' ? '调用' : 'Call'} · ${getValue(block, 'name') || (state.locale === 'zh' ? '未知' : 'unknown')}`
     case 'tool_result':
-      return `tool_result / ${getValue(block, 'tool_name', 'toolName') || (state.locale === 'zh' ? '未知' : 'unknown')}`
+      return `${state.locale === 'zh' ? '结果' : 'Result'} · ${getValue(block, 'tool_name', 'toolName') || (state.locale === 'zh' ? '未知' : 'unknown')}`
     default:
       return block.type || 'block'
   }
 }
 
+function structuredBlockValue(value) {
+  if (typeof value !== 'string') return value
+  try { return JSON.parse(value) } catch { return value }
+}
+
 function blockContent(block) {
   if (block.type === 'text') return getValue(block, 'text') || ''
-  if (block.type === 'tool_use') return JSON.stringify(getValue(block, 'input') || {}, null, 2)
+  if (block.type === 'tool_use') return JSON.stringify(structuredBlockValue(getValue(block, 'input')) || {}, null, 2)
   if (block.type === 'tool_result') {
     const output = getValue(block, 'output')
     return typeof output === 'string' ? output : JSON.stringify(output || {}, null, 2)
@@ -2759,13 +2777,13 @@ function formatSummaryEntries(entries) {
 
 function blockSummaryText(block) {
   if (block.type === 'tool_use') {
-    const input = getValue(block, 'input') || {}
+    const input = structuredBlockValue(getValue(block, 'input')) || {}
     const entries = collectSummaryEntries(input, ['path', 'file', 'target', 'command', 'query', 'pattern', 'url', 'endpoint'])
     return entries.length ? formatSummaryEntries(entries) : t('message.summaryToolInput')
   }
 
   if (block.type === 'tool_result') {
-    const output = getValue(block, 'output')
+    const output = structuredBlockValue(getValue(block, 'output'))
     if (typeof output === 'string') return inlineSummaryText(output, 140) || t('message.summaryToolOutput')
     const entries = collectSummaryEntries(output || {}, [
       'path',
@@ -2793,7 +2811,7 @@ function blockSummaryChips(block) {
   const chips = []
 
   if (block.type === 'tool_use') {
-    const input = getValue(block, 'input') || {}
+    const input = structuredBlockValue(getValue(block, 'input')) || {}
     const path = summarizeFieldValue(getValue(input, 'path', 'file', 'target'), 28)
     const command = summarizeFieldValue(getValue(input, 'command'), 28)
     const query = summarizeFieldValue(getValue(input, 'query', 'pattern'), 24)
@@ -2803,8 +2821,9 @@ function blockSummaryChips(block) {
   }
 
   if (block.type === 'tool_result') {
-    const output = getValue(block, 'output')
-    const success = summarySuccess(output)
+    const output = structuredBlockValue(getValue(block, 'output'))
+    const failed = getValue(block, 'is_error', 'isError')
+    const success = failed === true ? false : summarySuccess(output) ?? (failed === false ? true : null)
     const path = summarizeFieldValue(getValue(output, 'path', 'file', 'target'), 28)
     const count = summaryCount(output)
     const stored = summarizeFieldValue(getValue(output, 'stored_path', 'storedPath', 'preview_path', 'previewPath'), 24)
@@ -2995,6 +3014,10 @@ function setSettingsTab(tab) {
   state.settingsTab = tab
   els.settingsTabs.forEach((button) => {
     button.classList.toggle('is-active', button.dataset.settingsTab === tab)
+    button.setAttribute('role', 'tab')
+    button.setAttribute('aria-selected', String(button.dataset.settingsTab === tab))
+    button.setAttribute('aria-controls', `settings-${button.dataset.settingsTab}-panel`)
+    button.tabIndex = button.dataset.settingsTab === tab ? 0 : -1
   })
   els.settingsProviderPanel.classList.toggle('is-hidden', tab !== 'provider')
   els.settingsPermissionPanel.classList.toggle('is-hidden', tab !== 'permission')
@@ -3765,7 +3788,8 @@ function renderTurnStats() {
 function renderMessages() {
   const messages = buildVisibleMessages()
   const collapsibleKeys = []
-  const previousBottomGap = els.messageList.scrollHeight - els.messageList.scrollTop - els.messageList.clientHeight
+  const previousScrollTop = els.messageScroll.scrollTop
+  const previousBottomGap = els.messageScroll.scrollHeight - els.messageScroll.scrollTop - els.messageScroll.clientHeight
   const keepPinned = state.forceMessageScroll || previousBottomGap < 96
   els.messageList.innerHTML = ''
   els.messageCount.textContent = String(messages.length)
@@ -3814,7 +3838,17 @@ function renderMessages() {
           ? t('message.pendingUser')
           : t(message.__pendingState === 'streaming' ? 'composer.streaming' : 'composer.waiting')
     } else {
-      meta.textContent = usageSummary(message) || t('message.blocks', { count: safeCount(message.blocks) })
+      const usage = usageSummary(message)
+      if (usage) {
+        const details = document.createElement('details')
+        details.className = 'message-usage'
+        const summary = document.createElement('summary')
+        summary.textContent = state.locale === 'zh' ? '用量' : 'Usage'
+        const value = document.createElement('span')
+        value.textContent = usage
+        details.append(summary, value)
+        meta.append(details)
+      }
     }
 
     const actions = document.createElement('div')
@@ -3848,18 +3882,16 @@ function renderMessages() {
       const label = blockLabel(block)
       const isTextBlock = block.type === 'text'
       const summary = blockSummaryText(block)
-      const chips = blockSummaryChips(block)
+      const chips = blockSummaryChips(block).filter(chip => chip.tone !== 'neutral')
       const key = `${messageIndex}:${blockIndex}`
       const isCodeish = looksLikeCodeContent(content, label, block.type)
-      const collapseCandidate = shouldCollapseBlock(content)
+      const isToolBlock = block.type === 'tool_use' || block.type === 'tool_result'
+      const collapseCandidate = isToolBlock || shouldCollapseBlock(content)
       const isExpanded = state.expandedBlocks.has(key)
       const shouldShowTextHeader =
         !isTextBlock ||
         isCodeish ||
-        collapseCandidate ||
-        lineCount(content) > 5 ||
-        String(content).length > 280 ||
-        isPending
+        collapseCandidate
       if (collapseCandidate) collapsibleKeys.push(key)
 
       const blockNode = document.createElement('section')
@@ -3916,6 +3948,8 @@ function renderMessages() {
           button.type = 'button'
           button.className = 'inline-ghost'
           button.textContent = isExpanded ? t('common.collapse') : t('common.expand')
+          button.setAttribute('aria-expanded', String(isExpanded))
+          button.setAttribute('aria-controls', `message-block-${messageIndex}-${blockIndex}`)
           button.addEventListener('click', () => {
             if (state.expandedBlocks.has(key)) {
               state.expandedBlocks.delete(key)
@@ -3923,6 +3957,7 @@ function renderMessages() {
               state.expandedBlocks.add(key)
             }
             renderMessages()
+            document.querySelector(`[aria-controls="message-block-${messageIndex}-${blockIndex}"]`)?.focus({ preventScroll: true })
           })
           blockActions.appendChild(button)
         }
@@ -3986,6 +4021,8 @@ function renderMessages() {
 
       const contentNode = document.createElement('pre')
       contentNode.className = 'message-block-content'
+      contentNode.id = `message-block-${messageIndex}-${blockIndex}`
+      contentNode.tabIndex = 0
       if (isCodeish) {
         contentNode.classList.add('message-block-content--codeish')
       }
@@ -3993,7 +4030,8 @@ function renderMessages() {
         contentNode.classList.add('message-block-content--pending')
       }
       if (collapseCandidate && !isExpanded) {
-        contentNode.classList.add('is-collapsed')
+        if (isToolBlock) contentNode.hidden = true
+        else contentNode.classList.add('is-collapsed')
       }
       contentNode.textContent = content
 
@@ -4012,7 +4050,9 @@ function renderMessages() {
   els.expandAllButton.disabled = collapsibleKeys.length === 0
   els.expandAllButton.textContent = allExpanded ? t('conversation.collapseAll') : t('conversation.expandAll')
   if (keepPinned) {
-    els.messageList.scrollTop = els.messageList.scrollHeight
+    els.messageScroll.scrollTop = els.messageScroll.scrollHeight
+  } else {
+    els.messageScroll.scrollTop = previousScrollTop
   }
   state.forceMessageScroll = false
 }
@@ -4080,7 +4120,16 @@ function renderHistoryList() {
     return
   }
 
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1)
+  let previousGroup = ''
   visible.forEach((session) => {
+    const group = session.updatedAtUnixMs >= today.getTime() ? 'today' : session.updatedAtUnixMs >= yesterday.getTime() ? 'yesterday' : 'earlier'
+    if (group !== previousGroup) {
+      const heading = document.createElement('h3')
+      heading.className = 'history-date-heading'; heading.textContent = t(`history.${group}`)
+      els.historyList.append(heading); previousGroup = group
+    }
     const card = document.createElement('article')
     card.className = `history-card${state.currentSessionId === session.id ? ' is-active' : ''}`
     card.addEventListener('click', async () => {
@@ -4094,7 +4143,9 @@ function renderHistoryList() {
     const title = document.createElement('div')
     title.className = 'history-card-title'
 
-    const heading = document.createElement('strong')
+    const heading = document.createElement('button')
+    heading.type = 'button'
+    heading.className = 'history-open-title'
     heading.textContent = sessionDisplayTitle(session)
     heading.title = session.id
 
@@ -4102,20 +4153,19 @@ function renderHistoryList() {
     titleMeta.textContent = session.id
 
     title.appendChild(heading)
-    title.appendChild(titleMeta)
 
     const actions = document.createElement('div')
     actions.className = 'page-actions'
 
-    const openButton = document.createElement('button')
-    openButton.type = 'button'
-    openButton.className = 'ghost-button'
-    openButton.textContent = t('history.open')
-    openButton.addEventListener('click', async (event) => {
-      event.stopPropagation()
-      setView('chat')
-      await loadSession(session.id)
-    })
+    const more = document.createElement('details')
+    more.className = 'history-more'
+    more.addEventListener('click', event => event.stopPropagation())
+    more.addEventListener('keydown', event => { if (event.key === 'Escape') { more.open = false; more.querySelector('summary').focus() } })
+    const moreTrigger = document.createElement('summary')
+    moreTrigger.textContent = t('history.more')
+    const moreBody = document.createElement('div')
+    moreBody.className = 'history-more-body'
+    moreBody.append(titleMeta)
 
     const copyIdButton = document.createElement('button')
     copyIdButton.type = 'button'
@@ -4141,9 +4191,9 @@ function renderHistoryList() {
       renderHistoryList()
     })
 
-    actions.appendChild(openButton)
-    actions.appendChild(copyIdButton)
-    actions.appendChild(deleteButton)
+    moreBody.append(copyIdButton, deleteButton)
+    more.append(moreTrigger, moreBody)
+    actions.appendChild(more)
     header.appendChild(title)
     header.appendChild(actions)
 
@@ -4172,7 +4222,7 @@ function renderHistoryList() {
     stateChip.textContent = sessionStateLabel(session.id)
 
     metaRow.appendChild(updatedChip)
-    metaRow.appendChild(stateChip)
+    if (stateKey !== 'saved') metaRow.appendChild(stateChip)
     body.appendChild(metaRow)
 
     card.appendChild(header)
@@ -5646,14 +5696,11 @@ async function deleteSession(sessionId) {
 }
 
 function toggleExpandAll() {
-  const session = state.currentSession
-  if (!session) return
-
   const keys = []
-  ;(session.messages || []).forEach((message, messageIndex) => {
+  buildVisibleMessages().forEach((message, messageIndex) => {
     ;(message.blocks || []).forEach((block, blockIndex) => {
       const key = `${messageIndex}:${blockIndex}`
-      if (shouldCollapseBlock(blockContent(block))) keys.push(key)
+      if (block.type === 'tool_use' || block.type === 'tool_result' || shouldCollapseBlock(blockContent(block))) keys.push(key)
     })
   })
 
@@ -6253,6 +6300,14 @@ els.memoryGuideButton.addEventListener('click', () => {
 })
 els.settingsTabs.forEach((button) => {
   button.addEventListener('click', () => setSettingsTab(button.dataset.settingsTab))
+  button.addEventListener('keydown', event => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+    event.preventDefault()
+    const tabs = els.settingsTabs, index = tabs.indexOf(button)
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
+    setSettingsTab(tabs[next].dataset.settingsTab)
+    tabs[next].focus()
+  })
 })
 els.headerNewSkillButton.addEventListener('click', () => {
   setView('settings')

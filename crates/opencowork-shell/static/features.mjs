@@ -106,5 +106,40 @@ export function initFeaturePanels({ state, request, composer, status, send, open
   const polling = setInterval(() => { if (document.hidden) return; if (state.sending) scheduleRefresh(); if (memory.checked && state.currentView === 'settings') request('/api/background-memory').then(s => {feedback.textContent = tr(`后台记忆：${s.state}${s.notesWritten != null ? `，新增 ${s.notesWritten} 条` : ''}`, `Background memory: ${s.state}${s.notesWritten != null ? `, ${s.notesWritten} notes` : ''}`)}).catch(() => {}) }, 2000)
   window.addEventListener('pagehide', () => clearInterval(polling))
   const workflows = initWorkflows({ state, request, composer, status, send, openSession })
+  // Keep every feature available without pushing the composer below the viewport.
+  const dock = el('nav', '', 'tool-dock'); dock.setAttribute('aria-label', tr('对话工具', 'Conversation tools'))
+  const groups = []
+  const { goalPanel, review, search: historySearch, memories, learning, scheduler, trees } = workflows.panels
+  for (const [index, [title, panels]] of [
+    [tr('文件', 'Files'), [browser, review, trees]],
+    [tr('任务', 'Tasks'), [task, goalPanel, scheduler]],
+    [tr('更多', 'More'), [diagnostics, historySearch, memories, learning]],
+  ].entries()) {
+    const group = el('div', '', 'tool-dock-group')
+    const trigger = button(title, () => setOpen(group, panel.hidden))
+    trigger.setAttribute('aria-label', title)
+    trigger.classList.add('tool-dock-trigger'); trigger.setAttribute('aria-expanded', 'false')
+    const panel = el('section', '', 'tool-dock-panel workflow-panels'); panel.id = `tool-dock-panel-${index}`; panel.hidden = true
+    panel.setAttribute('aria-label', title); trigger.setAttribute('aria-controls', panel.id)
+    const close = button(tr('收起', 'Close'), () => { setOpen(group, false); trigger.focus() })
+    const header = el('div', '', 'tool-dock-header'); header.append(el('strong', title), close)
+    panel.append(header, ...panels); group.append(trigger, panel); dock.append(group); groups.push(group)
+  }
+  function setOpen(group, open) {
+    for (const item of groups) {
+      const active = item === group && open
+      item.querySelector('.tool-dock-panel').hidden = !active
+      item.querySelector('.tool-dock-trigger').setAttribute('aria-expanded', String(active))
+      // Closing a group also stops polling its collapsed feature panels.
+      if (!active) item.querySelectorAll('details[open]').forEach(n => { n.open = false })
+    }
+  }
+  dock.addEventListener('keydown', e => { if (e.key === 'Escape') { const active = groups.find(g => !g.querySelector('.tool-dock-panel').hidden); if (active) { e.stopPropagation(); setOpen(active, false); active.querySelector('button').focus() } } })
+  document.addEventListener('pointerdown', e => { if (!tools.contains(e.target)) setOpen(null, false) })
+  workflows.takeover.className = 'computer-takeover-actions'
+  dock.append(workflows.takeover)
+  workflows.host.remove()
+  tools.replaceChildren(dock, chips, refBudget)
+  document.querySelector('#settings-environment-panel').append(document.querySelector('#runtime-card'))
   return { requestExtras: workflows.requestExtras, references: () => [...references], refresh: scheduleRefresh, clear: () => {references=[];renderReferences()} }
 }
