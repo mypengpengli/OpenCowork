@@ -353,3 +353,7 @@ pub(super) async fn takeover(
     let _ = fs::remove_file(state.config_home.join("computer-state/current.json"));
     Ok(Json(serde_json::json!({"paused":paused})))
 }
+
+pub(super) async fn takeover_status(State(state): State<ShellState>) -> Json<Value> {
+    Json(serde_json::json!({"paused": state.config_home.join("computer-paused.json").exists()}))
+}

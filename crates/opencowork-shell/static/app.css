@@ -2374,6 +2374,13 @@ button:disabled {
 .feature-disclosure[open] > summary { margin-bottom: 12px; color: var(--accent); }
 .tool-dock-panel .feature-toolbar > input { flex: 1; min-width: 120px; }
 .computer-takeover-actions { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 0 auto; }
+.computer-takeover-actions { align-items: center; }
+.computer-control-state { color: var(--text-soft); font-size: 11px; }
+.task-live-status { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--accent); font-size: 11px; }
+.task-live-status > span:empty, .task-live-status:not(:has(span:not(:empty))) { display: none; }
+.task-status-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+[data-action-feedback][data-tone=error] { color: var(--danger); }
+[aria-busy=true] { cursor: progress; opacity: .65; }
 .computer-takeover-actions button { min-height: 32px; padding: 4px 8px; font-size: 11px; }
 .computer-takeover-actions button:first-child { color: #f5bcc9; }
 .feature-toggle input[type=checkbox] { accent-color: var(--accent); flex-shrink: 0; }

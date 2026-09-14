@@ -1,8 +1,7 @@
 import { initWorkflows } from '/workflows.mjs'
-export function initFeaturePanels({ state, request, composer, status, send, openSession }) {
-  const tr = (zh, en) => state.locale === 'en' ? en : zh
-  const el = (tag, text, className = '') => { const node = document.createElement(tag); node.textContent = text; node.className = className; return node }
-  const button = (text, action) => { const node = el('button', text, 'ghost-button'); node.type = 'button'; node.onclick = () => Promise.resolve().then(action).catch(e => status(e.message, true)); return node }
+import { createUi } from '/ui-controls.mjs'
+export function initFeaturePanels({ state, request, composer, status, prepareTask, openSession }) {
+  const ui = createUi(state, status), { tr, el, button, bind } = ui
   let references = [], files = [], changes = [], selected = '', previewToken = 0, contextToken = 0, currentId, refreshTimer
   const settings = el('article', '', 'settings-card feature-settings')
   const heading = el('h3', tr('电脑控制与后台记忆', 'Computer control and background memory'))
@@ -27,28 +26,35 @@ export function initFeaturePanels({ state, request, composer, status, send, open
   const browser = document.createElement('details'); browser.className = 'feature-disclosure'
   browser.append(el('summary', tr('工作区文件与更改', 'Workspace files and changes')))
   const toolbar = el('div', '', 'feature-toolbar')
-  const search = document.createElement('input'); search.placeholder = tr('按路径筛选文件', 'Filter files by path'); search.setAttribute('aria-label', search.placeholder)
+  const search = document.createElement('input'); bind(search, tr('按路径筛选文件', 'Filter files by path'), 'placeholder'); bind(search, search.placeholder, 'aria-label')
   const onlyChanges = document.createElement('input'); onlyChanges.type = 'checkbox'
   toolbar.append(search, toggle(onlyChanges, tr('只看更改', 'Changed files only')), button(tr('刷新', 'Refresh'), loadFiles))
   const fileList = el('div', '', 'feature-file-list'); const code = el('pre', '', 'feature-file-preview'); code.tabIndex = 0
   const fileActions = el('div', '', 'feature-toolbar'); const fileTitle = el('strong', tr('选择文件查看内容', 'Choose a file'))
-  fileActions.append(fileTitle, button(tr('内容', 'Content'), () => showFile(selected, false)), button(tr('差异（只读）', 'Diff (read only)'), () => showFile(selected, true)), button(tr('添加到对话', 'Attach to chat'), () => attach({ kind: 'file', path: selected })))
+  const contentButton = button(tr('内容', 'Content'), () => showFile(selected, false))
+  const diffButton = button(tr('差异（只读）', 'Diff (read only)'), () => showFile(selected, true))
+  const attachButton = button(tr('添加到对话', 'Attach to chat'), () => attach({ kind: 'file', path: selected }))
+  fileActions.append(fileTitle, contentButton, diffButton, attachButton)
   const grid = el('div', '', 'feature-file-grid'); const right = el('div', '', 'feature-file-detail'); right.append(fileActions, code); grid.append(fileList, right)
   browser.append(toolbar, grid)
   browser.addEventListener('toggle', () => { if (browser.open) loadFiles().catch(e => status(e.message, true)) })
   search.oninput = renderFiles; onlyChanges.onchange = renderFiles
-  const sessionToolbar = el('div', '', 'feature-toolbar'); const sessions = document.createElement('select'); sessions.setAttribute('aria-label', tr('引用历史会话', 'Reference a previous session'))
-  sessionToolbar.append(sessions, button(tr('引用会话', 'Attach session'), () => attach({ kind: 'session', path: sessions.value })))
+  const sessionToolbar = el('div', '', 'feature-toolbar'); const sessions = document.createElement('select'); bind(sessions, tr('引用历史会话', 'Reference a previous session'), 'aria-label')
+  const attachSessionButton = button(tr('引用会话', 'Attach session'), () => attach({ kind: 'session', path: sessions.value }))
+  sessionToolbar.append(sessions, attachSessionButton)
   browser.append(sessionToolbar)
   const chips = el('div', '', 'feature-references'); const refBudget = el('small', '', 'feature-budget')
   const diagnostics = document.createElement('details'); diagnostics.className = 'feature-disclosure'; diagnostics.append(el('summary', tr('本次上下文来源与用量', 'Context sources and usage')))
   const diagBody = el('div', '', 'feature-diagnostics'); diagnostics.append(diagBody)
   const task = document.createElement('details'); task.className = 'feature-disclosure'; const taskSummary = el('summary', tr('任务步骤', 'Task steps')); const taskBody = el('div', '', 'feature-task'); task.append(taskSummary, taskBody)
-  task.append(button(tr('规划新任务', 'Plan a task'), () => { composer.value = tr('请先用 UpdatePlan 制定任务步骤和完成检查，再执行以下任务：\n', 'Use UpdatePlan to define steps and completion checks, then execute this task:\n'); composer.focus() }), button(tr('继续未完成步骤', 'Resume unfinished steps'), () => { if (state.sending) return; composer.value = tr('继续当前保存计划中未完成的步骤，先检查已有结果并更新任务进度。', 'Resume unfinished steps in the saved plan, first checking existing results and updating progress.'); send() }))
+  const planButton = button(tr('规划新任务', 'Plan a task'), () => prepareTask(tr('请先制定任务步骤和完成检查，再执行以下任务：', 'Define steps and completion checks, then execute this task:'), { prepend: true }))
+  const resumeButton = button(tr('继续未完成步骤', 'Resume unfinished steps'), () => prepareTask(tr('继续当前保存计划中未完成的步骤，先检查已有结果并更新任务进度。', 'Resume unfinished steps in the saved plan, first checking existing results and updating progress.'), { submit: true }))
+  let hasPendingSteps = false, fileLoading = false, fileReady = false
+  task.append(planButton, resumeButton)
   tools.append(browser, chips, refBudget, task, diagnostics)
   document.querySelector('#composer-form').before(tools)
 
-  async function loadFiles() { const data = await request('/api/workspace'); files = data.files; changes = data.changes; renderFiles(); if (data.truncated) status(tr('文件列表已限制为 3000 项', 'File list limited to 3,000 entries')) }
+  async function loadFiles() { const data = await request('/api/workspace'); files = data.files; changes = data.changes; if (selected && !files.includes(selected) && !changes.some(c => c.path === selected)) { selected = ''; fileReady = false; code.textContent = ''; fileTitle.textContent = tr('选择文件查看内容', 'Choose a file') } renderFiles(); updateControls(); if (data.truncated) status(tr('文件列表已限制为 3000 项', 'File list limited to 3,000 entries')) }
   function renderFiles() {
     const items = onlyChanges.checked ? changes.map(c => c.path) : [...new Set([...files, ...changes.map(c => c.path)])].sort()
     const filtered = items.filter(path => path.toLowerCase().includes(search.value.toLowerCase()))
@@ -57,10 +63,13 @@ export function initFeaturePanels({ state, request, composer, status, send, open
   }
   async function showFile(path, diff) {
     if (!path) return; window.dispatchEvent(new CustomEvent("opencowork:file", {detail:path})); selected = path; fileTitle.textContent = path
-    const token = ++previewToken; code.textContent = tr('正在读取…', 'Loading…')
-    const data = await request(`/api/workspace/${diff ? 'diff' : 'file'}?path=${encodeURIComponent(path)}`)
-    if (token !== previewToken) return
-    code.textContent = data.content + (data.truncated ? tr('\n\n[内容已截断]', '\n\n[Truncated]') : '')
+    const token = ++previewToken; fileLoading = true; fileReady = false; updateControls(); code.textContent = tr('正在读取…', 'Loading…')
+    try {
+      const data = await request(`/api/workspace/${diff ? 'diff' : 'file'}?path=${encodeURIComponent(path)}`)
+      if (token !== previewToken) return
+      fileReady = true; code.textContent = data.content + (data.truncated ? tr('\n\n[内容已截断]', '\n\n[Truncated]') : '')
+    } catch (e) { if (token === previewToken) code.textContent = e.message; throw e }
+    finally { if (token === previewToken) { fileLoading = false; updateControls() } }
   }
   async function attach(ref) {
     if (!ref.path) return
@@ -79,14 +88,21 @@ export function initFeaturePanels({ state, request, composer, status, send, open
   }
   async function refresh() {
     const id = state.currentSessionId
-    if (currentId !== id) { currentId = id; references = []; renderReferences(); taskBody.replaceChildren(); diagBody.replaceChildren() }
+    if (currentId !== id) { currentId = id; references = []; renderReferences(); taskBody.replaceChildren(); diagBody.replaceChildren(); taskSummary.textContent = tr('任务步骤', 'Task steps'); hasPendingSteps = false; taskStatus.textContent = ''; updateControls() }
+    const previousSelection = sessions.value
     sessions.replaceChildren(...(state.bootstrap?.sessions || []).filter(s => s.id !== id).map(s => { const option = el('option', s.title); option.value = s.id; return option }))
+    if ([...sessions.options].some(o => o.value === previousSelection)) sessions.value = previousSelection
+    updateControls()
     if (!id) return
     const token = ++contextToken
     const [plan, context] = await Promise.all([request(`/api/task-plan/${encodeURIComponent(id)}`), request(`/api/context-diagnostics/${encodeURIComponent(id)}`)])
     if (token !== contextToken || id !== state.currentSessionId) return
     taskBody.replaceChildren()
     const steps = plan?.steps || []; const completed = steps.filter(s => s.status === 'completed').length
+    hasPendingSteps = steps.some(s => s.status !== 'completed')
+    const activeStep = steps.find(s => s.status === 'in_progress') || steps.find(s => s.status !== 'completed')
+    taskStatus.textContent = steps.length ? `${tr('步骤', 'Steps')} ${completed}/${steps.length}${activeStep ? ` · ${activeStep.title}` : ''}` : ''
+    updateControls()
     taskSummary.textContent = tr(`任务步骤 ${completed}/${steps.length}`, `Task steps ${completed}/${steps.length}`)
     if (plan?.goal) taskBody.append(el('strong', plan.goal))
     for (const step of steps) {
@@ -105,9 +121,10 @@ export function initFeaturePanels({ state, request, composer, status, send, open
   function scheduleRefresh() { if (refreshTimer) return; refreshTimer = setTimeout(() => { refreshTimer = null; refresh().catch(e => status(e.message, true)) }, 150) }
   const polling = setInterval(() => { if (document.hidden) return; if (state.sending) scheduleRefresh(); if (memory.checked && state.currentView === 'settings') request('/api/background-memory').then(s => {feedback.textContent = tr(`后台记忆：${s.state}${s.notesWritten != null ? `，新增 ${s.notesWritten} 条` : ''}`, `Background memory: ${s.state}${s.notesWritten != null ? `, ${s.notesWritten} notes` : ''}`)}).catch(() => {}) }, 2000)
   window.addEventListener('pagehide', () => clearInterval(polling))
-  const workflows = initWorkflows({ state, request, composer, status, send, openSession })
+  const workflows = initWorkflows({ state, request, composer, status, prepareTask, openSession })
+  const taskStatus = el('span', '', 'task-status-summary')
   // Keep every feature available without pushing the composer below the viewport.
-  const dock = el('nav', '', 'tool-dock'); dock.setAttribute('aria-label', tr('对话工具', 'Conversation tools'))
+  const dock = el('nav', '', 'tool-dock'); bind(dock, tr('对话工具', 'Conversation tools'), 'aria-label')
   const groups = []
   const { goalPanel, review, search: historySearch, memories, learning, scheduler, trees } = workflows.panels
   for (const [index, [title, panels]] of [
@@ -117,10 +134,10 @@ export function initFeaturePanels({ state, request, composer, status, send, open
   ].entries()) {
     const group = el('div', '', 'tool-dock-group')
     const trigger = button(title, () => setOpen(group, panel.hidden))
-    trigger.setAttribute('aria-label', title)
+    bind(trigger, title, 'aria-label')
     trigger.classList.add('tool-dock-trigger'); trigger.setAttribute('aria-expanded', 'false')
     const panel = el('section', '', 'tool-dock-panel workflow-panels'); panel.id = `tool-dock-panel-${index}`; panel.hidden = true
-    panel.setAttribute('aria-label', title); trigger.setAttribute('aria-controls', panel.id)
+    bind(panel, title, 'aria-label'); trigger.setAttribute('aria-controls', panel.id)
     const close = button(tr('收起', 'Close'), () => { setOpen(group, false); trigger.focus() })
     const header = el('div', '', 'tool-dock-header'); header.append(el('strong', title), close)
     panel.append(header, ...panels); group.append(trigger, panel); dock.append(group); groups.push(group)
@@ -139,7 +156,17 @@ export function initFeaturePanels({ state, request, composer, status, send, open
   workflows.takeover.className = 'computer-takeover-actions'
   dock.append(workflows.takeover)
   workflows.host.remove()
-  tools.replaceChildren(dock, chips, refBudget)
+  const liveStatus = el('div', '', 'task-live-status'); liveStatus.setAttribute('role', 'status'); liveStatus.append(taskStatus, workflows.summary)
+  tools.replaceChildren(dock, liveStatus, chips, refBudget)
   document.querySelector('#settings-environment-panel').append(document.querySelector('#runtime-card'))
-  return { requestExtras: workflows.requestExtras, references: () => [...references], refresh: scheduleRefresh, clear: () => {references=[];renderReferences()} }
+  function updateControls() {
+    const disabled = (n, value) => { n.disabled = Boolean(value || n.dataset.busy) }
+    disabled(contentButton, !selected || fileLoading); disabled(diffButton, !selected || fileLoading)
+    disabled(attachButton, !fileReady || fileLoading || state.sending); disabled(attachSessionButton, !sessions.value || state.sending)
+    disabled(planButton, state.sending); disabled(resumeButton, state.sending || !hasPendingSteps)
+    workflows.updateControls()
+  }
+  tools.addEventListener('ui:action-done', updateControls); sessions.addEventListener('change', updateControls)
+  updateControls()
+  return { requestExtras: workflows.requestExtras, updateControls, localize: () => { ui.localize(document); workflows.localize(); scheduleRefresh() }, references: () => [...references], refresh: scheduleRefresh, clear: () => {references=[];renderReferences()} }
 }

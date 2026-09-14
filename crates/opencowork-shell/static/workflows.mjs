@@ -1,8 +1,9 @@
-export function initWorkflows({ state, request, composer, status, send, openSession }) {
-  const el = (tag, text = '', cls = '') => { const n = document.createElement(tag); n.textContent = text; n.className = cls; return n }
+import { createUi, executionRanges } from '/ui-controls.mjs'
+export function initWorkflows({ state, request, composer, status, prepareTask, openSession }) {
+  const ui = createUi(state, status), { el, tr, bind } = ui
   const call = (path, data) => request(path, { method: 'POST', body: JSON.stringify(data) })
-  const btn = (text, fn) => { const n = el('button', text, 'ghost-button'); n.type = 'button'; n.onclick = () => Promise.resolve().then(fn).catch(e => status(e.message, true)); return n }
-  const input = (label, type = 'text', value = '') => { const n = el('input'); n.type = type; n.value = value; n.setAttribute('aria-label', label); n.placeholder = label; return n }
+  const btn = ui.button
+  const input = (label, type = 'text', value = '') => { const n = el('input'); n.type = type; n.value = value; bind(n, label, 'aria-label'); bind(n, label, 'placeholder'); return n }
   const label = (text, n) => { const l = el('label', '', 'feature-toggle'); l.append(n, el('span', text)); return l }
   const detail = title => { const n = el('details', '', 'feature-disclosure'); n.append(el('summary', title)); return n }
   const row = (...nodes) => { const n = el('div', '', 'feature-toolbar'); n.append(...nodes); return n }
@@ -10,44 +11,76 @@ export function initWorkflows({ state, request, composer, status, send, openSess
   const goalPanel = detail('目标、补充要求与消息队列')
   const goalNext = input('把本次消息设为目标', 'checkbox')
   const goalState = el('p', '发送目标后，在预算内持续执行并检查完成证据。')
-  const steering = el('textarea'); steering.placeholder = '运行中补充要求，或排入下一轮'; steering.setAttribute('aria-label', steering.placeholder); steering.rows = 2
+  const steering = el('textarea'); bind(steering, '运行中补充要求，或排入下一轮', 'placeholder'); bind(steering, '运行中补充要求，或排入下一轮', 'aria-label'); steering.rows = 2
   const queue = el('div')
+  const summary = el('span', '', 'workflow-status-summary')
+  let observedSession = state.currentSessionId, goalData = null, workflowPending = false, paused = null
   const requireId = () => { if (!state.currentSessionId) throw new Error('请先发送一条消息创建会话'); return encodeURIComponent(state.currentSessionId) }
   const workflow = v => call(`/api/workflows/${requireId()}`, v)
   async function enqueue(mode) {
     if (!steering.value.trim()) return
-    await workflow({ action: mode, id: crypto.randomUUID(), text: steering.value }); steering.value = ''; await refreshGoal()
-    if (!state.sending) { composer.value = '处理已保存的待办消息，先检查已有结果。'; send() }
+    const sessionId = state.currentSessionId, text = steering.value
+    await workflow({ action: mode, id: crypto.randomUUID(), text }); if (sessionId !== state.currentSessionId) return
+    if (steering.value === text) steering.value = ''; await refreshGoal()
+    if (!state.sending) prepareTask(tr('处理已保存的待办消息，先检查已有结果。', 'Handle the saved pending messages, checking existing results first.'), { submit: true })
   }
-  goalPanel.append(label('把本次消息设为目标并自动继续', goalNext), goalState, row(
-    btn('暂停目标', async () => { await workflow({ action: 'pause' }); await refreshGoal() }),
-    btn('恢复目标', async () => { if (state.sending) return; await workflow({ action: 'resume' }); composer.value = '继续已保存目标，检查已有结果，按缺失证据执行。'; send() })), steering,
-    row(btn('补充当前任务', () => enqueue('steer')), btn('排入下一轮', () => enqueue('queue'))), queue)
+  const pauseGoal = btn('暂停目标', async () => { await workflow({ action: 'pause' }); await refreshGoal() })
+  const resumeGoal = btn('恢复目标', async () => { if (state.sending) return; const id = state.currentSessionId; await workflow({ action: 'resume' }); if (id !== state.currentSessionId) return; prepareTask(tr('继续已保存目标，检查已有结果，按缺失证据执行。', 'Resume the saved goal, inspect existing results and collect missing evidence.'), { submit: true }); await refreshGoal() })
+  const steerButton = btn('补充当前任务', () => enqueue('steer')), queueButton = btn('排入下一轮', () => enqueue('queue'))
+  goalPanel.append(label('把本次消息设为目标并自动继续', goalNext), goalState, row(pauseGoal, resumeGoal), steering, row(steerButton, queueButton), queue)
+  function renderGoal() {
+    const g = goalData?.goal, messages = (goalData?.messages || []).filter(m => m.status === 'pending')
+    const states = { running: tr('执行中', 'Running'), paused: tr('已暂停', 'Paused'), completed: tr('已完成', 'Completed'), blocked: tr('待处理', 'Blocked') }
+    goalState.textContent = g?.text ? `${states[g.status] || g.status} · ${g.rounds}/${g.maxRounds} ${tr('轮', 'rounds')} · ${g.tokens}/${g.maxTokens} tokens\n${g.text}\n${g.reason || ''}` : tr('尚未设置目标')
+    summary.textContent = [goalNext.checked ? tr('下条消息作为目标', 'Next message is a goal') : g?.text ? `${tr('目标', 'Goal')}: ${states[g.status] || g.status}` : '', messages.length ? tr(`待处理 ${messages.length} 条`, `${messages.length} pending`) : ''].filter(Boolean).join(' · ')
+    queue.replaceChildren(...messages.map(m => row(el('span', `${m.mode === 'steer' ? tr('补充', 'Steering') : tr('排队', 'Queued')}：${m.text}`), btn('移除', async () => { await workflow({ action: 'discard', id: m.id }); await refreshGoal() }))))
+  }
   async function refreshGoal() {
-    if (!state.currentSessionId) return
-    const id = state.currentSessionId, data = await request(`/api/workflows/${encodeURIComponent(id)}`); if (id !== state.currentSessionId) return
-    const g = data.goal; goalState.textContent = g?.text ? `${g.status} · ${g.rounds}/${g.maxRounds} 轮 · ${g.tokens}/${g.maxTokens} tokens\n${g.text}\n${g.reason || ''}` : '尚未设置目标'
-    queue.replaceChildren(...(data.messages || []).filter(m => m.status === 'pending').map(m => row(el('span', `${m.mode === 'steer' ? '补充' : '排队'}：${m.text}`), btn('移除', async () => { await workflow({ action: 'discard', id: m.id }); await refreshGoal() }))))
+    updateControls()
+    if (!state.currentSessionId || workflowPending) return
+    const id = state.currentSessionId; workflowPending = true
+    try { const data = await request(`/api/workflows/${encodeURIComponent(id)}`); if (id !== state.currentSessionId) return; goalData = data; renderGoal(); updateControls() }
+    finally { workflowPending = false }
   }
-  const takeover = el('p'); takeover.append(btn('接管电脑并停止任务', async () => { await call('/api/computer/takeover', { paused: true }); status('已暂停电脑操作，可以手动接管。') }), btn('允许继续电脑操作', async () => { await call('/api/computer/takeover', { paused: false }); status('已恢复电脑操作权限；从新观察继续。') }))
+  const takeover = el('p'), computerState = el('span', '', 'computer-control-state')
+  const takeButton = btn('接管电脑并停止任务', async () => { const d = await call('/api/computer/takeover', { paused: true }); paused = d.paused; renderTakeover(); status(tr('已暂停电脑操作，可以手动接管。')) })
+  const releaseButton = btn('允许继续电脑操作', async () => { const d = await call('/api/computer/takeover', { paused: false }); paused = d.paused; renderTakeover(); status(tr('已恢复电脑操作权限；从新观察继续。')) })
+  function renderTakeover() {
+    computerState.textContent = paused === null ? tr('正在读取控制状态…', 'Loading control state…') : paused ? tr('电脑已接管', 'Computer control paused') : tr('电脑控制就绪', 'Computer control ready')
+    takeButton.hidden = paused === true; releaseButton.hidden = paused !== true
+    takeButton.disabled = Boolean(takeButton.dataset.busy); releaseButton.disabled = paused === null || Boolean(releaseButton.dataset.busy)
+  }
+  async function refreshTakeover() { const d = await request('/api/computer/takeover'); if (!takeButton.dataset.busy && !releaseButton.dataset.busy) { paused = d.paused; renderTakeover() } }
+  takeover.append(computerState, takeButton, releaseButton); renderTakeover()
+  refreshTakeover().catch(() => { computerState.textContent = tr('控制状态读取失败；仍可接管', 'Status unavailable; takeover remains available') })
   host.append(takeover, goalPanel)
 
   const settings = el('article', '', 'settings-card workflow-settings'); settings.append(el('h3', '自动执行与模型能力'))
   const advanced = detail('高级设置：预算与后台模型')
   const fields = { maxIterations: ['每轮最多迭代', 80], maxTokens: ['每轮 token 上限', 250000], maxSeconds: ['每轮秒数上限', 900], repeatedResults: ['重复结果停止阈值', 3], maxOutputTokens: ['单次最大输出 token', 8192] }
   const values = {}
-  for (const [key, [name, value]] of Object.entries(fields)) { values[key] = input(name, 'number', value); values[key].min = '1'; advanced.append(label(name, values[key])) }
-  const background = input('后台模型名称（留空跟随当前模型）'), reasoning = el('select'); reasoning.setAttribute('aria-label', '推理强度')
+  for (const [key, [name, value]] of Object.entries(fields)) { values[key] = input(name, 'number', value); const [min, max] = executionRanges[key]; values[key].min = String(min); values[key].max = String(max); values[key].step = '1'; values[key].required = true; advanced.append(label(name, values[key])) }
+  const background = input('后台模型名称（留空跟随当前模型）'), reasoning = el('select'); bind(reasoning, '推理强度', 'aria-label'); background.maxLength = 200
   for (const [value, name] of [['', '推理强度：提供方默认'], ['none', '无'], ['minimal', '最少'], ['low', '低'], ['medium', '中'], ['high', '高']]) { const n = el('option', name); n.value = value; reasoning.append(n) }
   const browser = input('浏览器工具', 'checkbox'), learn = input('生成技能候选', 'checkbox'), auto = input('自动采用技能', 'checkbox'); browser.checked = true
   const settingsState = el('p', '', 'settings-card-copy'), probe = el('pre', '', 'feature-file-preview')
   advanced.append(label('后台模型', background), label('推理强度', reasoning))
-  settings.append(label('启用独立浏览器工具（需安装 Chrome 或 Edge）', browser), label('成功流程生成技能候选（额外后台请求）', learn), label('自动采用候选技能（关闭时先审阅）', auto), advanced, row(btn('保存执行设置', async () => {
+  function applyExecution(execution) {
+    for (const [k, n] of Object.entries(values)) n.value = execution?.[k] ?? fields[k][1]
+    background.value = execution?.backgroundModel || ''; reasoning.value = execution?.reasoningEffort || ''
+  }
+  const saveSettings = btn('保存执行设置', async () => {
+    for (const [key, n] of Object.entries(values)) {
+      if (!n.checkValidity()) { advanced.open = true; n.focus(); n.reportValidity(); const [min, max] = executionRanges[key]; throw new Error(`${tr(fields[key][0])}: ${tr('请输入范围内的整数', 'Enter a whole number in range')} ${min}–${max}`) }
+    }
+    if (new TextEncoder().encode(background.value.trim()).length > 200) { advanced.open = true; background.focus(); throw new Error(tr('后台模型名称过长，请缩短后重试', 'Background model name is too long. Shorten it and retry.')) }
     const execution = Object.fromEntries(Object.entries(values).map(([k, n]) => [k, Number(n.value)])); execution.backgroundModel = background.value.trim(); execution.reasoningEffort = reasoning.value
-    await call('/api/execution-settings', { execution, browser: { enabled: browser.checked }, learning: { enabled: learn.checked, autoAdopt: auto.checked } }); settingsState.textContent = '已保存，新回合生效。'
-  }), btn('检测模型连接、工具、图像和流式能力', async () => { probe.textContent = '正在检测（最多 4 次小请求，可能产生用量）…'; const data = await call('/api/provider-probe', {}); probe.textContent = `${data.model} · ${data.protocol}\n` + data.checks.map(c => `${c.kind}: ${c.status} · ${c.elapsedMs} ms · ${c.tokens ?? '?'} tokens ${c.error || ''}`).join('\n') + '\n推理强度仅验证参数兼容性，不代表任务能力。' })), settingsState, probe)
+    const effective = await call('/api/execution-settings', { execution, browser: { enabled: browser.checked }, learning: { enabled: learn.checked, autoAdopt: auto.checked } }); applyExecution(effective); settingsState.textContent = tr('已保存，新回合生效。')
+  })
+  saveSettings.disabled = true
+  settings.append(label('启用独立浏览器工具（需安装 Chrome 或 Edge）', browser), label('成功流程生成技能候选（额外后台请求）', learn), label('自动采用候选技能（关闭时先审阅）', auto), advanced, row(saveSettings, btn('检测模型连接、工具、图像和流式能力', async () => { probe.textContent = tr('正在检测（最多 4 次小请求，可能产生用量）…', 'Checking (up to 4 small requests; usage may be charged)…'); try { const data = await call('/api/provider-probe', {}); probe.textContent = `${data.model} · ${data.protocol}\n` + data.checks.map(c => `${c.kind}: ${c.status} · ${c.elapsedMs} ms · ${c.tokens ?? '?'} tokens ${c.error || ''}`).join('\n') } catch (e) { probe.textContent = e.message; throw e } })), settingsState, probe)
   document.querySelector('#settings-permission-panel .settings-card-list').append(settings)
-  request('/api/execution-settings').then(d => { for (const [k, n] of Object.entries(values)) n.value = d.execution?.[k] ?? (k === 'maxOutputTokens' ? d.maxOutputTokens : fields[k][1]); background.value = d.execution?.backgroundModel || ''; reasoning.value = d.execution?.reasoningEffort || ''; browser.checked = d.browser?.enabled !== false; learn.checked = d.learning?.enabled === true; auto.checked = d.learning?.autoAdopt === true }).catch(e => { settingsState.textContent = e.message })
+  request('/api/execution-settings').then(d => { applyExecution(d.execution); browser.checked = d.browser?.enabled !== false; learn.checked = d.learning?.enabled === true; auto.checked = d.learning?.autoAdopt === true; saveSettings.disabled = false }).catch(e => { settingsState.textContent = e.message })
 
   const review = detail('审阅更改与恢复'), file = input('选择或输入工作区文件路径'), reviewBody = el('div'), snapshots = el('div'); let revision
   async function refreshReview() { if (!file.value.trim()) return; revision = await request(`/api/review?path=${encodeURIComponent(file.value.trim())}`); renderReview() }
@@ -81,7 +114,7 @@ export function initWorkflows({ state, request, composer, status, send, openSess
   }
   learning.append(btn('刷新候选', refreshLearning), candidates); host.append(learning)
 
-  const scheduler = detail('定时任务与结果收件箱'), jobText = el('textarea'); jobText.placeholder = '到时执行的任务'; jobText.setAttribute('aria-label', jobText.placeholder)
+  const scheduler = detail('定时任务与结果收件箱'), jobText = el('textarea'); bind(jobText, '到时执行的任务', 'placeholder'); bind(jobText, '到时执行的任务', 'aria-label')
   const minutes = input('间隔分钟；填 0 使用每日时间', 'number', 60), daily = input('每日执行时间', 'time', '09:00'), timezone = input('IANA 时区', 'text', Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai'), catchup = input('错过后补一次', 'checkbox'), jobs = el('div')
   async function refreshJobs() {
     const d = await request('/api/schedules'); jobs.replaceChildren()
@@ -95,7 +128,24 @@ export function initWorkflows({ state, request, composer, status, send, openSess
   trees.append(el('p', '从已提交版本创建独立 Git worktree；当前未提交更改保留在原工作区。新路径可作为独立任务的工作目录。'), row(treeName, btn('创建独立工作区', async () => { const r = await call('/api/worktrees', { name: treeName.value }); await refreshTrees(); status(`已创建 ${r.branch}：${r.path}`) }), btn('刷新列表', refreshTrees)), treeContent); host.append(trees)
   for (const [panel, refresh] of [[goalPanel, refreshGoal], [learning, refreshLearning], [scheduler, refreshJobs], [trees, refreshTrees]]) panel.addEventListener('toggle', () => { if (panel.open) refresh().catch(e => status(e.message, true)) })
   let polling = false
-  const timer = setInterval(async () => { if (document.hidden || polling) return; polling = true; try { await Promise.allSettled([...(goalPanel.open ? [refreshGoal()] : []), ...(scheduler.open ? [refreshJobs()] : [])]) } finally { polling = false } }, 3000)
+  const timer = setInterval(async () => { if (document.hidden || polling) return; polling = true; try { await Promise.allSettled([refreshGoal(), refreshTakeover(), ...(scheduler.open ? [refreshJobs()] : [])]) } finally { polling = false } }, 3000)
   window.addEventListener('pagehide', () => clearInterval(timer))
-  return { panels: { goalPanel, review, search, memories, learning, scheduler, trees }, takeover, host, requestExtras: text => { const enabled = goalNext.checked; goalNext.checked = false; return enabled ? { goal: text } : {} } }
+  function updateControls() {
+    if (observedSession !== state.currentSessionId) {
+      observedSession = state.currentSessionId; goalData = null; goalNext.checked = false; steering.value = ''; renderGoal()
+    }
+    const disable = (n, unavailable) => { n.disabled = Boolean(unavailable || n.dataset.busy) }
+    const goal = goalData?.goal
+    disable(goalNext, state.sending)
+    disable(pauseGoal, !state.currentSessionId || goal?.status !== 'running')
+    disable(resumeGoal, state.sending || !state.currentSessionId || !['paused', 'blocked'].includes(goal?.status))
+    disable(steerButton, !state.sending || !state.currentSessionId || !steering.value.trim())
+    disable(queueButton, !state.currentSessionId || !steering.value.trim())
+  }
+  steering.addEventListener('input', updateControls); goalNext.addEventListener('change', renderGoal)
+  document.querySelector('.workspace-tools').addEventListener('ui:action-done', () => { updateControls(); renderTakeover() })
+  updateControls(); renderGoal()
+  return { panels: { goalPanel, review, search, memories, learning, scheduler, trees }, takeover, summary, host, updateControls,
+    localize: () => { ui.localize(document); renderGoal(); renderTakeover() },
+    requestExtras: text => { const enabled = goalNext.checked; goalNext.checked = false; renderGoal(); return enabled ? { goal: text } : {} } }
 }

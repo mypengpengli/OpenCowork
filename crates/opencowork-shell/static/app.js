@@ -1,5 +1,6 @@
 import { readChatStream, appendChatEvent } from '/chat-stream.mjs'
 import { initFeaturePanels } from '/features.mjs'
+import { appendDraft } from '/ui-controls.mjs'
 let featurePanels
 
 function loadPaneState() {
@@ -96,7 +97,7 @@ const els = {
   localeToggleLabel: document.querySelector('#locale-toggle-label'),
   sessionSearch: document.querySelector('#session-search'),
   sessionList: document.querySelector('#session-list'),
-  navButtons: Array.from(document.querySelectorAll('.sidebar-nav-button')),
+  navButtons: Array.from(document.querySelectorAll('.sidebar-nav-button[data-view]')),
   chatView: document.querySelector('#chat-view'),
   historyView: document.querySelector('#history-view'),
   settingsView: document.querySelector('#settings-view'),
@@ -2111,6 +2112,7 @@ function projectSkillDirectory() {
 }
 
 function updateComposerState() {
+  featurePanels?.updateControls()
   const empty = !els.composerInput.value.trim()
   els.sendButton.disabled = state.sending || empty
   els.sendButton.textContent = state.sending
@@ -2464,6 +2466,7 @@ function setLocale(locale) {
   state.locale = locale === 'en' ? 'en' : 'zh'
   persistLocale()
   applyStaticLocale()
+  featurePanels?.localize()
   renderAll()
   setDrawerMode(state.drawerMode)
 }
@@ -3001,6 +3004,7 @@ function eventBody(event) {
 
 // RENDER
 function setView(view) {
+  if (!['chat', 'history', 'settings'].includes(view)) return
   state.currentView = view
   els.chatView.classList.toggle('is-hidden', view !== 'chat')
   els.historyView.classList.toggle('is-hidden', view !== 'history')
@@ -6182,7 +6186,7 @@ els.examplePills.forEach((button) => {
   button.addEventListener('click', () => {
     const promptKey = button.dataset.promptKey
     const prompt = promptKey ? t(promptKey) : button.dataset.prompt || ''
-    els.composerInput.value = prompt
+    els.composerInput.value = appendDraft(els.composerInput.value, prompt)
     persistComposerDraft()
     els.composerInput.focus()
     syncComposerHeight()
@@ -6443,4 +6447,15 @@ loadBootstrap({ allowAutoSelect: false }).catch((error) => {
   setDrawerStatus(error.message || t('composer.refreshFailed'), true)
 })
 
-featurePanels = initFeaturePanels({state, request, composer: els.composerInput, status: setComposerStatus, openSession: loadSession, send: () => els.composerForm.requestSubmit()})
+function prepareTask(instruction, { prepend = false, submit = false } = {}) {
+  if (state.sending) return
+  const hadDraft = Boolean(els.composerInput.value.trim())
+  els.composerInput.value = appendDraft(els.composerInput.value, instruction, prepend)
+  persistComposerDraft(); syncComposerHeight(); updateComposerState()
+  if (submit && !hadDraft) els.composerForm.requestSubmit()
+  else {
+    els.composerInput.focus()
+    setComposerStatus(state.locale === 'zh' ? '已保留草稿并加入任务要求，请检查后发送。' : 'Draft preserved with task instructions. Review before sending.')
+  }
+}
+featurePanels = initFeaturePanels({state, request, composer: els.composerInput, status: setComposerStatus, openSession: loadSession, prepareTask})

@@ -460,6 +460,15 @@ async fn main() -> anyhow::Result<()> {
         .route("/app.css", get(app_css))
         .route("/app.js", get(app_js))
         .route(
+            "/ui-controls.mjs",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+                    include_str!("../static/ui-controls.mjs"),
+                )
+            }),
+        )
+        .route(
             "/workflows.mjs",
             get(|| async {
                 (
@@ -541,7 +550,10 @@ async fn main() -> anyhow::Result<()> {
             "/api/execution-settings",
             get(workflows::settings).post(workflows::save_settings),
         )
-        .route("/api/computer/takeover", post(workflows::takeover))
+        .route(
+            "/api/computer/takeover",
+            get(workflows::takeover_status).post(workflows::takeover),
+        )
         .route("/api/review", get(review::get).post(review::change))
         .route("/api/review/history", get(review::history))
         .route("/api/history-search", get(history_search::search))

@@ -119,6 +119,23 @@ References: [Codex worktrees](https://learn.chatgpt.com/docs/environments/git-wo
 
 ## Current priorities
 
+### UI review follow-up (2026-09-11)
+
+- [x] UI-1 Fix sidebar language switching hiding all views; update feature labels without losing form drafts.
+- [x] UI-2 Preserve unsent drafts when planning, resuming, queuing or applying examples. If a draft exists, prepare the combined text for review instead of silently submitting it.
+- [x] UI-3 Show feature/execution setting failures in their card; prevent duplicate button submissions and allow retry.
+- [x] UI-4 Validate execution ranges before saving and display the effective values returned by the host.
+- [x] UI-5 Keep task/queue and computer takeover status visible; clear stale session state and gate unavailable actions.
+- [x] UI-6 Disable file/session actions until a valid selection exists; show selection and loading failures clearly.
+- [ ] UI-7 Integrate full-text search into history with navigation to matching messages (follow-up enhancement).
+- [ ] UI-8 Add safe Markdown, code highlighting and file navigation (follow-up enhancement).
+
+UI-1–6 verified on 2026-09-14: UI helper regression checks, 19 shell tests,
+stream parser checks and five chat regression cases passed. Browser checks cover
+language switching with drafts intact, visible validation errors and save retry,
+effective budget values, paused goal/queue/step summaries, clearing state on a new
+session, takeover/resume controls, and file actions before/after selection.
+
 ### Shell and desktop
 
 - Keep polishing the shell UI without changing the backend turn loop unless necessary
