@@ -9,6 +9,11 @@
 
 ## Optimization status and next steps
 
+### Completed: repository documentation (2026-09-14)
+
+- [x] Rewrite the homepage README in Chinese with current features, UI entrypoints, default switches, source/portable startup, rebuild instructions, operating limits and regression commands.
+- [x] Correct stale read-only review, crash recovery and per-call Computer helper descriptions; link remaining work without marking it complete.
+
 ### Completed: startup (2026-09-06)
 
 - [x] Run existing binaries on daily startup; rebuild explicitly with `Build-OpenCowork.bat` or `Start-OpenClaw.bat --build`.

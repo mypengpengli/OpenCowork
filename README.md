@@ -1,270 +1,191 @@
 # OpenCoWork
 
-`opencowork` is now centered on a local-first Rust runtime with a usable desktop/web shell as the main entrypoint.
+一个以本地 Rust 运行时为核心的 AI 工作助手。通过 Windows 桌面应用或本地网页对话，读取和修改项目文件、操作电脑与浏览器、持续执行任务，并审阅更改、管理记忆和复用经验。
 
-The new direction follows the strong architectural ideas demonstrated by `claw-code`:
+**电脑控制和浏览器控制已内置，默认开启。** 不需要安装浏览器扩展，也不依赖智谱、Codex 或 Hermes 的电脑控制服务。模型请求使用你自己配置的 Provider API；截图识别需要支持图像输入的模型。
 
-- typed session history with tool-use and tool-result blocks
-- runtime-level permission policy
-- compact/summary-based context rollover
-- plugin registry with persisted enabled state
-- prompt composition and context budgeting
-- session persistence and resume-safe local state
-- agent planning, role division, and scheduling
-- skill and MCP extension catalogs
-- slash-command oriented CLI surface
-- layered settings discovery and merge rules
+[快速开始](#快速开始) · [功能与入口](#功能与入口) · [默认设置](#默认设置) · [使用边界](#使用边界) · [开发与验证](#开发与验证) · [开发清单](TODOLIST.md)
 
-This repository is a fresh implementation for OpenCoWork. The goal is to keep the architecture quality, not to preserve the old Vite scaffold. The current default user-facing host is the shell layer:
+## 最近更新
 
-- `crates/opencowork-desktop` for the Windows desktop host
-- `crates/opencowork-shell` for the local web shell
+截至 **2026-09-14**，P0 / P1 / P2 基础功能、六个方向的后续优化，以及最近一轮界面 BUG 修复已落地：
 
-The CLI still exists for debugging and lower-level runtime workflows, but it is no longer the primary product surface of this branch.
+- **本地自动操作**：Windows 窗口与无障碍控件操作、窗口截图、电脑接管与恢复；独立浏览器的页面读取、表单操作、截图及诊断。
+- **持续任务与恢复**：目标模式、步骤与完成证据、暂停续跑、运行中补充要求、消息队列，以及宿主中断后的检查点恢复。
+- **项目审阅**：文件和历史会话引用、上下文用量说明、Git 文件／分块暂存与撤销、恢复点，以及独立 worktree。
+- **记忆与经验**：中文历史全文搜索、记忆来源与冲突处理、可审阅的技能候选、定时任务与本地结果收件箱。
+- **界面与交互**：固定底部输入框，按“文件／任务／更多”分组；历史按日期分组；工具详情和高级设置按需展开。已修复草稿丢失、切换会话残留任务状态、语言切换影响表单、设置保存错误提示及重复提交等问题。
 
-## Workspace layout
+历史全文搜索与侧栏进一步整合、消息 Markdown／代码高亮等仍在 [待办清单](TODOLIST.md) 中，尚未作为已完成功能发布。
 
-```text
-.
-+-- crates/api            # provider-facing request and stream types
-+-- crates/app            # UI-agnostic app runtime and event stream for future web/desktop shells
-+-- crates/lsp            # lazy LSP manager and semantic context enrichment
-+-- crates/runtime        # session, compaction, config, hooks, permissions, turn loop
-+-- crates/tools          # builtin tool registry and file/shell tools
-+-- crates/plugins        # plugin manifests, registry, installation, enabled state
-+-- crates/agents         # multi-agent role definitions and scheduling
-+-- crates/skills         # skill discovery and metadata loading
-+-- crates/mcp            # MCP naming, registry, resources, auth, transport
-+-- crates/commands       # slash commands and command help
-+-- crates/opencowork-cli # executable entrypoint
-+-- crates/opencowork-shell   # local web shell and settings UI
-+-- crates/opencowork-desktop # native desktop host that opens the shell in WebView
-```
+## 快速开始
 
-## Current status
+### 从源码启动（Windows）
 
-The old frontend scaffold is gone. The current default branch is focused on:
+需要 Rust 工具链、MSVC C++ 编译环境，以及桌面窗口使用的 WebView2 Runtime。首次构建会下载并编译依赖。
 
-- the local-first runtime core
-- the desktop/web shell wrapper
-- shell-side settings for provider, permissions, skills, and MCP
-- auto-named sessions, slash command palette, and conversation/history UI polish
-- a double-click Windows launcher for local startup
+1. 克隆仓库并进入目录：
 
-OpenCoWork now has real execution paths for provider-backed turns, MCP remote transport plus resources/auth state, session resume, persistent worker-service control, a UI-agnostic app/event layer, a stronger context/tool orchestration core, a reference-style three-layer memory system, and a usable shell surface on top of that runtime.
+   ```powershell
+   git clone --branch ui-shell-session-naming-slash-polish https://github.com/mypengpengli/OpenCowork.git
+   cd OpenCowork
+   ```
 
-The current repository state also includes:
+2. 双击 `Start-OpenClaw.bat`，或在 PowerShell 中运行：
 
-- desktop host plus web shell as the current primary product surface
-- shell-side provider profile management, permission-mode editing, skills/MCP management, and slash command discovery
-- auto-named sessions, improved history/search UX, top popovers, and shell launcher support
-- provider bridge abstractions plus a live OpenAI-compatible client
-- incremental SSE streaming routed into the CLI renderer without forking the main runtime loop
-- unified builtin/plugin/MCP tool registration
-- MCP `stdio`, `http`, `sse`, and `ws` transport execution paths
-- MCP `resources/list` and `resources/read` support
-- MCP auth models for `bearer-env`, `bearer-file`, and saved local OAuth-style tokens
-- provider and MCP timeout surfaces in config
-- context load rules for `preserveRecentMessages`, token budgets, and `context.instructionFiles`
-- 200K-class default context budgeting with a 20K reserve instead of the previous small fixed default
-- ancestor-chain instruction discovery with content dedupe across `CLAUDE`, `.opencowork`, `.codex`, and imported `CLAW` style files
-- `.claude/CLAUDE.md` and `.claude/rules/**/*.md` instruction discovery, closer to the reconstructed Claude Code memory surface
-- nested instruction-memory discovery for touched subdirectories instead of only the current working directory chain
-- project-scoped `MEMORY.md` loading for durable workspace memory
-- current-session memory persistence and reinjection into prompt composition
-- query-time relevant-memory recall from the project memory directory
-- deferred tool activation through `ToolSearch`, with `Skill` kept out of the initial tool manifest until activated
-- deferred `LspContext` activation with a lazily started LSP service copied from the local reference implementation
-- prompt-side reinjection of active skill instructions so explicit skill loads can shape the same turn and later turns
-- compaction that merges previously compacted context with newly summarized context instead of replacing it
-- reserve-aware auto-compaction so compaction can start before the prompt budget is completely exhausted
-- reference-style context-window override handling for `CLAUDE_CODE_AUTO_COMPACT_WINDOW` and `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`
-- staged context preparation that budgets tool results, collapses older large text messages, and only then decides whether full compaction is necessary
-- a `snip` pre-pass before collapse/full compaction so oversized old prefixes can fall out before summary compaction
-- request-time tool-result budgeting so very large file/bash/match payloads do not pass through to the provider unchanged
-- persisted collapse metadata in saved sessions so compacted spans survive future turns and resume flows as structured state
-- skill discovery across `.claude`, `.opencowork`, and `.codex` roots, including legacy `commands/` directories
-- richer skill frontmatter loading for `when_to_use`, `allowed-tools`, `argument-hint`, `context`, `agent`, `model`, and `effort`
-- conditional skill activation based on previously touched file paths declared through skill `paths` frontmatter
-- same-turn conditional skill activation after file tools run, via runtime prompt augmentation instead of waiting for the next turn
-- same-turn LSP context injection through the same prompt augmentation path used by skills
-- runtime hook events beyond plain pre/post tool strings, including session, prompt-submit, failure, file-change, and instruction-load events
-- merged runtime config hooks plus plugin hooks instead of plugin-only hook execution
-- persisted agent handoff records with state transitions and backward-compatible loading
-- `crates/app` event types and turn execution helpers so CLI is no longer the only composition layer
-- reference-style `ToolSearch` mode handling for `tst`, `tst-auto`, and `standard`, plus manifest diagnostics for deferred-tool sizing
-- CLI flows for `provider`, `prompt`, `resume`, `mcp auth`, `mcp resources`, `handoffs consume`, `handoffs worker`, and `handoffs service`
+   ```powershell
+   .\Start-OpenClaw.bat
+   ```
 
-## Windows Quick Start
+3. 在 **设置 → Provider** 配置服务地址、API Key 和模型，然后发送任务。需要根据截图操作电脑或网页时，选择支持图像输入的模型。
 
-If you just want to double-click and run the project on Windows, use:
+启动器优先打开桌面应用；桌面程序不可用时回退到本地网页 `http://127.0.0.1:33211/`。首次启动或构建缓存来自其他项目副本时会构建，日常启动直接运行已有程序。
 
-```text
-Start-OpenClaw.bat
-```
-
-The launcher resolves the project root from its own location, so it still works if the repository is moved to a different folder. It will:
-
-- run the existing binaries directly, without invoking Cargo on normal startup
-- build on the first launch, or when the shared build cache belongs to another checkout
-- start `opencowork-desktop` when the desktop host is available
-- fall back to the web shell and open `http://127.0.0.1:33211/` if the desktop executable is missing
-
-After pulling changes or editing source files, rebuild explicitly:
+**拉取更新后需要重新构建，才能看到新功能和界面：**
 
 ```powershell
-.\Build-OpenCowork.bat
-# Or rebuild and launch in one step:
+git pull --ff-only
 .\Start-OpenClaw.bat --build
 ```
 
-The launcher, build script, and commands below share `%LOCALAPPDATA%\OpenClaw\target`.
-Normal startup uses the last successful build; it does not check source files for changes.
-The desktop host waits only for `/api/health` before opening its window. The page then
-loads local session and skill data, while team memory sync runs independently.
-MCP tool discovery is deferred until a runtime or tool manifest is requested.
+也可以只运行 `.\Build-OpenCowork.bat` 构建。启动器和下文开发命令共用 `%LOCALAPPDATA%\OpenClaw\target`；普通启动不会检查源码是否改变。
 
-### What a new Windows machine needs
+### 使用已构建的便携包
 
-For a prebuilt portable package, extract the ZIP and run `Start-OpenCowork.bat`.
-It includes both shell and desktop executables; only Windows x64 and WebView2
-are required. Drag a project folder onto the launcher to use that workspace.
-Startup failures appear in a dialog and are logged under
-`%LOCALAPPDATA%\OpenCowork\logs`.
+如果已拿到构建生成的 ZIP，完整解压后双击包内的 `Start-OpenCowork.bat`。将项目文件夹拖到启动器上，可以在该项目中工作。
 
-To build from source, a fresh machine needs:
+- 桌面运行需要 Windows x64 和 WebView2；无需安装 Rust、MSVC 或 Node.js。
+- 内置浏览器工具还需要本机安装 Chrome 或 Edge；无需浏览器扩展。
+- Git 审阅、暂存和隔离工作区功能需要 Git。自行配置的 MCP 服务可能需要额外运行时。
+- 启动失败会显示错误对话框，日志位于 `%LOCALAPPDATA%\OpenCowork\logs`。
 
-- Rust toolchain (`rustup`, `cargo`, `rustc`)
-- Windows MSVC C++ build environment
-  install either Visual Studio 2022 Build Tools or Visual Studio with the C++ desktop workload
-- Microsoft Edge WebView2 Runtime
-  required by the desktop shell hosted through `wry`
+便携包由 [打包脚本](scripts/package-windows.ps1) 生成，包含桌面与网页宿主、启动器、操作说明和文件哈希清单。源码更新不会自动更新此前下载的 ZIP。
 
-Useful notes:
+## 功能与入口
 
-- Node.js is not required for the current Rust shell/desktop startup path.
-- Git is only needed to clone/pull the repository, not to run an already-downloaded copy.
-- MCP servers or custom tools may need their own runtimes later, depending on what you configure.
-- The first build on a new machine will be slower because Cargo needs to compile the workspace.
+对话输入框固定在底部，上方工具栏按 **文件 / 任务 / 更多** 分组。一次展开一个面板，点击收起、面板外区域或按 `Esc` 关闭。工具栏同时显示当前步骤、目标状态和待处理消息数。
 
-Build a portable distribution with `powershell -NoProfile -ExecutionPolicy Bypass
--File scripts/package-windows.ps1`. Packages and file hash manifests are written
-to timestamped directories under `dist/packages`. The default is an optimized
-release build; `-Profile debug` creates a development build.
+| 功能 | 界面入口 | 可以做什么 |
+| --- | --- | --- |
+| Windows 电脑控制 | 直接在对话中提出任务；设置 → 权限 | 选择窗口、读取无障碍控件、截图、点击、拖动、双向滚动、输入中文和组合键；聊天中预览截图 |
+| 电脑接管 | 对话工具栏 | 接管并停止当前宿主的活动任务；恢复后重新观察窗口再操作 |
+| 内置浏览器 | 对话；设置 → 权限中的浏览器开关 | 启动独立浏览器，打开网页、读取页面、填写表单、点击、等待、调整尺寸、截图和查看控制台／网络诊断 |
+| 文件与引用 | 文件 → 工作区文件与更改 | 浏览文件、预览文本和 Git 差异，将文件或历史会话加入本次上下文 |
+| 更改审阅与恢复 | 文件 → 审阅更改与恢复 | 按文件或分块暂存、取消暂存、撤销未暂存文本更改；查看恢复点，拒绝过期审阅版本 |
+| 隔离工作区 | 文件 → 隔离工作区 | 从已提交的 Git HEAD 创建独立 worktree 和分支，查看已有工作区 |
+| 任务进度 | 任务 → 任务步骤 | 查看持久化步骤、检查项和完成证据，继续中断的工作 |
+| 持续目标与消息队列 | 任务 → 目标、补充要求与消息队列 | 设置目标、暂停和恢复；运行中补充要求，或把消息排入下一轮 |
+| 定时任务 | 任务 → 定时任务与结果收件箱 | 按间隔或指定时区每天执行，在本地收件箱查看结果 |
+| 上下文诊断 | 更多 → 本次上下文来源与用量 | 查看提示层、来源、纳入原因、引用截断和估算用量 |
+| 中文全文搜索 | 更多 → 历史全文搜索 | 检索消息正文、工具结果和压缩归档，查看来源会话、匹配位置与原文 |
+| 记忆管理 | 更多 → 记忆来源与冲突 | 查看自动事实的来源和时间，对同标题冲突选择保留或替换 |
+| 技能复用 | 更多 → 可复用技能候选 | 对照旧版与候选的步骤、完成检查、失败恢复和证据，采用、拒绝或停用 |
+| 模型与扩展 | 设置中的 Provider、权限、Skills、MCP | 管理模型配置、执行预算、功能开关、技能和 MCP 扩展 |
 
-## Computer control, workspace context, and task progress
+### 电脑与浏览器怎样工作
 
-Windows computer control is enabled by default. Change it in **Settings >
-Permissions > Computer control**, or set `computer.enabled` to `false` in project
-settings. The built-in `Computer` tool can inspect windows and accessibility
-elements, capture the desktop, focus a process, click, drag, scroll, type Unicode
-text, and press keys. It uses local Windows APIs through the bundled PowerShell
-script; no Zhipu service or separate MCP server is required. Screenshot-based
-reasoning requires a model that accepts image inputs. Existing tool permission
-rules still apply. Turning the switch off cancels active chats and removes this
-tool from subsequent requests; it does not restrict the general shell tool.
+**电脑控制**通过本地 Windows API 操作真实桌面。输入绑定选定窗口及最新观察状态，操作后返回新状态；窗口截图使用 Windows Graphics Capture，并在需要时报告兼容回退。每个聊天工作进程复用自己的电脑助手。详细操作与限制见 [电脑控制说明](docs/computer-control.md)。
 
-Computer input now requires a selected window and its latest observation ID.
-It supports indexed accessibility controls, direct value setting, secondary
-actions, two-axis scrolling and extended key chords. Targeted actions return
-fresh state. Window screenshots use Windows Graphics Capture with a reported
-compatibility fallback, and can be previewed in chat. See the
-[Codex comparison and operation guide](docs/computer-control.md) for exact
-behavior, validation and remaining differences.
+**浏览器控制是软件内置能力。** 它通过 CDP 启动本机 Chrome／Edge 的独立无头实例，使用独立配置目录，不导入你日常浏览器的账号登录状态。它与操作真实 Windows 窗口的电脑工具是两种不同入口，可根据任务选择。
 
-The workspace panel lists files and Git changes, with text previews and staged /
-unstaged read-only diffs. Files and previous sessions can be attached to a turn
-and removed before submission. References are limited to eight items, 12,000
-characters per item and 24,000 total; the panel shows truncation and approximate
-token costs. Attached text is saved with the user turn, including interrupted
-turns. Context diagnostics show included prompt layers and their reasons.
+### 长任务、停止与恢复
 
-Optional background memory extraction is in the same permissions panel and is
-off by default (`memory.backgroundEnabled`). After a successful turn it runs in
-a separate worker with a 768-token output budget, timeout, per-project lock and
-60-second cooldown. Extracted notes remain inspectable, editable and deletable
-in the memory UI. Main-path recall uses bounded lexical selection (up to three
-notes / 6,000 characters) with repeated-note throttling; it makes no extra model
-request to select notes.
+对话实时显示模型文本和工具事件。点击停止会取消当前模型请求及其拥有的子进程，保存已收到的内容。规划、恢复和处理队列时会保留未发送草稿；已有草稿时，合并任务要求后等待你检查并发送。
 
-Long tasks use the `UpdatePlan` tool to persist steps, checks and completion
-evidence. The task panel shows progress and offers continuation after a stopped
-turn. Completion requires evidence; interrupted work remains resumable. This
-provides visible planning within the existing agent loop.
+持续目标要求任务步骤和实际工具证据，再通过独立模型请求检查完成情况。默认最多续跑 12 轮、500000 tokens；暂停、预算耗尽或异常后保留进度。
 
-## Commands
+工具意图、结果和补充消息经过落盘确认，文本增量定期保存检查点。宿主意外退出后，重启可恢复已保存内容；没有收到结果的动作会标记为“结果未知”，中断目标保持暂停，避免盲目重放已发生的操作。
 
-```powershell
-cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-shell
-cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-desktop
-cargo fmt
-cargo test --target-dir "$env:LOCALAPPDATA\OpenClaw\target"
-cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-cli -- provider
-cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-cli -- mcp
-cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-cli -- mcp auth
-cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-cli -- mcp resources
-cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-cli -- handoffs create
-cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-cli -- handoffs worker nobody --max-jobs 1
-cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-cli -- handoffs service status
-cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-cli -- prompt "inspect this workspace"
+### 文件、记忆和经验
+
+文件／会话引用最多 8 项，每项 12000 字符、总计 24000 字符，界面显示截断及估算 token 用量，引用随用户消息保存。Git 审阅包含暂存区与工作区差异，写入前检查内容版本，并为恢复操作保存原内容。
+
+前台记忆检索采用有界文本匹配，最多选取 3 条／6000 字符，不为挑选记忆额外调用模型。后台记忆提取和技能候选生成需在设置中开启；候选附带来源证据并支持人工审阅，采用后写入项目的 `.opencowork/skills/learned-*/SKILL.md`。
+
+更完整的操作方式、预算规则和异常恢复说明见 [自动工作流说明](docs/autonomous-workflows.md)。
+
+## 默认设置
+
+在 **设置 → 权限** 调整功能开关和执行预算，实际执行仍受当前工具权限设置约束。项目配置使用 `.opencowork/settings.json`，并与用户级设置合并。
+
+| 设置 | 默认值 |
+| --- | --- |
+| 电脑控制 `computer.enabled` | 开启 |
+| 浏览器控制 `browser.enabled` | 开启 |
+| 后台记忆提取 `memory.backgroundEnabled` | 关闭 |
+| 技能候选生成 `learning.enabled` | 关闭 |
+| 技能自动采用 `learning.autoAdopt` | 关闭 |
+| 回合迭代上限 | 80 |
+| 回合 token 上限 | 250000 |
+| 前台任务时间上限 | 900 秒 |
+| 连续相同动作和结果停止阈值 | 3 |
+| 单次输出 token 上限 | 8192 |
+
+可指定同一 Provider 下的独立后台模型名称，以及可选推理强度。模型诊断最多发起 4 次小请求，检查连接、工具调用、图像输入和流式返回，并显示耗时及用量；这些请求可能产生 API 费用。
+
+普通输入与缓存用量分开统计，不重复相加。服务端缺少 usage 时无法精确执行 token 上限，时间与迭代限制仍有效；单次模型调用可能超过剩余 token 预算。未知价格不推算费用。
+
+## 使用边界
+
+- **本地运行不等于离线推理**：模型请求会发往你配置的 API；任务中使用的文件文本、截图等可能作为上下文发送给该服务。
+- **权限范围**：电脑操作发生在当前 Windows 活动桌面。关闭电脑控制会取消活动对话并禁用该工具，但不会限制通用 shell。文件工具的工作区写入限制也不是 shell、MCP 或网络访问的操作系统沙箱。
+- **浏览器范围**：跨回合登录态持久化、跨进程 iframe、文件上传和复杂站点登录尚未纳入当前验收范围。
+- **Git 分块范围**：分块操作支持普通现有文本文件，暂不处理二进制、新增、删除或重命名文件；完整文件暂存支持新增文件。worktree 不自动复制本地配置、安装依赖或合并分支。
+- **定时任务范围**：需要 OpenCoWork 宿主保持运行，结果投递到本地收件箱；不支持关机后执行。异常或执行结果未知的任务暂停，不自动重放。
+- **模型协议**：当前使用 OpenAI 兼容的 Chat Completions 工具／图像协议，尚未实现原生 Responses 或 Anthropic Messages。
+- **验证范围**：已有本地替身服务回归及原生窗口测试；真实外部模型的任务成功率、物理多屏混合 DPI 和全新机器安装仍需进一步实测。
+
+## 开发与验证
+
+主入口为 `opencowork-desktop` 和 `opencowork-shell`，CLI 用于调试与底层运行时操作。当前实现已迁移到 Rust，不使用旧版 Vite 前端启动流程。
+
+```text
+crates/
+├── api                  # 模型请求与流类型
+├── app                  # 独立于 UI 的运行时和事件层
+├── runtime              # 会话、上下文压缩、配置、权限、记忆与执行循环
+├── tools                # 文件、shell、电脑、浏览器等内置工具
+├── plugins              # 插件清单、安装与启用状态
+├── agents               # 角色、任务交接与调度
+├── skills               # 技能发现与元数据
+├── mcp                  # MCP 传输、工具、资源与认证
+├── lsp                  # 按需启动的语义上下文
+├── commands             # 斜杠命令
+├── opencowork-cli        # 命令行入口
+├── opencowork-shell      # 本地网页与设置界面
+└── opencowork-desktop    # Windows WebView 桌面宿主
 ```
 
-## Chat streaming and cancellation
-
-The desktop and web chat render model text and tool events as they arrive. Use
-Stop to cancel an active turn, including its model request and owned subprocesses.
-Received partial output is saved so the conversation can continue. Closing the
-connection also cancels the turn; abrupt termination of the shell host is not a
-checkpoint/recovery mechanism.
-
-`POST /api/chat` returns NDJSON (`started`, `event`, then `complete`).
-`POST /api/chat/:turn_id/cancel` requests cancellation. A session can have only
-one active turn. Builtin `bash` accepts `timeoutMs` from 100 to 600000, with a
-120000 ms default; timeout results include `timed_out: true`.
-
-## Regression checks
-
-Startup regression checks (Python 3 is only needed for these checks):
+运行时保留分层指令加载、项目／会话记忆、上下文压缩、延迟工具发现、按需 LSP、插件 hooks 与持久化任务交接。MCP 提供 stdio、HTTP、SSE、WebSocket 传输，以及资源读取和认证配置。
 
 ```powershell
+# 启动或构建
+cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-shell
+cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-desktop
+cargo run --target-dir "$env:LOCALAPPDATA\OpenClaw\target" -p opencowork-cli -- provider
+
+# 格式和 Rust 测试
+cargo fmt --check
+cargo test --target-dir "$env:LOCALAPPDATA\OpenClaw\target"
+
+# 界面、流式解析与隔离集成回归
+node scripts/check-ui-controls.mjs
+node scripts/check-chat-stream.mjs
 python scripts/check-launcher.py
 python scripts/check-startup.py "$env:LOCALAPPDATA\OpenClaw\target\debug\opencowork-shell.exe"
 python scripts/check-chat.py "$env:LOCALAPPDATA\OpenClaw\target\debug\opencowork-shell.exe"
 python scripts/check-features.py "$env:LOCALAPPDATA\OpenClaw\target\debug\opencowork-shell.exe"
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-computer-input.ps1
-node scripts/check-chat-stream.mjs
+python scripts/check-optimizations.py "$env:LOCALAPPDATA\OpenClaw\target\debug\opencowork-shell.exe"
+
+# 原生窗口测试：需要交互式 Windows 桌面，会操作自己的测试窗口
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-computer-window.ps1
+
+# 生成便携包，默认 release；可追加 -Profile debug
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows.ps1
 ```
 
-These checks use temporary directories, mock launcher commands, and a loopback
-team-memory/provider services. They do not use your provider credentials or launch
-MCP servers. Chat checks cover early deltas, cancellation, partial-history saving,
-provider failures, and tool timeouts; process-tree termination is verified on
-Windows. The stream-parser check additionally requires Node.js.
-Feature checks cover references, diffs, persisted task plans, the settings switch,
-background extraction and screenshot payloads using a mock provider. The native
-input check briefly opens its own test window and exercises focus, click, Unicode
-typing and keyboard shortcuts. It requires an interactive Windows desktop.
+Node.js 和 Python 用于上述开发检查，不是桌面应用的启动依赖。隔离集成回归使用临时项目和本地模型替身；浏览器测试还需要 Chrome／Edge。打包输出位于 `dist/packages`，包含 ZIP 与 SHA-256 清单。
 
-## Config knobs
+流式接口 `POST /api/chat` 返回 NDJSON（`started`、`event`、`complete`）；`POST /api/chat/:turn_id/cancel` 请求取消。会话通过独占租约避免并发写入。内置 `bash` 的默认超时为 120 秒，可通过 `timeoutMs` 设置为 100–600000 毫秒。
 
-The current rebuild exposes the small control knobs that matter operationally:
-
-- `provider.timeoutMs`
-- `context.preserveRecentMessages`
-- `context.maxPromptTokens`
-- `context.maxInstructionTokens`
-- `context.compactReserveTokens`
-- `context.messageCollapseChars`
-- `context.toolResultSoftChars`
-- `context.toolResultHardChars`
-- `context.instructionFiles`
-- `lspServers.<name>.command`
-- `lspServers.<name>.languages`
-- `lspServers.<name>.workspaceRoot`
-- `mcpServers.<name>.timeoutMs`
-- `mcpServers.<name>.auth`
-- `mcpServers.<name>.oauth`
-
-## 自动执行与经验复用
-
-目标续跑、运行中补充要求、独立浏览器、分块审阅与恢复、中文历史全文搜索、技能候选、定时任务和隔离工作区已接入。设置 → 权限可调整预算、后台模型和功能开关。使用方法与边界见 [自动工作流说明](docs/autonomous-workflows.md)。
+更多实现进度与验收记录见 [TODOLIST](TODOLIST.md)，运行规则见 [CLAUDE.md](CLAUDE.md)。

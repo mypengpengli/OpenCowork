@@ -52,9 +52,10 @@ calls. Input already queued to Windows cannot be recalled by stopping the turn.
 
 ## Remaining differences and practical limits
 
-- The host still starts an isolated PowerShell input helper per call. Codex's
-  persistent helper avoids this startup cost. We have not measured equal latency
-  or equal real-model task success rates.
+- Each chat worker now reuses a persistent PowerShell input helper after its
+  first start. Cancellation and timeout terminate the owned process tree. This
+  removes repeated helper startup within that worker; equal latency or equal
+  real-model task success rates have not been established.
 - The OpenAI Responses `computer` protocol is distinct from this project's
   OpenAI-compatible function-tool/image route. This implementation keeps existing
   providers working; it does not reproduce proprietary model training or Codex's
