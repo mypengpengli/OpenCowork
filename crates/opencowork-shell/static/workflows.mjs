@@ -14,7 +14,7 @@ export function initWorkflows({ state, request, composer, status, prepareTask, o
   const steering = el('textarea'); bind(steering, '运行中补充要求，或排入下一轮', 'placeholder'); bind(steering, '运行中补充要求，或排入下一轮', 'aria-label'); steering.rows = 2
   const queue = el('div')
   const summary = el('span', '', 'workflow-status-summary')
-  let observedSession = state.currentSessionId, goalData = null, workflowPending = false, paused = null
+  let observedSession = state.currentSessionId, goalData = null, workflowPending = false, paused = null, computerFeatures = null, controlVersion = 0
   const requireId = () => { if (!state.currentSessionId) throw new Error('请先发送一条消息创建会话'); return encodeURIComponent(state.currentSessionId) }
   const workflow = v => call(`/api/workflows/${requireId()}`, v)
   async function enqueue(mode) {
@@ -43,18 +43,43 @@ export function initWorkflows({ state, request, composer, status, prepareTask, o
     finally { workflowPending = false }
   }
   const takeover = el('p'), computerState = el('span', '', 'computer-control-state')
-  const takeButton = btn('接管电脑并停止任务', async () => { const d = await call('/api/computer/takeover', { paused: true }); paused = d.paused; renderTakeover(); status(tr('已暂停电脑操作，可以手动接管。')) })
-  const releaseButton = btn('允许继续电脑操作', async () => { const d = await call('/api/computer/takeover', { paused: false }); paused = d.paused; renderTakeover(); status(tr('已恢复电脑操作权限；从新观察继续。')) })
-  bind(takeButton, '接管电脑并停止任务', 'title'); bind(takeButton, '接管电脑并停止任务', 'aria-label'); bind(takeButton, tr('接管', 'Take over'))
-  bind(releaseButton, '允许继续电脑操作', 'title'); bind(releaseButton, '允许继续电脑操作', 'aria-label'); bind(releaseButton, tr('恢复', 'Resume'))
+  const controlButton = btn('', async () => {
+    ++controlVersion
+    window.dispatchEvent(new Event('opencowork:composer-state'))
+    try {
+      const enabled = !(computerFeatures?.computerEnabled && !paused)
+      computerFeatures = await call('/api/features', { computerEnabled: enabled })
+      if (enabled && paused) { const data = await call('/api/computer/takeover', { paused: false }); paused = data.paused }
+      window.dispatchEvent(new CustomEvent('opencowork:features-changed', { detail: computerFeatures }))
+      renderTakeover()
+      status(enabled ? tr('电脑控制已启用。', 'Computer control enabled.') : tr('电脑控制已关闭，已停止当前宿主的活动任务。', 'Computer control disabled; active tasks in this host have been stopped.'))
+    } finally { window.dispatchEvent(new Event('opencowork:composer-state')) }
+  })
+  controlButton.id = 'computer-control-toggle'; controlButton.setAttribute('role', 'switch')
   function renderTakeover() {
-    computerState.textContent = paused === null ? tr('正在读取控制状态…', 'Loading control state…') : paused ? tr('电脑已接管', 'Computer control paused') : tr('电脑控制就绪', 'Computer control ready')
-    takeButton.hidden = paused === true; releaseButton.hidden = paused !== true
-    takeButton.disabled = Boolean(takeButton.dataset.busy); releaseButton.disabled = paused === null || Boolean(releaseButton.dataset.busy)
+    const ready = computerFeatures !== null && paused !== null
+    const enabled = ready && computerFeatures.computerEnabled && !paused
+    const supported = computerFeatures?.computerSupported !== false
+    controlButton.textContent = !ready ? tr('电脑控制：读取中…', 'Computer control: loading…')
+      : !supported ? tr('电脑控制：不支持', 'Computer control: unsupported')
+      : enabled ? tr('电脑控制：已启用', 'Computer control: on') : tr('电脑控制：未启用', 'Computer control: off')
+    controlButton.setAttribute('aria-label', controlButton.textContent)
+    controlButton.setAttribute('aria-checked', String(Boolean(enabled && supported)))
+    controlButton.title = enabled
+      ? tr('点击关闭电脑控制，并停止当前宿主的活动任务', 'Disable computer control and stop active tasks in this host')
+      : tr('点击启用电脑控制', 'Enable computer control')
+    controlButton.disabled = !ready || !supported || Boolean(controlButton.dataset.busy)
+    computerState.textContent = controlButton.textContent
   }
-  async function refreshTakeover() { const d = await request('/api/computer/takeover'); if (!takeButton.dataset.busy && !releaseButton.dataset.busy) { paused = d.paused; renderTakeover() } }
-  takeover.append(computerState, takeButton, releaseButton); renderTakeover()
-  refreshTakeover().catch(() => { computerState.textContent = tr('控制状态读取失败；仍可接管', 'Status unavailable; takeover remains available') })
+  async function refreshTakeover() {
+    const version = ++controlVersion
+    const [features, control] = await Promise.all([request('/api/features'), request('/api/computer/takeover')])
+    if (version === controlVersion && !controlButton.dataset.busy) { computerFeatures = features; paused = control.paused; renderTakeover() }
+  }
+  takeover.addEventListener('ui:action-done', () => { renderTakeover(); window.dispatchEvent(new Event('opencowork:composer-state')) })
+  window.addEventListener('opencowork:features-changed', event => { ++controlVersion; computerFeatures = event.detail; renderTakeover() })
+  takeover.append(computerState, controlButton); renderTakeover()
+  refreshTakeover().catch(error => { controlButton.textContent = tr('电脑控制：读取失败', 'Computer control: unavailable'); controlButton.title = error.message })
   host.append(takeover, goalPanel)
 
   const settings = el('article', '', 'settings-card workflow-settings'); settings.append(el('h3', '自动执行与模型能力'))

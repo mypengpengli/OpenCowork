@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { appendDraft, createUi, processMessageIndexes } from '../crates/opencowork-shell/static/ui-controls.mjs'
+import { appendDraft, createUi, processMessageIndexes, resolveSlashInvocation } from '../crates/opencowork-shell/static/ui-controls.mjs'
 
 const draft = '保留这段草稿\nconst example = "<script>";'
 assert.equal(appendDraft(draft, 'Plan first', true), `Plan first\n\n${draft}`)
@@ -45,3 +45,15 @@ assert.equal(button.textContent, 'Save execution settings')
 assert.equal(input.attrs.placeholder, 'Background model (blank uses current model)')
 assert.equal(input.value, draft)
 console.log('PASS: draft preservation, duplicate action suppression, local errors/retry and localization without form replacement')
+
+const catalog = {
+  skills: [{ name: 'Plan', slug: 'plan' }, { name: 'Plan plus', slug: 'plan-plus' }],
+  mcpServers: [{ name: 'local server' }], tools: [{ name: 'read_file' }],
+}
+assert.match(resolveSlashInvocation('/skill plan-plus 整理项目\n保留草稿', catalog), /Skill.*"Plan plus"[\s\S]*整理项目\n保留草稿/)
+assert.match(resolveSlashInvocation('/skill Plan plus 检查', catalog), /"Plan plus"/)
+assert.match(resolveSlashInvocation('/mcp local server 查资料', catalog), /MCP.*"local server"[\s\S]*查资料/)
+assert.match(resolveSlashInvocation('/tool read_file README.md', catalog), /"read_file"[\s\S]*README.md/)
+assert.equal(resolveSlashInvocation('/permissions read-only', catalog), null)
+assert.throws(() => resolveSlashInvocation('/tool read_file_typo test', catalog), /Unknown capability/)
+console.log('PASS: slash capability selection, multiword names, multiline arguments and unknown target rejection')

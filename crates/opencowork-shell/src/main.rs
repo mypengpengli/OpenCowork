@@ -590,6 +590,10 @@ async fn main() -> anyhow::Result<()> {
             axum::routing::delete(delete_acp_thread),
         )
         .route("/api/workspaces", get(workspace_manager::list))
+        .route(
+            "/api/workspaces/:id",
+            axum::routing::delete(workspace_manager::forget),
+        )
         .route("/api/workspaces/open", post(workspace_manager::open))
         .route(
             "/api/workspaces/directories",
@@ -792,6 +796,69 @@ async fn run_slash_command(
     let Some(command) = SlashCommand::parse(&input) else {
         return Err(ApiError::bad_request("slash input must start with `/`"));
     };
+    if let Some(id) = &payload.session_id {
+        workspace::validate_id(id)?;
+    }
+    if let SlashCommand::Permissions(Some(mode)) = &command {
+        let Json(saved) = save_permission_mode(
+            State(state),
+            Json(PermissionModeUpdateRequest {
+                permission_mode: mode.clone(),
+            }),
+        )
+        .await?;
+        return Ok(Json(SlashExecuteResponse {
+            title: "/permissions".into(),
+            output: format!("Permission mode saved: {}", saved.value),
+        }));
+    }
+    if command == SlashCommand::Compact {
+        let id = payload
+            .session_id
+            .ok_or_else(|| ApiError::bad_request("请先打开需要压缩的会话。"))?;
+        return tokio::task::spawn_blocking(move || {
+            let _lease = opencowork_runtime::ExclusiveLease::acquire(
+                &state
+                    .config_home
+                    .join("turn-locks")
+                    .join(format!("{id}.lock")),
+            )
+            .map_err(|_| ApiError {
+                status: StatusCode::CONFLICT,
+                message: "请先停止该会话的任务，再压缩历史。".into(),
+            })?;
+            let store = SessionStore::new(state.config_home.join("sessions"));
+            let session = store
+                .load(&id)
+                .map_err(|e| ApiError::not_found(e.to_string()))?;
+            if session.workspace.as_ref().is_some_and(|path| {
+                !workspace_manager::same_directory(std::path::Path::new(path), &state.cwd)
+            }) {
+                return Err(ApiError::bad_request("请先切换到会话所属工作区。"));
+            }
+            let result = opencowork_runtime::compact_session(
+                &session,
+                opencowork_runtime::CompactConfig {
+                    max_estimated_tokens: 0,
+                    ..Default::default()
+                },
+            );
+            if result.removed_message_count > 0 {
+                store
+                    .save_named(&id, &result.compacted_session)
+                    .map_err(internal_error)?;
+            }
+            Ok(Json(SlashExecuteResponse {
+                title: "/compact".into(),
+                output: format!(
+                    "Compacted: {} messages. Recent messages retained.",
+                    result.removed_message_count
+                ),
+            }))
+        })
+        .await
+        .map_err(internal_error)?;
+    }
 
     let cwd = state.cwd.clone();
     let config_home = state.config_home.clone();

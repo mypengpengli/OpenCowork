@@ -53,12 +53,12 @@ def run(executable):
             log = (root/'shell.log').open('w')
             process = None
 
-            def api(path, body=None, workspace=None, expected=200):
+            def api(path, body=None, workspace=None, expected=200, method=None):
                 connection = http.client.HTTPConnection('127.0.0.1', port, timeout=45)
                 headers = {'Content-Type': 'application/json'}
                 if workspace:
                     headers['X-OpenCowork-Workspace'] = workspace
-                connection.request('POST' if body is not None else 'GET', path, json.dumps(body) if body is not None else None, headers)
+                connection.request(method or ('POST' if body is not None else 'GET'), path, json.dumps(body) if body is not None else None, headers)
                 response = connection.getresponse(); data = response.read(); connection.close()
                 assert response.status == expected, (path, response.status, data)
                 if path == '/api/chat' and expected == 200:
@@ -114,10 +114,44 @@ def run(executable):
                 assert 'inside.txt' in listing['files'], listing
                 assert listing['changes'] and all(not c['path'].startswith(('nested/', '../')) and c['path'] != 'identity.txt' for c in listing['changes']), listing
 
+                # Forget an empty recent project without deleting its folder or
+                # invalidating a page that is already using its context.
+                api('/api/workspaces/' + nested, method='DELETE')
+                assert nested not in [w['id'] for w in api('/api/workspaces')]
+                assert (second/'nested/inside.txt').read_text() == 'inside'
+                assert Path(api('/api/bootstrap', workspace=nested)['cwd']) == second/'nested'
+                assert (config/'sessions'/f'{session_id}.json').read_bytes() == before
+
+                api('/api/features', {'computerEnabled': True, 'backgroundMemoryEnabled': True}, workspace=b)
+                features = api('/api/features', {'computerEnabled': False}, workspace=b)
+                assert features['computerEnabled'] is False and features['backgroundMemoryEnabled'] is True
+                features = api('/api/features', {'computerEnabled': True}, workspace=b)
+                assert features['computerEnabled'] is True and features['backgroundMemoryEnabled'] is True
+                assert api('/api/features', workspace=a)['backgroundMemoryEnabled'] is False
+                api('/api/features', {'backgroundMemoryEnabled': False}, workspace=b)
+
+                api('/api/slash', {'input': '/permissions read-only'}, workspace=b)
+                assert api('/api/bootstrap', workspace=b)['permissionMode'] == 'read-only'
+                assert api('/api/bootstrap', workspace=a)['permissionMode'] == 'workspace-write'
+                api('/api/slash', {'input': '/permissions unknown'}, workspace=b, expected=400)
+                api('/api/slash', {'input': '/compact', 'sessionId': '../escape'}, workspace=b, expected=400)
+                api('/api/slash', {'input': '/compact', 'sessionId': session_id}, workspace=a, expected=400)
+                archive = json.loads(before)
+                archive['messages'] = archive['messages'] * 8
+                (config/'sessions'/f'{session_id}.json').write_text(json.dumps(archive), encoding='utf-8')
+                compact = api('/api/slash', {'input': '/compact', 'sessionId': session_id}, workspace=b)
+                assert 'Compacted: 0' not in compact['output'], compact
+                stored = json.loads((config/'sessions'/f'{session_id}.json').read_text(encoding='utf-8'))
+                assert len(stored['messages']) < len(archive['messages'])
+                assert stored['workspace'] == archive['workspace']
+
                 process.terminate(); process.wait(timeout=15); process = start()
                 assert b in [w['id'] for w in api('/api/workspaces')]
+                assert nested not in [w['id'] for w in api('/api/workspaces')]
+                reopened = api('/api/workspaces/open', {'path': str(second/'nested')})['id']
+                assert Path(api('/api/bootstrap', workspace=reopened)['cwd']) == second/'nested'
                 inspect((b, second))
-                print('PASS: folder validation, recent workspace persistence, concurrent project reads, scoped agent writes, session ownership and subfolder Git paths')
+                print('PASS: folder validation, recent workspace persistence, concurrent project reads, scoped agent writes, session ownership, subfolder Git paths, recent removal and persistent slash commands')
             finally:
                 if process and process.poll() is None:
                     process.terminate(); process.wait(timeout=15)

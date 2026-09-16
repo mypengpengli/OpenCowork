@@ -113,6 +113,16 @@ impl WorkspaceManager {
             .find(|e| e.id == id)
             .ok_or_else(|| ApiError::bad_request("工作区不存在，请重新打开文件夹。"))?;
         let cwd = directory(&entry.path.to_string_lossy())?;
+        // Removing a recent entry does not stop another page's running work.
+        // Reopening it must reuse that context instead of starting two schedulers.
+        if let Some(state) = opened
+            .values()
+            .find(|s| same_directory(&s.cwd, &cwd))
+            .cloned()
+        {
+            opened.insert(id.to_owned(), state.clone());
+            return Ok(state);
+        }
         super::ensure_shell_defaults(&cwd)?;
         let acp = AcpCoordinator::new(cwd.clone(), self.default.config_home.clone());
         let state = ShellState {
@@ -158,6 +168,24 @@ pub(super) async fn list(
     Extension(manager): Extension<WorkspaceManager>,
 ) -> Result<Json<Vec<WorkspaceEntry>>, ApiError> {
     Ok(Json(manager.entries()?))
+}
+
+pub(super) async fn forget(
+    Extension(manager): Extension<WorkspaceManager>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<Vec<WorkspaceEntry>>, ApiError> {
+    tokio::task::spawn_blocking(move || {
+        let catalog = manager.catalog_path();
+        let _lease =
+            ExclusiveLease::acquire(&catalog.with_extension("lock")).map_err(internal_error)?;
+        let mut entries = manager.entries()?;
+        entries.retain(|entry| entry.id != id);
+        // Only edit the recent catalogue; never delete project files or sessions.
+        write_json_atomic(&catalog, &entries).map_err(internal_error)?;
+        Ok(Json(entries))
+    })
+    .await
+    .map_err(internal_error)?
 }
 
 #[derive(Deserialize)]

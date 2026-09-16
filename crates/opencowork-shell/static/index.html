@@ -72,23 +72,9 @@
       <section class="content-shell">
         <section id="chat-view" class="page-view">
           <header class="status-bar">
-            <div class="status-group status-group--left">
-              <span id="runtime-model" class="status-tag">model</span>
-              <span id="runtime-permission" class="status-tag">permission</span>
-              <span id="provider-persisted" class="status-tag">provider</span>
-            </div>
-            <div class="status-group status-group--center">
-              <button id="session-overview-launch-button" class="status-tag utility-launch-button" type="button">
-                当前会话摘要
-              </button>
-            </div>
-            <div class="status-group status-group--right">
-              <span id="team-memory-state" class="status-tag">team memory</span>
-              <span id="session-updated-chip" class="status-tag">updated</span>
-              <button id="utility-launch-button" class="status-tag utility-launch-button" type="button">
-                运行辅助
-              </button>
-            </div>
+            <button id="session-overview-launch-button" class="status-tag utility-launch-button" type="button">
+              会话概览
+            </button>
           </header>
 
           <section class="chat-stage">
@@ -126,6 +112,14 @@
                   </div>
                 </div>
                 <div id="session-overview-content" class="chat-drawer-content is-hidden">
+                  <div class="overview-runtime-info">
+                    <span id="runtime-model" class="status-tag"></span>
+                    <span id="runtime-permission" class="status-tag"></span>
+                    <span id="provider-persisted" class="status-tag"></span>
+                    <span id="team-memory-state" class="status-tag"></span>
+                    <span id="session-updated-chip" class="status-tag"></span>
+                    <button id="utility-launch-button" class="status-tag utility-launch-button" type="button">运行辅助</button>
+                  </div>
               <section id="session-banner" class="session-banner">
                 <div>
                   <p class="banner-kicker" data-i18n="session.kicker">当前会话</p>
@@ -272,7 +266,7 @@
                 <div id="slash-menu-list" class="slash-menu-list"></div>
                 <div class="slash-menu-footer">
                   <span class="slash-menu-hint">↑ ↓</span>
-                  <span class="slash-menu-hint">Enter 执行</span>
+                  <span class="slash-menu-hint">Enter 使用</span>
                   <span class="slash-menu-hint">Tab 补全</span>
                   <span class="slash-menu-hint">Esc 关闭</span>
                 </div>

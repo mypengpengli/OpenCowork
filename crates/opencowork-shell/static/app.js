@@ -1,6 +1,6 @@
 import { readChatStream, appendChatEvent } from '/chat-stream.mjs'
 import { initFeaturePanels } from '/features.mjs'
-import { appendDraft, processMessageIndexes } from '/ui-controls.mjs'
+import { appendDraft, processMessageIndexes, resolveSlashInvocation } from '/ui-controls.mjs'
 let featurePanels
 const selectedWorkspaceId = new URL(location.href).searchParams.get('workspace') || ''
 const workspaceHeaders = selectedWorkspaceId ? { 'X-OpenCowork-Workspace': selectedWorkspaceId } : {}
@@ -1949,7 +1949,9 @@ function groupedSlashItems() {
     title: `/${command.name}${command.argumentHint ? ` ${command.argumentHint}` : ''}`,
     subtitle: command.summary,
     keyword: command.name,
-    meta: 'CLI',
+    meta: state.locale === 'zh' ? '命令' : 'Command',
+    insertion: `/${command.name}`,
+    takesArguments: Boolean(command.argumentHint),
     action: { type: 'builtin-command', input: `/${command.name}` },
   }))
   const actionItems = shellSlashActions().map((action) => ({
@@ -1958,7 +1960,8 @@ function groupedSlashItems() {
     title: action.title,
     subtitle: action.subtitle,
     keyword: action.key,
-    meta: 'UI',
+    meta: state.locale === 'zh' ? '导航' : 'Navigation',
+    insertion: `/${action.key}`,
     action: action.action,
   }))
   const skillItems = (state.bootstrap?.skills || []).map((skill) => ({
@@ -1968,6 +1971,7 @@ function groupedSlashItems() {
     subtitle: skill.whenToUse || skill.description || skill.path,
     keyword: `${skill.name} ${deriveSkillSlug(skill)}`,
     meta: 'Skill',
+    insertion: `/skill ${deriveSkillSlug(skill)}`,
     action: { type: 'open-skill', slug: deriveSkillSlug(skill), name: skill.name },
   }))
   const mcpItems = (state.bootstrap?.mcpServers || []).map((server) => ({
@@ -1977,6 +1981,7 @@ function groupedSlashItems() {
     subtitle: server.endpoint || server.command || server.transport,
     keyword: `${server.name} ${server.transport}`,
     meta: server.transport?.toUpperCase?.() || 'MCP',
+    insertion: `/mcp ${server.name}`,
     action: { type: 'open-mcp', name: server.name },
   }))
   const toolItems = (state.slashCatalog.tools || []).map((tool) => ({
@@ -1986,6 +1991,7 @@ function groupedSlashItems() {
     subtitle: `${tool.description || '-'} · ${tool.permission}`,
     keyword: `${tool.name} ${tool.source} ${tool.permission}`,
     meta: `${tool.source} · ${tool.permission}`,
+    insertion: `/tool ${tool.name}`,
     action: { type: 'show-tool', name: tool.name },
   }))
   return [
@@ -2047,7 +2053,7 @@ function renderSlashMenu() {
       button.addEventListener('click', async () => {
         state.slashMenu.activeIndex = currentIndex
         renderSlashMenu()
-        await executeSlashItem(item)
+        await executeSlashItem(item).catch(error => setComposerStatus(error.message, true))
       })
       const copy = document.createElement('div')
       copy.className = 'slash-menu-item-copy'
@@ -2064,7 +2070,12 @@ function renderSlashMenu() {
         meta.textContent = item.meta
         button.appendChild(meta)
       }
-      section.appendChild(button)
+      const row = document.createElement('div'); row.className = 'slash-menu-row'
+      const view = document.createElement('button'); view.type = 'button'; view.className = 'slash-menu-view'
+      view.textContent = state.locale === 'zh' ? '查看' : 'View'
+      view.setAttribute('aria-label', `${view.textContent} ${item.title}`)
+      view.addEventListener('click', () => { void viewSlashItem(item).catch(error => setComposerStatus(error.message, true)) })
+      row.append(button, view); section.appendChild(row)
       runningIndex += 1
     })
     els.slashMenuList.appendChild(section)
@@ -2498,7 +2509,7 @@ function renderPaneState() {
   })
   const eventCount = normalizeEvents(state.lastEvents).length
 
-  const hasOverview = Boolean(state.currentSessionId || state.currentSession || state.pendingTurn)
+  const hasOverview = Boolean(state.bootstrap)
 
   if (els.sessionOverviewDrawer) {
     els.sessionOverviewDrawer.classList.toggle('is-hidden', !hasOverview || overviewCollapsed)
@@ -3158,6 +3169,26 @@ function computeSessionMetrics(session) {
 function workspaceKey(path) { return String(path || '').replace(/^\\\\\?\\/, '').replaceAll('\\', '/').replace(/\/$/, '').toLowerCase() }
 function workspaceName(path) { return String(path || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path }
 
+function workspaceRemoveButton(entry) {
+  const button = document.createElement('button'); button.type = 'button'; button.className = 'workspace-remove'
+  button.textContent = '×'
+  const current = workspaceKey(entry.path) === workspaceKey(state.bootstrap?.cwd)
+  button.title = current
+    ? (state.locale === 'zh' ? '当前正在此项目工作，请先切换工作区再移除' : 'Switch workspaces before removing the current project')
+    : (state.locale === 'zh' ? '从最近工作区移除，不删除文件或会话' : 'Remove from recent workspaces; keep files and conversations')
+  button.setAttribute('aria-label', `${state.locale === 'zh' ? '移除工作区' : 'Remove workspace'} ${workspaceName(entry.path)}`)
+  button.disabled = current
+  button.addEventListener('click', async event => {
+    event.preventDefault(); event.stopPropagation(); button.disabled = true
+    try {
+      state.workspaceEntries = await request(`/api/workspaces/${encodeURIComponent(entry.id)}`, { method: 'DELETE' })
+      renderSidebarSessions(); window.dispatchEvent(new Event('opencowork:workspaces-changed'))
+      setComposerStatus(state.locale === 'zh' ? '已从最近工作区移除，文件和历史会话保留。' : 'Removed from recent workspaces. Files and conversations are kept.')
+    } catch (error) { button.disabled = false; setComposerStatus(error.message, true) }
+  })
+  return button
+}
+
 function renderWorkspacePicker() {
   const button = document.querySelector('#workspace-picker-button'), path = state.bootstrap?.cwd || ''
   button.textContent = `▱ ${workspaceName(path) || (state.locale === 'zh' ? '选择工作区' : 'Choose workspace')} ▾`
@@ -3197,7 +3228,9 @@ function initWorkspacePicker() {
   function renderRecent() {
     recent.replaceChildren(...state.workspaceEntries.filter(w => w.path.toLowerCase().includes(filter.value.toLowerCase())).map(w => {
       const selected = workspaceKey(w.path) === workspaceKey(state.bootstrap?.cwd)
-      return folderButton(`▱ ${workspaceName(w.path)}${selected ? '  ✓' : ''}`, w.path, switchWorkspace)
+      const row = document.createElement('div'); row.className = 'workspace-recent-row'
+      row.append(folderButton(`▱ ${workspaceName(w.path)}${selected ? '  ✓' : ''}`, w.path, switchWorkspace), workspaceRemoveButton(w))
+      return row
     }))
     if (!recent.children.length) recent.textContent = text('没有匹配的工作区', 'No matching workspaces')
   }
@@ -3227,6 +3260,7 @@ function initWorkspacePicker() {
   close.addEventListener('click', () => dialog.close())
   dialog.addEventListener('click', event => { if (event.target === dialog) { const r = dialog.getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) dialog.close() } })
   filter.addEventListener('input', renderRecent)
+  window.addEventListener('opencowork:workspaces-changed', renderRecent)
   browse.addEventListener('click', () => { document.querySelector('#workspace-directory-browser').hidden = false; void browseDirectory(state.bootstrap?.cwd || state.workspaceEntries[0]?.path || '') })
   load.addEventListener('click', () => browseDirectory(pathInput.value))
   pathInput.addEventListener('input', () => { ++browseVersion; selectedPath = ''; open.disabled = true })
@@ -3276,7 +3310,8 @@ function renderShellMeta() {
   els.runtimeModel.textContent = provider.model || t('status.modelFallback')
   els.runtimePermission.textContent = permissionModeLabel(state.bootstrap?.permissionMode || t('status.permissionFallback'))
   els.providerPersisted.textContent = provider.persisted ? t('status.providerSaved') : t('status.providerDefault')
-  els.teamMemoryState.textContent = teamMemoryLabel(state.bootstrap?.teamMemorySync)
+  els.teamMemoryState.textContent = `${state.locale === 'zh' ? '团队记忆同步' : 'Team memory sync'}：${teamMemoryLabel(state.bootstrap?.teamMemorySync)}`
+  els.teamMemoryState.title = state.locale === 'zh' ? '可选的团队记忆同步服务，与模型、电脑控制的配置无关。' : 'Optional shared memory service, separate from model and computer settings.'
   els.settingsWorkspaceChip.textContent = compactText(state.bootstrap?.cwd || '-', 40)
   if (els.localeCurrentValue) {
     els.localeCurrentValue.textContent =
@@ -3805,6 +3840,10 @@ function renderSidebarSessions() {
       open.title = state.locale === 'zh' ? '在此项目中新建会话' : 'New chat in this project'
       open.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); void switchWorkspace(path) })
       summary.append(open)
+      const entry = state.workspaceEntries.find(w => workspaceKey(w.path) === workspaceKey(path))
+      if (entry && !sessions.some(session => workspaceKey(session.workspace) === workspaceKey(path))) {
+        summary.append(workspaceRemoveButton(entry))
+      }
       section.classList.toggle('is-current', workspaceKey(path) === workspaceKey(state.bootstrap?.cwd))
     }
     const body = document.createElement('div'); body.className = 'sidebar-project-sessions'
@@ -5313,7 +5352,7 @@ async function submitChat(event) {
   if (document.querySelector('.composer-toolbar [data-busy]')) return
   if (state.sending) return
 
-  const input = els.composerInput.value.trim()
+  let input = els.composerInput.value.trim()
   const previousDraftSessionId = state.currentSessionId
   if (!input) {
     setComposerStatus(t('composer.empty'), true)
@@ -5321,9 +5360,17 @@ async function submitChat(event) {
   }
 
   if (input.startsWith('/')) {
-    await executeSlashInput(input)
-    return
+    try {
+      if (/^\/(skill|mcp|tool)\s+/.test(input)) await ensureSlashCatalogLoaded()
+      const task = resolveSlashInvocation(input, {
+        skills: (state.bootstrap?.skills || []).map(skill => ({ ...skill, slug: deriveSkillSlug(skill) })),
+        mcpServers: state.bootstrap?.mcpServers || [], tools: state.slashCatalog.tools || [],
+      })
+      if (task) input = task
+      else { await executeSlashInput(input); return }
+    } catch (error) { setComposerStatus(error.message, true); return }
   }
+  closeSlashMenu()
 
   state.sending = true
   state.stopping = false
@@ -5722,6 +5769,8 @@ async function executeSlashInput(rawInput) {
         content: response.output,
       })
       finishSlash('slash.executed', { command: input })
+      await loadBootstrap({ allowAutoSelect: false })
+      if (command === 'compact' && state.currentSessionId) await loadSession(state.currentSessionId)
       return true
     }
     case 'new':
@@ -5798,39 +5847,31 @@ async function executeSlashInput(rawInput) {
   }
 }
 
-async function executeSlashItem(item) {
-  if (!item) return
+function insertSlashItem(item) {
+  if (!item || state.sending) return
+  const existing = slashQuery().trim()
+  // Selecting an exact command must not discard arguments already entered.
+  els.composerInput.value = existing.startsWith(`${item.insertion} `) ? existing : `${item.insertion} `
+  persistComposerDraft(); closeSlashMenu(); syncComposerHeight(); updateComposerState(); els.composerInput.focus()
+  setComposerStatus(state.locale === 'zh' ? '已选入命令，可补充任务或参数后发送。' : 'Command selected. Add a task or arguments, then send.')
+}
+
+async function viewSlashItem(item) {
+  closeSlashMenu()
   switch (item.action.type) {
-    case 'builtin-command':
-      await executeSlashInput(item.action.input)
-      return
-    case 'new-session':
-      await executeSlashInput('/new')
-      return
-    case 'open-history':
-      await executeSlashInput('/history')
-      return
-    case 'open-settings':
-      await executeSlashInput('/settings')
-      return
-    case 'open-settings-tab':
-      await executeSlashInput(`/${item.action.tab}`)
-      return
-    case 'show-tools':
-      await executeSlashInput('/tools')
-      return
-    case 'open-skill':
-      await executeSlashInput(`/skill ${item.action.slug}`)
-      return
-    case 'open-mcp':
-      await executeSlashInput(`/mcp ${item.action.name}`)
-      return
-    case 'show-tool':
-      await executeSlashInput(`/tool ${item.action.name}`)
-      return
-    default:
-      setComposerStatus(t('slash.unknown'), true)
+    case 'open-skill': return openSkillFromSlash(item.action.slug)
+    case 'open-mcp': return openMcpFromSlash(item.action.name)
+    case 'show-tool': return showToolManifest(item.action.name)
+    default: openBlockViewer({ title: item.title, content: item.subtitle })
   }
+}
+
+async function executeSlashItem(item) {
+  if (!item || state.sending) return
+  if (['open-skill', 'open-mcp', 'show-tool'].includes(item.action.type) || item.takesArguments) {
+    insertSlashItem(item); return
+  }
+  await executeSlashInput(item.insertion)
 }
 
 async function deleteSession(sessionId) {
@@ -6393,7 +6434,7 @@ els.composerInput.addEventListener('keydown', (event) => {
     }
     if (event.key === 'Tab' && state.slashMenu.items.length) {
       event.preventDefault()
-      executeSlashItem(state.slashMenu.items[state.slashMenu.activeIndex])
+      insertSlashItem(state.slashMenu.items[state.slashMenu.activeIndex])
       return
     }
   }
@@ -6407,10 +6448,11 @@ els.composerInput.addEventListener('keydown', (event) => {
     event.preventDefault()
     if (state.slashMenu.open) {
       const current = slashQuery()
-      if (current.trim() !== '/' || !state.slashMenu.items.length) {
+      const selected = state.slashMenu.items[state.slashMenu.activeIndex]
+      if (!selected || current.trim() === selected.insertion || current.trim().startsWith(`${selected.insertion} `)) {
         els.composerForm.requestSubmit()
       } else {
-        executeSlashItem(state.slashMenu.items[state.slashMenu.activeIndex])
+        void executeSlashItem(selected).catch(error => setComposerStatus(error.message, true))
       }
       return
     }

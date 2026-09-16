@@ -111,3 +111,23 @@ export function createUi(state, status) {
   }
   return { tr, el, bind, localize, button }
 }
+// Resolve capability commands into an explicit agent task. Navigation is a
+// separate View action; arguments (including multiline tasks) are preserved.
+export function resolveSlashInvocation(input, { skills = [], mcpServers = [], tools = [] } = {}) {
+  const match = String(input).trim().match(/^\/(skill|mcp|tool)\s+([\s\S]+)$/)
+  if (!match) return null
+  const [, kind, tail] = match
+  const choices = kind === 'skill' ? skills : kind === 'mcp' ? mcpServers : tools
+  const candidates = choices.flatMap(item => [...new Set([item.slug, item.name].filter(Boolean))].map(alias => ({ item, alias })))
+    .sort((a, b) => b.alias.length - a.alias.length)
+  const target = candidates.find(({ alias }) => tail === alias || (tail.startsWith(alias) && /\s/.test(tail[alias.length])))
+  if (!target) throw new Error('找不到指定的技能、MCP 服务或工具 / Unknown capability')
+  const task = tail.slice(target.alias.length).trim()
+  const name = JSON.stringify(target.item.name)
+  const instruction = kind === 'skill'
+    ? `请调用 Skill 工具加载技能 ${name}，并遵循技能说明完成任务。`
+    : kind === 'mcp'
+      ? `请使用 MCP 服务 ${name} 提供的工具完成任务；如果服务不可用，请明确说明。`
+      : `请使用工具 ${name} 完成任务，按照工具定义填写参数并遵守当前权限。`
+  return `${instruction}\n\n${task || '请协助处理当前任务；若缺少必要信息，请先询问。'}`
+}

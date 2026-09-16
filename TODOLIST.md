@@ -9,6 +9,16 @@
 
 ## Optimization status and next steps
 
+### Completed: workspace and command interaction fixes (2026-09-16)
+
+- [x] Remove unused recent projects from the sidebar/folder chooser without deleting folders or sessions; preserve existing pages and avoid duplicate workers when reopening.
+- [x] Separate slash capability use from View; preserve arguments, make Tab completion-only, and execute selected skills/tools through normal chat.
+- [x] Persist slash permission changes and compacted sessions; reject invalid IDs, cross-project compaction and active-session conflicts.
+- [x] Move header status chips and runtime entry into the conversation overview; identify optional team-memory sync explicitly.
+- [x] Replace ambiguous takeover/resume labels with a persistent computer-control on/off switch; keep feature settings synchronized and preserve background-memory preferences.
+
+Validation: 20 shell tests; UI/stream helper checks; workspace/slash/feature/chat integration suites; live UI checks for recent removal, persisted control switch, skill loading, View navigation and command completion.
+
 ### Completed: compact chat and selectable workspaces (2026-09-16)
 
 - [x] Reduce tool calls/results and intermediate commentary to single-line disclosures; preserve full final answers in every turn.

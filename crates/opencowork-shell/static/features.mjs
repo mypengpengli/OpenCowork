@@ -17,8 +17,10 @@ export function initFeaturePanels({ state, request, composer, status, prepareTas
     button(tr('保存功能设置', 'Save feature settings'), async () => {
       const result = await request('/api/features', { method: 'POST', body: JSON.stringify({ computerEnabled: computer.checked, backgroundMemoryEnabled: memory.checked }) })
       computer.checked = result.computerEnabled; memory.checked = result.backgroundMemoryEnabled
+      window.dispatchEvent(new CustomEvent('opencowork:features-changed', { detail: result }))
       feedback.textContent = tr('设置已保存', 'Settings saved')
     }), feedback)
+  window.addEventListener('opencowork:features-changed', event => { computer.checked = event.detail.computerEnabled })
   document.querySelector('#settings-permission-panel .settings-card-list').prepend(settings)
   request('/api/features').then(data => { computer.checked = data.computerEnabled; memory.checked = data.backgroundMemoryEnabled; computer.disabled = !data.computerSupported; if (!data.computerSupported) feedback.textContent = tr('电脑控制目前支持 Windows。', 'Computer control currently supports Windows.') }).catch(e => { feedback.textContent = e.message })
 

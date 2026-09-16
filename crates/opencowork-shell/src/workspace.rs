@@ -360,8 +360,8 @@ pub(super) async fn features(State(state): State<ShellState>) -> Result<Json<Val
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct FeatureUpdate {
-    computer_enabled: bool,
-    background_memory_enabled: bool,
+    computer_enabled: Option<bool>,
+    background_memory_enabled: Option<bool>,
 }
 pub(super) async fn save_features(
     State(state): State<ShellState>,
@@ -374,10 +374,14 @@ pub(super) async fn save_features(
     if !settings["memory"].is_object() {
         settings["memory"] = serde_json::json!({});
     }
-    settings["computer"]["enabled"] = serde_json::json!(update.computer_enabled);
-    settings["memory"]["backgroundEnabled"] = serde_json::json!(update.background_memory_enabled);
+    if let Some(enabled) = update.computer_enabled {
+        settings["computer"]["enabled"] = serde_json::json!(enabled);
+    }
+    if let Some(enabled) = update.background_memory_enabled {
+        settings["memory"]["backgroundEnabled"] = serde_json::json!(enabled);
+    }
     write_settings(&state.cwd, &settings)?;
-    if !update.computer_enabled {
+    if update.computer_enabled == Some(false) {
         // A running desktop action must not survive revoking the capability.
         for turn in state.turns.lock().map_err(internal_error)?.values() {
             turn.cancel.send_replace(true);
