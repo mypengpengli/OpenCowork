@@ -45,6 +45,8 @@ export function initWorkflows({ state, request, composer, status, prepareTask, o
   const takeover = el('p'), computerState = el('span', '', 'computer-control-state')
   const takeButton = btn('接管电脑并停止任务', async () => { const d = await call('/api/computer/takeover', { paused: true }); paused = d.paused; renderTakeover(); status(tr('已暂停电脑操作，可以手动接管。')) })
   const releaseButton = btn('允许继续电脑操作', async () => { const d = await call('/api/computer/takeover', { paused: false }); paused = d.paused; renderTakeover(); status(tr('已恢复电脑操作权限；从新观察继续。')) })
+  bind(takeButton, '接管电脑并停止任务', 'title'); bind(takeButton, '接管电脑并停止任务', 'aria-label'); bind(takeButton, tr('接管', 'Take over'))
+  bind(releaseButton, '允许继续电脑操作', 'title'); bind(releaseButton, '允许继续电脑操作', 'aria-label'); bind(releaseButton, tr('恢复', 'Resume'))
   function renderTakeover() {
     computerState.textContent = paused === null ? tr('正在读取控制状态…', 'Loading control state…') : paused ? tr('电脑已接管', 'Computer control paused') : tr('电脑控制就绪', 'Computer control ready')
     takeButton.hidden = paused === true; releaseButton.hidden = paused !== true
@@ -62,12 +64,29 @@ export function initWorkflows({ state, request, composer, status, prepareTask, o
   for (const [key, [name, value]] of Object.entries(fields)) { values[key] = input(name, 'number', value); const [min, max] = executionRanges[key]; values[key].min = String(min); values[key].max = String(max); values[key].step = '1'; values[key].required = true; advanced.append(label(name, values[key])) }
   const background = input('后台模型名称（留空跟随当前模型）'), reasoning = el('select'); bind(reasoning, '推理强度', 'aria-label'); background.maxLength = 200
   for (const [value, name] of [['', '推理强度：提供方默认'], ['none', '无'], ['minimal', '最少'], ['low', '低'], ['medium', '中'], ['high', '高']]) { const n = el('option', name); n.value = value; reasoning.append(n) }
+  const quickReasoning = document.querySelector('#composer-reasoning')
+  bind(quickReasoning, '推理强度', 'aria-label'); bind(quickReasoning, '推理强度', 'title')
+  for (const [value, name] of [['', tr('默认', 'Default')], ['none', '无'], ['minimal', '最少'], ['low', '低'], ['medium', '中'], ['high', '高']]) { const n = el('option', name); n.value = value; quickReasoning.append(n) }
+  let executionReady = false, savedReasoning = ''
+  quickReasoning.addEventListener('change', async () => {
+    if (state.sending || quickReasoning.dataset.busy) return
+    quickReasoning.dataset.busy = 'true'; updateControls(); window.dispatchEvent(new Event('opencowork:composer-state'))
+    try {
+      // Fetch the current budgets so changing effort never resets them.
+      const current = await request('/api/execution-settings')
+      const effective = await call('/api/execution-settings', { execution: { ...current.execution, reasoningEffort: quickReasoning.value } })
+      savedReasoning = effective.reasoningEffort || ''; reasoning.value = savedReasoning
+      status(tr('已保存，新回合生效。'))
+    } catch (e) { status(e.message, true) }
+    finally { quickReasoning.value = savedReasoning; delete quickReasoning.dataset.busy; updateControls(); window.dispatchEvent(new Event('opencowork:composer-state')); composer.focus() }
+  })
   const browser = input('浏览器工具', 'checkbox'), learn = input('生成技能候选', 'checkbox'), auto = input('自动采用技能', 'checkbox'); browser.checked = true
   const settingsState = el('p', '', 'settings-card-copy'), probe = el('pre', '', 'feature-file-preview')
   advanced.append(label('后台模型', background), label('推理强度', reasoning))
   function applyExecution(execution) {
     for (const [k, n] of Object.entries(values)) n.value = execution?.[k] ?? fields[k][1]
     background.value = execution?.backgroundModel || ''; reasoning.value = execution?.reasoningEffort || ''
+    savedReasoning = reasoning.value; quickReasoning.value = savedReasoning
   }
   const saveSettings = btn('保存执行设置', async () => {
     for (const [key, n] of Object.entries(values)) {
@@ -80,7 +99,7 @@ export function initWorkflows({ state, request, composer, status, prepareTask, o
   saveSettings.disabled = true
   settings.append(label('启用独立浏览器工具（需安装 Chrome 或 Edge）', browser), label('成功流程生成技能候选（额外后台请求）', learn), label('自动采用候选技能（关闭时先审阅）', auto), advanced, row(saveSettings, btn('检测模型连接、工具、图像和流式能力', async () => { probe.textContent = tr('正在检测（最多 4 次小请求，可能产生用量）…', 'Checking (up to 4 small requests; usage may be charged)…'); try { const data = await call('/api/provider-probe', {}); probe.textContent = `${data.model} · ${data.protocol}\n` + data.checks.map(c => `${c.kind}: ${c.status} · ${c.elapsedMs} ms · ${c.tokens ?? '?'} tokens ${c.error || ''}`).join('\n') } catch (e) { probe.textContent = e.message; throw e } })), settingsState, probe)
   document.querySelector('#settings-permission-panel .settings-card-list').append(settings)
-  request('/api/execution-settings').then(d => { applyExecution(d.execution); browser.checked = d.browser?.enabled !== false; learn.checked = d.learning?.enabled === true; auto.checked = d.learning?.autoAdopt === true; saveSettings.disabled = false }).catch(e => { settingsState.textContent = e.message })
+  request('/api/execution-settings').then(d => { applyExecution(d.execution); browser.checked = d.browser?.enabled !== false; learn.checked = d.learning?.enabled === true; auto.checked = d.learning?.autoAdopt === true; saveSettings.disabled = false; executionReady = true; updateControls() }).catch(e => { settingsState.textContent = e.message })
 
   const review = detail('审阅更改与恢复'), file = input('选择或输入工作区文件路径'), reviewBody = el('div'), snapshots = el('div'); let revision
   async function refreshReview() { if (!file.value.trim()) return; revision = await request(`/api/review?path=${encodeURIComponent(file.value.trim())}`); renderReview() }
@@ -131,6 +150,7 @@ export function initWorkflows({ state, request, composer, status, prepareTask, o
   const timer = setInterval(async () => { if (document.hidden || polling) return; polling = true; try { await Promise.allSettled([refreshGoal(), refreshTakeover(), ...(scheduler.open ? [refreshJobs()] : [])]) } finally { polling = false } }, 3000)
   window.addEventListener('pagehide', () => clearInterval(timer))
   function updateControls() {
+    quickReasoning.disabled = !executionReady || state.sending || Boolean(document.querySelector('.composer-toolbar [data-busy]'))
     if (observedSession !== state.currentSessionId) {
       observedSession = state.currentSessionId; goalData = null; goalNext.checked = false; steering.value = ''; renderGoal()
     }

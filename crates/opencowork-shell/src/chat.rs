@@ -1,8 +1,9 @@
 use super::{internal_error, ApiError, ChatRequest, ChatResponse, ShellState};
 use axum::body::{Body, Bytes};
-use axum::extract::{Path, State};
+use axum::extract::Path;
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
+use axum::Extension as State;
 use axum::Json;
 use futures_core::Stream;
 use opencowork_app::AppEvent;
@@ -176,6 +177,13 @@ pub(super) async fn stream_turn(
             )));
         }
     };
+    if let Some(workspace) = &session.workspace {
+        if !super::workspace_manager::same_directory(std::path::Path::new(workspace), &state.cwd) {
+            return Err(ApiError::bad_request(
+                "此会话属于其他工作区，请先切换到原工作区再继续。",
+            ));
+        }
+    }
     session.workspace = Some(state.cwd.to_string_lossy().into_owned());
     payload.session_id = Some(session_id.clone());
     if let Some(goal) = payload.goal.as_deref().filter(|g| !g.trim().is_empty()) {

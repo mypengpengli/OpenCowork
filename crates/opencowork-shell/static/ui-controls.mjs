@@ -5,6 +5,21 @@ export function appendDraft(current, instruction, prepend = false) {
   return prepend ? `${instruction.trim()}\n\n${current}` : `${current}\n\n${instruction}`
 }
 
+// Only collapse work leading up to tools. Preserve every turn's final answer,
+// including long answers, stopped partial answers and answers in older history.
+export function processMessageIndexes(messages) {
+  const indexes = new Set()
+  let toolsAhead = false
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i], blocks = message.blocks || []
+    if (message.role === 'user') { toolsAhead = false; continue }
+    const hasTools = blocks.some(b => b.type === 'tool_use' || b.type === 'tool_result')
+    if (hasTools || (message.role === 'assistant' && toolsAhead)) indexes.add(i)
+    if (hasTools) toolsAhead = true
+  }
+  return indexes
+}
+
 export const executionRanges = {
   maxIterations: [1, 1000], maxTokens: [100, 10000000], maxSeconds: [1, 86400],
   repeatedResults: [2, 20], maxOutputTokens: [128, 131072],
@@ -61,12 +76,12 @@ export function createUi(state, status) {
     const pair = pairs.get(value)
     if (attr) node.setAttribute(attr, pair ? tr(...pair) : value)
     else node.textContent = pair ? tr(...pair) : value
-    if (pair) node.dataset[`ui${attr === 'placeholder' ? 'Placeholder' : attr === 'aria-label' ? 'Aria' : 'Text'}`] = JSON.stringify(pair)
+    if (pair) node.dataset[`ui${attr === 'placeholder' ? 'Placeholder' : attr === 'aria-label' ? 'Aria' : attr === 'title' ? 'Title' : 'Text'}`] = JSON.stringify(pair)
     return node
   }
   function localize(root) {
-    for (const n of root.querySelectorAll('[data-ui-text], [data-ui-placeholder], [data-ui-aria]')) {
-      for (const [key, attr] of [['uiText', null], ['uiPlaceholder', 'placeholder'], ['uiAria', 'aria-label']]) {
+    for (const n of root.querySelectorAll('[data-ui-text], [data-ui-placeholder], [data-ui-aria], [data-ui-title]')) {
+      for (const [key, attr] of [['uiText', null], ['uiPlaceholder', 'placeholder'], ['uiAria', 'aria-label'], ['uiTitle', 'title']]) {
         if (!n.dataset[key]) continue
         const pair = JSON.parse(n.dataset[key]), current = attr ? n.getAttribute(attr) : n.textContent
         // A dynamic result may have replaced the original label; leave it intact.

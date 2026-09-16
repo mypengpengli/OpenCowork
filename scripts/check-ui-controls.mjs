@@ -1,11 +1,20 @@
 import assert from 'node:assert/strict'
-import { appendDraft, createUi } from '../crates/opencowork-shell/static/ui-controls.mjs'
+import { appendDraft, createUi, processMessageIndexes } from '../crates/opencowork-shell/static/ui-controls.mjs'
 
 const draft = '保留这段草稿\nconst example = "<script>";'
 assert.equal(appendDraft(draft, 'Plan first', true), `Plan first\n\n${draft}`)
 assert.equal(appendDraft(draft, 'Continue'), `${draft}\n\nContinue`)
 assert.equal(appendDraft('', 'Plan first'), 'Plan first')
 assert.equal(appendDraft(appendDraft(draft, 'Plan first', true), 'Plan first', true), `Plan first\n\n${draft}`)
+
+const text = (role, text) => ({ role, blocks: [{ type: 'text', text }] })
+const history = [text('user', 'Task one'), text('assistant', 'I will inspect the files'),
+  { role: 'assistant', blocks: [{ type: 'tool_use', name: 'Read' }] },
+  { role: 'tool', blocks: [{ type: 'tool_result', output: 'contents' }] },
+  text('assistant', 'Complete answer\n'.repeat(60)), text('user', 'Task two'),
+  text('assistant', 'Another complete answer\n'.repeat(60))]
+assert.deepEqual([...processMessageIndexes(history)].sort(), [1, 2, 3])
+assert.equal(processMessageIndexes([text('assistant', 'Stopped partial output')]).size, 0)
 
 // Exercise actual async button behavior: one in-flight action, local error, retry.
 const feedback = { textContent: '', dataset: {} }

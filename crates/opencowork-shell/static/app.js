@@ -1,7 +1,9 @@
 import { readChatStream, appendChatEvent } from '/chat-stream.mjs'
 import { initFeaturePanels } from '/features.mjs'
-import { appendDraft } from '/ui-controls.mjs'
+import { appendDraft, processMessageIndexes } from '/ui-controls.mjs'
 let featurePanels
+const selectedWorkspaceId = new URL(location.href).searchParams.get('workspace') || ''
+const workspaceHeaders = selectedWorkspaceId ? { 'X-OpenCowork-Workspace': selectedWorkspaceId } : {}
 
 function loadPaneState() {
   try {
@@ -24,6 +26,11 @@ function loadPaneState() {
 
 const state = {
   bootstrap: null,
+  workspaceEntries: [],
+  sidebarGrouping: localStorage.getItem('opencowork-sidebar-grouping') || 'project',
+  collapsedProjects: new Set(),
+  workspaceSwitching: false,
+  sessionLoadToken: 0,
   locale: localStorage.getItem('opencowork-shell-locale') === 'en' ? 'en' : 'zh',
   currentView: 'chat',
   currentSessionId: null,
@@ -154,7 +161,8 @@ const els = {
   slashMenuList: document.querySelector('#slash-menu-list'),
   slashMenuMeta: document.querySelector('#slash-menu-meta'),
   composerInput: document.querySelector('#composer-input'),
-  clearInputButton: document.querySelector('#clear-input-button'),
+  composerPermission: document.querySelector('#composer-permission'),
+  composerModel: document.querySelector('#composer-model'),
   composerStatus: document.querySelector('#composer-status'),
   sendButton: document.querySelector('#send-button'),
   stopButton: document.querySelector('#stop-button'),
@@ -571,7 +579,6 @@ const MESSAGES = {
     'composer.stopping': '正在停止…',
     'composer.stopped': '已停止，已保留收到的结果。',
     'composer.stopFirst': '请先停止当前任务，再切换或删除会话。',
-    'composer.clear': '清空输入',
     'composer.shortcut': 'Enter 发送，Ctrl + Enter 换行。',
     'composer.empty': '请先输入内容。',
     'composer.calling': '正在调用当前运行时...',
@@ -1172,7 +1179,6 @@ const MESSAGES = {
     'composer.stopping': 'Stopping…',
     'composer.stopped': 'Stopped. Received results have been saved.',
     'composer.stopFirst': 'Stop the current turn before switching or deleting sessions.',
-    'composer.clear': 'Clear Input',
     'composer.shortcut': 'Enter sends, Ctrl + Enter adds a new line.',
     'composer.empty': 'Enter some input first.',
     'composer.calling': 'Calling the existing runtime...',
@@ -1661,11 +1667,12 @@ const MESSAGES = {
 
 async function request(path, options = {}) {
   const response = await fetch(path, {
+    ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...workspaceHeaders,
       ...(options.headers || {}),
     },
-    ...options,
   })
 
   if (!response.ok) {
@@ -1706,7 +1713,7 @@ function persistPaneState() {
 }
 
 function draftStorageKey(sessionId = state.currentSessionId) {
-  return `opencowork-shell-draft:${sessionId || '__new__'}`
+  return `opencowork-shell-draft:${sessionId || `__new__:${workspaceKey(state.bootstrap?.cwd) || selectedWorkspaceId || 'default'}`}`
 }
 
 function persistComposerDraft() {
@@ -1721,6 +1728,10 @@ function persistComposerDraft() {
 
 function restoreComposerDraft(sessionId = state.currentSessionId) {
   if (!els.composerInput) return
+  if (!sessionId && !selectedWorkspaceId && localStorage.getItem(draftStorageKey()) === null) {
+    const legacy = localStorage.getItem('opencowork-shell-draft:__new__')
+    if (legacy !== null) { localStorage.setItem(draftStorageKey(), legacy); localStorage.removeItem('opencowork-shell-draft:__new__') }
+  }
   const value = localStorage.getItem(draftStorageKey(sessionId)) || ''
   els.composerInput.value = value
   syncComposerHeight()
@@ -2113,25 +2124,26 @@ function projectSkillDirectory() {
 
 function updateComposerState() {
   featurePanels?.updateControls()
+  const settingsBusy = Boolean(document.querySelector('.composer-toolbar [data-busy]'))
   const empty = !els.composerInput.value.trim()
-  els.sendButton.disabled = state.sending || empty
-  els.sendButton.textContent = state.sending
-    ? t(state.pendingTurn?.phase === 'streaming' ? 'composer.streaming' : 'composer.sending')
-    : t('composer.send')
-  els.sendButton.classList.toggle('is-busy', state.sending)
+  els.sendButton.disabled = state.sending || state.workspaceSwitching || settingsBusy || empty
+  els.sendButton.classList.toggle('is-hidden', state.sending)
+  els.sendButton.setAttribute('aria-label', t('composer.send'))
+  els.sendButton.title = t('composer.send')
   els.composerInput.readOnly = state.sending
   els.stopButton.classList.toggle('is-hidden', !state.sending)
   els.stopButton.disabled = !state.activeTurnId || state.stopping
-  els.stopButton.textContent = t(state.stopping ? 'composer.stopping' : 'composer.stop')
-  if (els.clearInputButton) {
-    els.clearInputButton.disabled = state.sending || !els.composerInput.value.length
-  }
+  els.stopButton.setAttribute('aria-label', t(state.stopping ? 'composer.stopping' : 'composer.stop'))
+  els.stopButton.title = els.stopButton.getAttribute('aria-label')
+  els.composerPermission.disabled = state.sending || settingsBusy
+  els.composerModel.disabled = state.sending || settingsBusy
+  renderWorkspacePicker()
 }
 
 function syncComposerHeight() {
   if (!els.composerInput) return
   els.composerInput.style.height = 'auto'
-  const next = Math.min(Math.max(els.composerInput.scrollHeight, 90), 220)
+  const next = Math.min(Math.max(els.composerInput.scrollHeight, 72), 220)
   els.composerInput.style.height = `${next}px`
 }
 
@@ -2649,10 +2661,6 @@ function renderMcpFieldState() {
   }
 }
 
-function shouldCollapseBlock(content) {
-  const text = String(content || '')
-  return text.length > 500 || text.split('\n').length > 12
-}
 
 function usageSummary(message) {
   const usage = getValue(message, 'usage') || {}
@@ -3147,7 +3155,123 @@ function computeSessionMetrics(session) {
   return metrics
 }
 
+function workspaceKey(path) { return String(path || '').replace(/^\\\\\?\\/, '').replaceAll('\\', '/').replace(/\/$/, '').toLowerCase() }
+function workspaceName(path) { return String(path || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path }
+
+function renderWorkspacePicker() {
+  const button = document.querySelector('#workspace-picker-button'), path = state.bootstrap?.cwd || ''
+  button.textContent = `▱ ${workspaceName(path) || (state.locale === 'zh' ? '选择工作区' : 'Choose workspace')} ▾`
+  button.title = path; button.setAttribute('aria-label', state.locale === 'zh' ? '选择工作区' : 'Choose workspace')
+  button.disabled = state.sending || state.workspaceSwitching
+  document.querySelector('#workspace-path-label').textContent = path
+}
+
+async function switchWorkspace(path, sessionId = null) {
+  if (state.sending) return setComposerStatus(t('composer.stopFirst'), true)
+  if (state.workspaceSwitching) return
+  persistComposerDraft(); state.workspaceSwitching = true; updateComposerState(); renderWorkspacePicker()
+  try {
+    const workspace = await request('/api/workspaces/open', { method: 'POST', body: JSON.stringify({ path }) })
+    const url = new URL(location.href); url.search = ''; url.searchParams.set('workspace', workspace.id)
+    if (sessionId) url.searchParams.set('session', sessionId)
+    location.assign(url.href)
+  } catch (error) {
+    document.querySelector('#workspace-dialog-status').textContent = error.message
+    setComposerStatus(error.message, true); state.workspaceSwitching = false; updateComposerState(); renderWorkspacePicker()
+  }
+}
+
+function initWorkspacePicker() {
+  const dialog = document.querySelector('#workspace-dialog'), filter = document.querySelector('#workspace-search')
+  const recent = document.querySelector('#workspace-recent-list'), feedback = document.querySelector('#workspace-dialog-status')
+  const pathInput = document.querySelector('#workspace-directory-path'), folderList = document.querySelector('#workspace-directory-list')
+  const open = document.querySelector('#workspace-directory-open'), browse = document.querySelector('#workspace-browse')
+  const load = document.querySelector('#workspace-directory-load'), close = document.querySelector('#workspace-dialog-close')
+  let selectedPath = '', browseVersion = 0
+  const text = (zh, en) => state.locale === 'zh' ? zh : en
+  function folderButton(label, path, action) {
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'workspace-folder'
+    button.textContent = label; button.title = path
+    button.addEventListener('click', () => action(path)); return button
+  }
+  function renderRecent() {
+    recent.replaceChildren(...state.workspaceEntries.filter(w => w.path.toLowerCase().includes(filter.value.toLowerCase())).map(w => {
+      const selected = workspaceKey(w.path) === workspaceKey(state.bootstrap?.cwd)
+      return folderButton(`▱ ${workspaceName(w.path)}${selected ? '  ✓' : ''}`, w.path, switchWorkspace)
+    }))
+    if (!recent.children.length) recent.textContent = text('没有匹配的工作区', 'No matching workspaces')
+  }
+  async function browseDirectory(path) {
+    const version = ++browseVersion; selectedPath = ''; open.disabled = true; feedback.textContent = text('正在读取文件夹…', 'Loading folders…')
+    try {
+      const data = await request(`/api/workspaces/directories?path=${encodeURIComponent(path)}`)
+      if (version !== browseVersion) return
+      selectedPath = data.path; pathInput.value = data.path
+      folderList.replaceChildren(...(data.parent ? [folderButton(text('↑ 上一级', '↑ Parent folder'), data.parent, browseDirectory)] : []), ...data.folders.map(p => folderButton(`▱ ${workspaceName(p)}`, p, browseDirectory)))
+      document.querySelector('#workspace-drives').replaceChildren(...data.drives.map(p => folderButton(p, p, browseDirectory)))
+      feedback.textContent = data.truncated ? text('仅显示前 1000 个文件夹，可输入完整路径打开。', 'Showing up to 1,000 folders. Enter a full path to open another.') : data.folders.length ? '' : text('此文件夹没有子目录，可以直接在这里工作。', 'No subfolders. You can work in this folder.')
+      open.disabled = false
+    } catch (error) { if (version === browseVersion) { folderList.replaceChildren(); feedback.textContent = error.message } }
+  }
+  document.querySelector('#workspace-picker-button').addEventListener('click', async () => {
+    if (state.sending) return setComposerStatus(t('composer.stopFirst'), true)
+    document.querySelector('#workspace-dialog-title').textContent = text('选择工作区', 'Choose workspace')
+    filter.placeholder = text('搜索最近工作区', 'Search recent workspaces'); filter.setAttribute('aria-label', filter.placeholder)
+    close.setAttribute('aria-label', t('common.close')); browse.textContent = text('打开文件夹…', 'Open folder…')
+    load.textContent = text('读取', 'Load'); open.textContent = text('在此文件夹中工作', 'Work in this folder')
+    pathInput.setAttribute('aria-label', text('文件夹路径', 'Folder path')); pathInput.placeholder = text('输入文件夹完整路径', 'Enter an absolute folder path')
+    document.querySelector('#workspace-directory-browser').hidden = true
+    feedback.textContent = ''; filter.value = ''; renderRecent(); dialog.showModal(); filter.focus()
+    try { state.workspaceEntries = await request('/api/workspaces'); renderRecent() } catch (error) { feedback.textContent = error.message }
+  })
+  close.addEventListener('click', () => dialog.close())
+  dialog.addEventListener('click', event => { if (event.target === dialog) { const r = dialog.getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) dialog.close() } })
+  filter.addEventListener('input', renderRecent)
+  browse.addEventListener('click', () => { document.querySelector('#workspace-directory-browser').hidden = false; void browseDirectory(state.bootstrap?.cwd || state.workspaceEntries[0]?.path || '') })
+  load.addEventListener('click', () => browseDirectory(pathInput.value))
+  pathInput.addEventListener('input', () => { ++browseVersion; selectedPath = ''; open.disabled = true })
+  pathInput.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); void browseDirectory(pathInput.value) } })
+  open.addEventListener('click', () => { if (selectedPath) void switchWorkspace(selectedPath) })
+  const grouping = document.createElement('select'); grouping.id = 'sidebar-grouping'; grouping.className = 'sidebar-grouping'
+  for (const [value, label] of [['project', '项目'], ['time', '时间']]) { const option = document.createElement('option'); option.value = value; option.textContent = label; grouping.append(option) }
+  grouping.addEventListener('change', () => { state.sidebarGrouping = grouping.value; localStorage.setItem('opencowork-sidebar-grouping', grouping.value); renderSidebarSessions() })
+  document.querySelector('.sidebar-section-header').prepend(grouping)
+}
+
+function renderComposerSettings() {
+  const provider = state.bootstrap?.provider || {}
+  els.composerPermission.value = state.bootstrap?.permissionMode || 'danger-full-access'
+  els.composerPermission.setAttribute('aria-label', t('field.permission'))
+  els.composerPermission.title = permissionModeLabel(els.composerPermission.value)
+  els.composerModel.setAttribute('aria-label', state.locale === 'zh' ? '选择模型' : 'Choose model')
+  const profiles = currentProviderProfiles()
+  const options = profiles.map(profile => {
+    const option = document.createElement('option')
+    option.value = profile.id
+    option.textContent = profile.model || profile.label
+    option.title = `${profile.label} · ${profile.model || ''}`
+    return option
+  })
+  if (!profiles.some(p => p.active)) {
+    const option = document.createElement('option'); option.value = ''; option.textContent = provider.model || t('status.modelFallback'); options.unshift(option)
+  }
+  const manage = document.createElement('option'); manage.value = '__configure__'; manage.textContent = state.locale === 'zh' ? '配置模型…' : 'Configure models…'; options.push(manage)
+  els.composerModel.replaceChildren(...options)
+  els.composerModel.value = profiles.find(p => p.active)?.id || ''
+  els.composerModel.title = provider.model || t('status.modelFallback')
+}
+
+async function changeComposerSetting(select, action) {
+  if (state.sending || select.dataset.busy) return
+  select.dataset.busy = 'true'; updateComposerState()
+  try { await action(); await loadBootstrap({ allowAutoSelect: false }) }
+  catch (error) { setComposerStatus(error.message, true) }
+  finally { delete select.dataset.busy; renderComposerSettings(); updateComposerState(); els.composerInput.focus() }
+}
+
 function renderShellMeta() {
+  renderWorkspacePicker()
+  renderComposerSettings()
   const provider = state.bootstrap?.provider || {}
   els.runtimeModel.textContent = provider.model || t('status.modelFallback')
   els.runtimePermission.textContent = permissionModeLabel(state.bootstrap?.permissionMode || t('status.permissionFallback'))
@@ -3659,14 +3783,44 @@ function renderSidebarSessions() {
     : sessions
 
   els.sessionList.innerHTML = ''
-  if (!visible.length) {
+  if (!visible.length && (query || state.sidebarGrouping !== 'project')) {
     els.sessionList.innerHTML = query
       ? `<div class="sidebar-empty">${t('sidebar.noMatch')}</div>`
       : `<div class="sidebar-empty">${t('sidebar.empty')}</div>`
     return
   }
 
+  const grouping = document.querySelector('#sidebar-grouping')
+  if (grouping) { grouping.value = state.sidebarGrouping; grouping.setAttribute('aria-label', state.locale === 'zh' ? '会话分类' : 'Group conversations'); grouping.options[0].textContent = state.locale === 'zh' ? '项目' : 'Projects'; grouping.options[1].textContent = state.locale === 'zh' ? '时间' : 'Timeline' }
+  const groups = new Map()
+  function getGroup(path, label) {
+    const key = state.sidebarGrouping === 'project' ? workspaceKey(path) : label
+    if (groups.has(key)) return groups.get(key)
+    const section = document.createElement('details'); section.className = 'sidebar-project'
+    section.open = Boolean(query) || !state.collapsedProjects.has(key)
+    const summary = document.createElement('summary'), name = document.createElement('span')
+    name.textContent = label; summary.append(name); summary.title = path || label
+    if (path && state.sidebarGrouping === 'project') {
+      const open = document.createElement('button'); open.type = 'button'; open.className = 'sidebar-project-open'; open.textContent = '↗'
+      open.title = state.locale === 'zh' ? '在此项目中新建会话' : 'New chat in this project'
+      open.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); void switchWorkspace(path) })
+      summary.append(open)
+      section.classList.toggle('is-current', workspaceKey(path) === workspaceKey(state.bootstrap?.cwd))
+    }
+    const body = document.createElement('div'); body.className = 'sidebar-project-sessions'
+    section.append(summary, body); els.sessionList.append(section); groups.set(key, body)
+    section.addEventListener('toggle', () => { if (!query) { if (section.open) state.collapsedProjects.delete(key); else state.collapsedProjects.add(key) } })
+    return body
+  }
+  if (state.sidebarGrouping === 'project' && !query) {
+    const paths = [state.bootstrap?.cwd, ...state.workspaceEntries.map(w => w.path)].filter(Boolean)
+    paths.forEach(path => getGroup(path, workspaceName(path)))
+  }
   visible.forEach((session) => {
+    const path = session.workspace
+    const age = Math.floor((new Date().setHours(0, 0, 0, 0) - new Date(session.updatedAtUnixMs).setHours(0, 0, 0, 0)) / 86400000)
+    const label = state.sidebarGrouping === 'project' ? (path ? workspaceName(path) : (state.locale === 'zh' ? '未归属项目' : 'Unassigned')) : t(age <= 0 ? 'history.today' : age === 1 ? 'history.yesterday' : 'history.earlier')
+    const container = getGroup(path, label)
     const row = document.createElement('div')
     row.className = `conversation-item${state.currentSessionId === session.id ? ' is-active' : ''}`
 
@@ -3688,7 +3842,8 @@ function renderSidebarSessions() {
 
     const updated = document.createElement('span')
     updated.className = 'conversation-updated'
-    updated.textContent = toLocaleTimestamp(session.updatedAtUnixMs)
+    updated.textContent = age <= 0 ? new Date(session.updatedAtUnixMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : `${age}${state.locale === 'zh' ? '天' : 'd'}`
+    updated.title = toLocaleTimestamp(session.updatedAtUnixMs)
 
     const statePill = document.createElement('span')
     const stateKey = sessionStateKey(session.id)
@@ -3696,7 +3851,7 @@ function renderSidebarSessions() {
     statePill.textContent = sessionStateLabel(session.id)
 
     footer.appendChild(updated)
-    footer.appendChild(statePill)
+    if (['running', 'pending', 'streaming'].includes(stateKey)) footer.appendChild(statePill)
 
     infoButton.appendChild(title)
     infoButton.appendChild(footer)
@@ -3713,7 +3868,7 @@ function renderSidebarSessions() {
 
     row.appendChild(infoButton)
     row.appendChild(deleteButton)
-    els.sessionList.appendChild(row)
+    container.appendChild(row)
   })
 }
 
@@ -3791,6 +3946,7 @@ function renderTurnStats() {
 
 function renderMessages() {
   const messages = buildVisibleMessages()
+  const processIndexes = processMessageIndexes(messages)
   const collapsibleKeys = []
   const previousScrollTop = els.messageScroll.scrollTop
   const previousBottomGap = els.messageScroll.scrollHeight - els.messageScroll.scrollTop - els.messageScroll.clientHeight
@@ -3810,6 +3966,7 @@ function renderMessages() {
     const isPending = Boolean(message.__pending)
     const row = document.createElement('div')
     row.className = `message-row message-row--${roleValue}`
+    row.classList.toggle('message-row--process', processIndexes.has(messageIndex))
 
     const avatar = document.createElement('div')
     avatar.className = `message-avatar message-avatar--${roleValue}`
@@ -3890,7 +4047,8 @@ function renderMessages() {
       const key = `${messageIndex}:${blockIndex}`
       const isCodeish = looksLikeCodeContent(content, label, block.type)
       const isToolBlock = block.type === 'tool_use' || block.type === 'tool_result'
-      const collapseCandidate = isToolBlock || shouldCollapseBlock(content)
+      const isProcessBlock = isToolBlock || processIndexes.has(messageIndex)
+      const collapseCandidate = isProcessBlock
       const isExpanded = state.expandedBlocks.has(key)
       const shouldShowTextHeader =
         !isTextBlock ||
@@ -3900,6 +4058,8 @@ function renderMessages() {
 
       const blockNode = document.createElement('section')
       blockNode.className = `message-block message-block--${String(block.type || 'block').replace(/[^a-z0-9_-]+/gi, '-')}`
+      blockNode.classList.toggle('message-block--process', isProcessBlock)
+      blockNode.classList.toggle('is-expanded', isExpanded)
       if (isCodeish) {
         blockNode.classList.add('message-block--codeish')
       }
@@ -3912,13 +4072,13 @@ function renderMessages() {
 
       const blockActions = document.createElement('div')
       blockActions.className = 'inline-actions'
-      if (!isTextBlock) {
+      if (!isTextBlock || isProcessBlock) {
         const tag = document.createElement('span')
         tag.className = `message-block-tag message-block-tag--${String(block.type || 'block').replace(/[^a-z0-9_-]+/gi, '-')}`
-        tag.textContent = label
+        tag.textContent = isTextBlock ? (state.locale === 'zh' ? '过程' : 'Progress') : label
         blockHeader.appendChild(tag)
       }
-      if (!isTextBlock || shouldShowTextHeader) {
+      if (!isTextBlock || isProcessBlock || shouldShowTextHeader) {
         const length = document.createElement('span')
         length.className = 'message-block-length'
         length.textContent = `${t('message.chars', { count: String(content).length })} / ${t('message.lines', { count: lineCount(content) })}`
@@ -3971,14 +4131,15 @@ function renderMessages() {
         blockHeader.appendChild(blockActions)
       }
 
-      if (summary || chips.length) {
+      if (summary || chips.length || isProcessBlock) {
         const details = document.createElement('div')
         details.className = 'message-block-details'
 
-        if (summary) {
+        if (summary || isProcessBlock) {
           const summaryNode = document.createElement('p')
           summaryNode.className = 'message-block-summary'
-          summaryNode.textContent = summary
+          summaryNode.textContent = summary || inlineSummaryText(content, 160)
+          summaryNode.title = summaryNode.textContent
           details.appendChild(summaryNode)
         }
 
@@ -3997,7 +4158,8 @@ function renderMessages() {
         if (blockHeader.childNodes.length) {
           blockNode.appendChild(blockHeader)
         }
-        blockNode.appendChild(details)
+        if (isProcessBlock) blockHeader.insertBefore(details, blockActions)
+        else blockNode.appendChild(details)
       } else if (blockHeader.childNodes.length) {
         blockNode.appendChild(blockHeader)
       }
@@ -4010,6 +4172,7 @@ function renderMessages() {
           if (/^[a-zA-Z0-9.-]+\.jpg$/.test(name)) {
             const preview = document.createElement('details')
             preview.className = 'computer-preview'
+            preview.hidden = isProcessBlock && !isExpanded
             const caption = document.createElement('summary')
             caption.textContent = (state.locale === 'zh' ? '查看电脑截图' : 'View computer screenshot') + (computer.window?.title ? ` · ${computer.window.title}` : '')
             const picture = document.createElement('img')
@@ -4034,7 +4197,7 @@ function renderMessages() {
         contentNode.classList.add('message-block-content--pending')
       }
       if (collapseCandidate && !isExpanded) {
-        if (isToolBlock) contentNode.hidden = true
+        if (isProcessBlock) contentNode.hidden = true
         else contentNode.classList.add('is-collapsed')
       }
       contentNode.textContent = content
@@ -5120,8 +5283,14 @@ async function loadBootstrap({ allowAutoSelect = false } = {}) {
 
 async function loadSession(sessionId, rerender = true) {
   if (state.sending) return setComposerStatus(t('composer.stopFirst'), true)
+  const descriptor = (state.bootstrap?.sessions || []).find(s => s.id === sessionId)
+  if (descriptor?.workspace && workspaceKey(descriptor.workspace) !== workspaceKey(state.bootstrap?.cwd)) return switchWorkspace(descriptor.workspace, sessionId)
+  const token = ++state.sessionLoadToken
+  const session = await request(`/api/sessions/${encodeURIComponent(sessionId)}`)
+  if (token !== state.sessionLoadToken || state.sending || state.workspaceSwitching) return
+  persistComposerDraft()
   state.currentSessionId = sessionId
-  state.currentSession = await request(`/api/sessions/${encodeURIComponent(sessionId)}`)
+  state.currentSession = session
   state.lastEvents = []
   state.forceMessageScroll = true
   closeBlockViewer()
@@ -5140,6 +5309,8 @@ async function loadSession(sessionId, rerender = true) {
 // ACTIONS
 async function submitChat(event) {
   event.preventDefault()
+  if (state.workspaceSwitching) return
+  if (document.querySelector('.composer-toolbar [data-busy]')) return
   if (state.sending) return
 
   const input = els.composerInput.value.trim()
@@ -5174,14 +5345,14 @@ async function submitChat(event) {
   try {
     const stream = await fetch('/api/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...workspaceHeaders },
       body: JSON.stringify({
         turnId,
         sessionId: state.currentSessionId,
         input,
         references: featurePanels?.references() || [],
         ...featurePanels?.requestExtras(input),
-        model: els.providerModel.value.trim() || undefined,
+        model: state.bootstrap?.provider?.model || undefined,
       }),
     })
     let renderScheduled = false
@@ -5473,14 +5644,6 @@ function applySelectedMcpPreset() {
   setDrawerStatus(t('mcp.presetApplied'))
 }
 
-function clearComposerInput() {
-  els.composerInput.value = ''
-  clearComposerDraft()
-  closeSlashMenu()
-  syncComposerHeight()
-  updateComposerState()
-  els.composerInput.focus()
-}
 
 function toolByName(name) {
   return (state.slashCatalog.tools || []).find((tool) => tool.name === name) || null
@@ -5701,10 +5864,11 @@ async function deleteSession(sessionId) {
 
 function toggleExpandAll() {
   const keys = []
-  buildVisibleMessages().forEach((message, messageIndex) => {
+  const messages = buildVisibleMessages(), processIndexes = processMessageIndexes(messages)
+  messages.forEach((message, messageIndex) => {
     ;(message.blocks || []).forEach((block, blockIndex) => {
       const key = `${messageIndex}:${blockIndex}`
-      if (block.type === 'tool_use' || block.type === 'tool_result' || shouldCollapseBlock(blockContent(block))) keys.push(key)
+      if (processIndexes.has(messageIndex) || block.type === 'tool_use' || block.type === 'tool_result') keys.push(key)
     })
   })
 
@@ -6206,7 +6370,6 @@ els.composerInput.addEventListener('input', () => {
   updateComposerState()
   updateSlashMenuFromComposer()
 })
-els.clearInputButton.addEventListener('click', clearComposerInput)
 els.composerInput.addEventListener('keydown', (event) => {
   if (event.isComposing) {
     return
@@ -6332,6 +6495,12 @@ els.openProviderDrawerButton.addEventListener('click', () => {
   openDrawer('provider')
 })
 els.savePermissionButton.addEventListener('click', savePermissionMode)
+els.composerPermission.addEventListener('change', () => changeComposerSetting(els.composerPermission, () => request('/api/permission', { method: 'POST', body: JSON.stringify({ permissionMode: els.composerPermission.value }) })))
+els.composerModel.addEventListener('change', () => {
+  const id = els.composerModel.value
+  if (id === '__configure__') { renderComposerSettings(); setView('settings'); setSettingsTab('provider'); return }
+  if (id) void changeComposerSetting(els.composerModel, () => request(`/api/provider-profiles/${encodeURIComponent(id)}/activate`, { method: 'POST' }))
+})
 els.overviewProviderCard.addEventListener('click', () => {
   setView('settings')
   setSettingsTab('provider')
@@ -6442,7 +6611,11 @@ setDrawerMode('provider')
 renderSkillEditor()
 renderMcpEditor()
 
-loadBootstrap({ allowAutoSelect: false }).catch((error) => {
+loadBootstrap({ allowAutoSelect: false }).then(async () => {
+  const session = new URL(location.href).searchParams.get('session')
+  if (session) await loadSession(session)
+  state.workspaceEntries = await request('/api/workspaces'); renderSidebarSessions()
+}).catch((error) => {
   setComposerStatus(error.message || t('composer.refreshFailed'), true)
   setDrawerStatus(error.message || t('composer.refreshFailed'), true)
 })
@@ -6458,4 +6631,6 @@ function prepareTask(instruction, { prepend = false, submit = false } = {}) {
     setComposerStatus(state.locale === 'zh' ? '已保留草稿并加入任务要求，请检查后发送。' : 'Draft preserved with task instructions. Review before sending.')
   }
 }
+initWorkspacePicker()
+window.addEventListener('opencowork:composer-state', updateComposerState)
 featurePanels = initFeaturePanels({state, request, composer: els.composerInput, status: setComposerStatus, openSession: loadSession, prepareTask})

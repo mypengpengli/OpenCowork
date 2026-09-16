@@ -169,8 +169,11 @@ pub(super) async fn list(State(state): State<ShellState>) -> Result<Json<Value>,
         files.truncate(3000);
         let bytes = git(
             &state.cwd,
-            &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            &["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "."],
         )?;
+        let prefix = git(&state.cwd, &["rev-parse", "--show-prefix"])?;
+        let prefix = String::from_utf8_lossy(&prefix);
+        let prefix = prefix.trim_end_matches(['\r', '\n']);
         let mut changes = Vec::new();
         let mut entries = bytes.split(|b| *b == 0).filter(|p| !p.is_empty());
         while let Some(entry) = entries.next() {
@@ -186,6 +189,10 @@ pub(super) async fn list(State(state): State<ShellState>) -> Result<Json<Value>,
             } else {
                 None
             };
+            // Porcelain paths are repository-relative, even when the selected
+            // workspace is a subfolder. Never list a sibling project's files.
+            let Some(path) = path.strip_prefix(prefix) else { continue };
+            let original = original.and_then(|value| value.strip_prefix(prefix).map(ToOwned::to_owned));
             changes.push(serde_json::json!({"status":status,"path":path,"original":original}));
         }
         Ok(Json(

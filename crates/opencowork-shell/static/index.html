@@ -259,6 +259,10 @@
           </section>
 
           <footer class="composer-shell">
+            <div class="composer-workspace-row">
+              <button id="workspace-picker-button" class="workspace-picker-button" type="button" aria-haspopup="dialog">▱ 工作区 ▾</button>
+              <span id="workspace-path-label"></span>
+            </div>
             <form id="composer-form" class="composer-form">
               <section id="slash-menu" class="slash-menu is-hidden">
                 <div class="slash-menu-header">
@@ -279,18 +283,26 @@
                 data-i18n-placeholder="composer.placeholder"
                 placeholder="继续使用当前运行时。Ctrl + Enter 发送。"
               ></textarea>
-              <div class="composer-helper-row">
-                <span class="composer-helper-copy" data-i18n="composer.shortcut">Ctrl + Enter 发送，Enter 换行。</span>
-                <button id="clear-input-button" class="ghost-button" type="button" data-i18n="composer.clear">
-                  清空输入
-                </button>
-              </div>
-              <div class="composer-actions">
-                <p id="composer-status" class="composer-status">就绪。</p>
-                <button id="stop-button" class="ghost-button is-hidden" type="button" data-i18n="composer.stop">停止</button>
-                <button id="send-button" class="primary-button" type="submit" data-i18n="composer.send">发送</button>
+              <div class="composer-toolbar">
+                <button id="composer-add" class="composer-icon-button" type="button" aria-label="添加附件与工具" title="添加附件与工具" aria-expanded="false" aria-controls="composer-tools-menu">+</button>
+                <select id="composer-permission" class="composer-select composer-permission" aria-label="权限模式">
+                  <option value="danger-full-access" data-i18n="permission.mode.danger">完全允许</option>
+                  <option value="workspace-write" data-i18n="permission.mode.workspace">运行前确认写入</option>
+                  <option value="read-only" data-i18n="permission.mode.readonly">只读</option>
+                </select>
+                <div class="composer-toolbar-spacer"></div>
+                <select id="composer-model" class="composer-select composer-model" aria-label="选择模型"></select>
+                <select id="composer-reasoning" class="composer-select composer-reasoning" aria-label="推理强度" disabled></select>
+                <div class="composer-submit-slot">
+                  <button id="stop-button" class="composer-icon-button is-hidden" type="button" aria-label="停止" title="停止">■</button>
+                  <button id="send-button" class="composer-icon-button" type="submit" aria-label="发送" title="发送">↑</button>
+                </div>
               </div>
             </form>
+            <div class="composer-footnote">
+              <p id="composer-status" class="composer-status" role="status">就绪。</p>
+              <span class="composer-helper-copy" data-i18n="composer.shortcut">Enter 发送，Ctrl + Enter 换行。</span>
+            </div>
           </footer>
         </section>
 
@@ -1178,6 +1190,25 @@
       <div id="block-viewer-content" class="block-viewer-content"></div>
     </section>
 
+    <dialog id="workspace-dialog" class="workspace-dialog" aria-labelledby="workspace-dialog-title">
+      <div class="workspace-dialog-heading">
+        <strong id="workspace-dialog-title">选择工作区</strong>
+        <button id="workspace-dialog-close" class="icon-button" type="button" aria-label="关闭">×</button>
+      </div>
+      <input id="workspace-search" type="search" placeholder="搜索最近工作区" aria-label="搜索最近工作区" />
+      <div id="workspace-recent-list" class="workspace-folder-list"></div>
+      <button id="workspace-browse" class="ghost-button" type="button">打开文件夹…</button>
+      <section id="workspace-directory-browser" hidden>
+        <div class="workspace-directory-path">
+          <input id="workspace-directory-path" type="text" placeholder="输入文件夹完整路径" aria-label="文件夹路径" />
+          <button id="workspace-directory-load" class="ghost-button" type="button">读取</button>
+        </div>
+        <div id="workspace-drives" class="feature-toolbar"></div>
+        <div id="workspace-directory-list" class="workspace-folder-list"></div>
+        <button id="workspace-directory-open" class="primary-button" type="button" disabled>在此文件夹中工作</button>
+      </section>
+      <p id="workspace-dialog-status" class="settings-card-copy" role="status"></p>
+    </dialog>
     <script src="/app.js" type="module"></script>
   </body>
 </html>

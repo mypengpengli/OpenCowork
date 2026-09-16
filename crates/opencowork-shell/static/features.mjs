@@ -75,9 +75,12 @@ export function initFeaturePanels({ state, request, composer, status, prepareTas
     if (!ref.path) return
     if (state.sending) throw new Error(tr('请等待当前回复结束', 'Wait for the active reply'))
     if (references.some(r => r.path === ref.path && r.kind === ref.kind)) return
+    const sessionId = state.currentSessionId
     const next = [...references, ref]
     const budget = await request('/api/references/preview', { method: 'POST', body: JSON.stringify(next) })
+    if (sessionId !== state.currentSessionId || state.sending) return
     references = next; renderReferences(budget)
+    closeMenu(); composer.focus()
   }
   function renderReferences(budget) {
     chips.replaceChildren(...references.map((ref, index) => button(`${ref.kind === 'file' ? '📄' : '💬'} ${ref.path} ×`, async () => {
@@ -123,41 +126,53 @@ export function initFeaturePanels({ state, request, composer, status, prepareTas
   window.addEventListener('pagehide', () => clearInterval(polling))
   const workflows = initWorkflows({ state, request, composer, status, prepareTask, openSession })
   const taskStatus = el('span', '', 'task-status-summary')
-  // Keep every feature available without pushing the composer below the viewport.
-  const dock = el('nav', '', 'tool-dock'); bind(dock, tr('对话工具', 'Conversation tools'), 'aria-label')
-  const groups = []
+  // One attachment/tool menu, with one focused panel above the unified composer.
+  const add = document.querySelector('#composer-add')
+  bind(add, tr('添加附件与工具', 'Add attachments and tools'), 'aria-label'); bind(add, tr('添加附件与工具', 'Add attachments and tools'), 'title')
+  const menu = el('nav', '', 'composer-tools-menu'); menu.id = 'composer-tools-menu'; menu.hidden = true
+  bind(menu, tr('添加附件与工具', 'Add attachments and tools'), 'aria-label')
+  const panel = el('section', '', 'tool-dock-panel composer-feature-panel'); panel.hidden = true
+  const panelTitle = el('strong'), panelBody = el('div')
+  const back = button(tr('返回', 'Back'), () => { closePanel(); menu.hidden = false; menu.querySelector('button').focus() })
+  const close = button(tr('收起', 'Close'), () => { closeMenu(); add.focus() })
+  const header = el('div', '', 'tool-dock-header'); header.append(back, panelTitle, close); panel.append(header, panelBody)
   const { goalPanel, review, search: historySearch, memories, learning, scheduler, trees } = workflows.panels
-  for (const [index, [title, panels]] of [
-    [tr('文件', 'Files'), [browser, review, trees]],
-    [tr('任务', 'Tasks'), [task, goalPanel, scheduler]],
-    [tr('更多', 'More'), [diagnostics, historySearch, memories, learning]],
-  ].entries()) {
-    const group = el('div', '', 'tool-dock-group')
-    const trigger = button(title, () => setOpen(group, panel.hidden))
-    bind(trigger, title, 'aria-label')
-    trigger.classList.add('tool-dock-trigger'); trigger.setAttribute('aria-expanded', 'false')
-    const panel = el('section', '', 'tool-dock-panel workflow-panels'); panel.id = `tool-dock-panel-${index}`; panel.hidden = true
-    bind(panel, title, 'aria-label'); trigger.setAttribute('aria-controls', panel.id)
-    const close = button(tr('收起', 'Close'), () => { setOpen(group, false); trigger.focus() })
-    const header = el('div', '', 'tool-dock-header'); header.append(el('strong', title), close)
-    panel.append(header, ...panels); group.append(trigger, panel); dock.append(group); groups.push(group)
+  const panels = [browser, task, goalPanel, review, trees, diagnostics, historySearch, memories, learning, scheduler]
+  const parking = el('div'); parking.hidden = true; parking.append(...panels)
+  function closePanel() { for (const item of panels) { item.open = false; parking.append(item) } panel.hidden = true }
+  function closeMenu() { menu.hidden = true; closePanel(); add.setAttribute('aria-expanded', 'false') }
+  function openPanel(item, focus) {
+    closePanel(); menu.hidden = true; panel.hidden = false; item.open = true; panelBody.replaceChildren(item)
+    panelTitle.textContent = item.querySelector('summary').textContent
+    add.setAttribute('aria-expanded', 'true')
+    ;(focus || item.querySelector('input, textarea, select, button') || back).focus()
   }
-  function setOpen(group, open) {
-    for (const item of groups) {
-      const active = item === group && open
-      item.querySelector('.tool-dock-panel').hidden = !active
-      item.querySelector('.tool-dock-trigger').setAttribute('aria-expanded', String(active))
-      // Closing a group also stops polling its collapsed feature panels.
-      if (!active) item.querySelectorAll('details[open]').forEach(n => { n.open = false })
-    }
+  for (const [title, entries] of [
+    [tr('附件', 'Attachments'), [[tr('添加文件', 'Add files'), browser, search], [tr('引用历史会话', 'Reference a previous session'), browser, sessions]]],
+    [tr('任务与文件', 'Tasks and files'), [[tr('任务步骤', 'Task steps'), task], [tr('目标、补充要求与消息队列'), goalPanel], [tr('审阅更改与恢复'), review], [tr('隔离工作区'), trees], [tr('定时任务与结果收件箱'), scheduler]]],
+    [tr('上下文与经验', 'Context and knowledge'), [[tr('本次上下文来源与用量'), diagnostics], [tr('历史全文搜索'), historySearch], [tr('记忆来源与冲突'), memories], [tr('可复用技能候选'), learning]]],
+  ]) {
+    menu.append(el('small', title, 'composer-menu-heading'))
+    for (const [label, item, focus] of entries) menu.append(button(label, () => openPanel(item, focus)))
   }
-  dock.addEventListener('keydown', e => { if (e.key === 'Escape') { const active = groups.find(g => !g.querySelector('.tool-dock-panel').hidden); if (active) { e.stopPropagation(); setOpen(active, false); active.querySelector('button').focus() } } })
-  document.addEventListener('pointerdown', e => { if (!tools.contains(e.target)) setOpen(null, false) })
+  add.addEventListener('click', () => {
+    if (!menu.hidden || !panel.hidden) closeMenu()
+    else { menu.hidden = false; add.setAttribute('aria-expanded', 'true'); menu.querySelector('button').focus() }
+  })
+  tools.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMenu(); add.focus() }
+    if (menu.hidden || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return
+    const buttons = [...menu.querySelectorAll('button')], index = buttons.indexOf(document.activeElement)
+    e.preventDefault(); buttons[e.key === 'Home' ? 0 : e.key === 'End' ? buttons.length - 1 : (index + (e.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length].focus()
+  })
+  document.addEventListener('pointerdown', e => { if (!tools.contains(e.target) && !add.contains(e.target)) closeMenu() })
   workflows.takeover.className = 'computer-takeover-actions'
-  dock.append(workflows.takeover)
+  document.querySelector('.composer-toolbar-spacer').before(workflows.takeover)
   workflows.host.remove()
   const liveStatus = el('div', '', 'task-live-status'); liveStatus.setAttribute('role', 'status'); liveStatus.append(taskStatus, workflows.summary)
-  tools.replaceChildren(dock, liveStatus, chips, refBudget)
+  tools.replaceChildren(menu, panel, parking, liveStatus)
+  const attachments = el('div', '', 'composer-attachments'); attachments.append(chips, refBudget)
+  composer.before(attachments)
   document.querySelector('#settings-environment-panel').append(document.querySelector('#runtime-card'))
   function updateControls() {
     const disabled = (n, value) => { n.disabled = Boolean(value || n.dataset.busy) }
@@ -168,5 +183,5 @@ export function initFeaturePanels({ state, request, composer, status, prepareTas
   }
   tools.addEventListener('ui:action-done', updateControls); sessions.addEventListener('change', updateControls)
   updateControls()
-  return { requestExtras: workflows.requestExtras, updateControls, localize: () => { ui.localize(document); workflows.localize(); scheduleRefresh() }, references: () => [...references], refresh: scheduleRefresh, clear: () => {references=[];renderReferences()} }
+  return { requestExtras: workflows.requestExtras, updateControls, localize: () => { ui.localize(document); workflows.localize(); if (!panel.hidden) panelTitle.textContent = panelBody.querySelector('summary')?.textContent || ''; scheduleRefresh() }, references: () => [...references], refresh: scheduleRefresh, clear: () => {references=[];renderReferences()} }
 }

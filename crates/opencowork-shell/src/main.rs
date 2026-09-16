@@ -8,16 +8,18 @@ mod review;
 mod schedules;
 mod workflows;
 mod workspace;
+mod workspace_manager;
 mod worktrees;
 
 use crate::acp::{
     AcpCoordinator, AcpOverviewView, AcpSettingsUpdateRequest, AcpThreadCreateRequest,
 };
 use anyhow::Context;
-use axum::extract::{Path as AxumPath, Query, State};
+use axum::extract::{Path as AxumPath, Query};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
+use axum::Extension as State;
 use axum::{Json, Router};
 use opencowork_api::default_openai_profile_for_model;
 use opencowork_app::{AppEvent, AppRuntime};
@@ -216,6 +218,7 @@ struct ProviderProfileRecord {
 #[serde(rename_all = "camelCase")]
 struct SessionListItem {
     id: String,
+    workspace: Option<String>,
     title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     preview: Option<String>,
@@ -455,6 +458,8 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let scheduler_state = state.clone();
+    let manager = workspace_manager::WorkspaceManager::new(state)
+        .map_err(|error| anyhow::anyhow!(error.message))?;
     let app = Router::new()
         .route("/", get(index))
         .route("/app.css", get(app_css))
@@ -584,7 +589,16 @@ async fn main() -> anyhow::Result<()> {
             "/api/acp/threads/:id",
             axum::routing::delete(delete_acp_thread),
         )
-        .with_state(state);
+        .route("/api/workspaces", get(workspace_manager::list))
+        .route("/api/workspaces/open", post(workspace_manager::open))
+        .route(
+            "/api/workspaces/directories",
+            get(workspace_manager::directories),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            manager,
+            workspace_manager::resolve_request,
+        ));
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -1728,6 +1742,7 @@ fn session_items(state: &ShellState) -> Result<Vec<SessionListItem>, ApiError> {
                 .filter(|value| !value.eq_ignore_ascii_case(&title));
             SessionListItem {
                 id: descriptor.id,
+                workspace: session.workspace.clone(),
                 title,
                 preview,
                 message_count: descriptor.message_count,

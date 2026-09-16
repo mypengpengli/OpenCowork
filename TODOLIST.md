@@ -9,6 +9,19 @@
 
 ## Optimization status and next steps
 
+### Completed: compact chat and selectable workspaces (2026-09-16)
+
+- [x] Reduce tool calls/results and intermediate commentary to single-line disclosures; preserve full final answers in every turn.
+- [x] Replace the three-category toolbar and clear-input control with a unified composer, + attachment/tool menu and one send/stop position; add provider/permission/reasoning selectors.
+- [x] Add folder browsing, absolute-path opening and searchable recent workspaces; keep each page and worker bound to its chosen directory without changing process cwd.
+- [x] Group sidebar sessions by project or time, collapse projects and open sessions in their original workspace; separate legacy unassigned sessions.
+- [x] Preserve workspace drafts, reject cross-project continuation, and scope nested Git status paths to the selected folder.
+
+Verified on 2026-09-16: 20 shell tests; UI and streaming JavaScript regressions;
+workspace, startup, chat, feature and six-area integration suites using local fixtures;
+live browser checks for attachments, workspace draft restoration, project/time grouping,
+quick settings, Chinese/English labels and a 680px viewport. Rebuilt shell and desktop.
+
 ### Completed: repository documentation (2026-09-14)
 
 - [x] Rewrite the homepage README in Chinese with current features, UI entrypoints, default switches, source/portable startup, rebuild instructions, operating limits and regression commands.
