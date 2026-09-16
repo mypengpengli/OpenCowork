@@ -131,3 +131,21 @@ export function resolveSlashInvocation(input, { skills = [], mcpServers = [], to
       : `请使用工具 ${name} 完成任务，按照工具定义填写参数并遵守当前权限。`
   return `${instruction}\n\n${task || '请协助处理当前任务；若缺少必要信息，请先询问。'}`
 }
+// Share an in-flight load between completion, inspection and submission.
+// Failure clears the flight so a later attempt can retry.
+export function coalesceAsync(action) {
+  let pending
+  return () => {
+    if (!pending) pending = Promise.resolve().then(action).finally(() => { pending = undefined })
+    return pending
+  }
+}
+export function completeSlashInput(current, item) {
+  const value = String(current).trim()
+  for (const prefix of [item.insertion, ...(item.aliases || [])].sort((a, b) => b.length - a.length)) {
+    if (value === prefix || value.startsWith(`${prefix} `) || value.startsWith(`${prefix}\n`)) {
+      return `${item.insertion}${value.slice(prefix.length) || ' '}`
+    }
+  }
+  return `${item.insertion} `
+}

@@ -1,6 +1,6 @@
 import { readChatStream, appendChatEvent } from '/chat-stream.mjs'
 import { initFeaturePanels } from '/features.mjs'
-import { appendDraft, processMessageIndexes, resolveSlashInvocation } from '/ui-controls.mjs'
+import { appendDraft, processMessageIndexes, resolveSlashInvocation, coalesceAsync, completeSlashInput } from '/ui-controls.mjs'
 let featurePanels
 const selectedWorkspaceId = new URL(location.href).searchParams.get('workspace') || ''
 const workspaceHeaders = selectedWorkspaceId ? { 'X-OpenCowork-Workspace': selectedWorkspaceId } : {}
@@ -1937,7 +1937,24 @@ function closeSlashMenu() {
 }
 
 function slashItemText(item) {
-  return [item.title, item.subtitle, item.keyword, item.meta].filter(Boolean).join(' ').toLowerCase()
+  return [item.title, item.insertion, item.subtitle, item.keyword, item.meta].filter(Boolean).join(' ').toLowerCase()
+}
+
+function selectedCapabilityInput(raw = slashQuery()) {
+  try {
+    const catalog = {
+      skills: (state.bootstrap?.skills || []).map(skill => ({ ...skill, slug: deriveSkillSlug(skill) })),
+      mcpServers: state.bootstrap?.mcpServers || [], tools: state.slashCatalog.tools || [],
+    }
+    const prefixes = [
+      ...catalog.skills.flatMap(skill => [`/skill ${skill.slug}`, `/skill ${skill.name}`]),
+      ...catalog.mcpServers.map(server => `/mcp ${server.name}`),
+      ...catalog.tools.map(tool => `/tool ${tool.name}`),
+    ]
+    // Keep View available for an exact selection; hide suggestions only once
+    // task arguments are being entered.
+    return !prefixes.includes(raw.trim()) && resolveSlashInvocation(raw, catalog) !== null
+  } catch { return false }
 }
 
 function groupedSlashItems() {
@@ -1972,6 +1989,7 @@ function groupedSlashItems() {
     keyword: `${skill.name} ${deriveSkillSlug(skill)}`,
     meta: 'Skill',
     insertion: `/skill ${deriveSkillSlug(skill)}`,
+    aliases: [`/skill ${skill.name}`],
     action: { type: 'open-skill', slug: deriveSkillSlug(skill), name: skill.name },
   }))
   const mcpItems = (state.bootstrap?.mcpServers || []).map((server) => ({
@@ -1994,13 +2012,18 @@ function groupedSlashItems() {
     insertion: `/tool ${tool.name}`,
     action: { type: 'show-tool', name: tool.name },
   }))
-  return [
+  const groups = [
     { key: 'commands', label: t('slash.section.commands'), items: commandItems.filter(matches) },
     { key: 'actions', label: t('slash.section.actions'), items: actionItems.filter(matches) },
     { key: 'skills', label: t('slash.section.skills'), items: skillItems.filter(matches) },
     { key: 'mcp', label: t('slash.section.mcp'), items: mcpItems.filter(matches) },
     { key: 'tools', label: t('slash.section.tools'), items: toolItems.filter(matches) },
   ].filter((group) => group.items.length)
+  // A capability prefix should choose the capability, not a similarly named
+  // settings shortcut such as /skills or /mcp.
+  const capability = { skill: 'skills', tool: 'tools', mcp: 'mcp' }[query.split(/\s+/)[0]]
+  if (capability) groups.sort((a, b) => Number(b.key === capability) - Number(a.key === capability))
+  return groups
 }
 
 function refreshSlashItems() {
@@ -2086,8 +2109,8 @@ function renderSlashMenu() {
   })
 }
 
-async function ensureSlashCatalogLoaded() {
-  if (state.slashCatalog.loaded || state.slashCatalog.loading) return
+const ensureSlashCatalogLoaded = coalesceAsync(async () => {
+  if (state.slashCatalog.loaded) return
   state.slashCatalog.loading = true
   renderSlashMenu()
   try {
@@ -2098,17 +2121,19 @@ async function ensureSlashCatalogLoaded() {
     state.slashCatalog.commands = commands || []
     state.slashCatalog.tools = tools || []
     state.slashCatalog.loaded = true
+    if (selectedCapabilityInput()) closeSlashMenu()
   } catch (error) {
     setComposerStatus(error.message || t('slash.empty'), true)
+    throw error
   } finally {
     state.slashCatalog.loading = false
     renderSlashMenu()
   }
-}
+})
 
 function updateSlashMenuFromComposer() {
   const raw = slashQuery()
-  if (!isSlashInput(raw)) {
+  if (!isSlashInput(raw) || selectedCapabilityInput(raw)) {
     closeSlashMenu()
     return
   }
@@ -2116,7 +2141,7 @@ function updateSlashMenuFromComposer() {
   state.slashMenu.query = raw.slice(1)
   state.slashMenu.activeIndex = 0
   renderSlashMenu()
-  ensureSlashCatalogLoaded()
+  void ensureSlashCatalogLoaded().catch(() => {})
 }
 
 function moveSlashSelection(direction) {
@@ -3817,6 +3842,8 @@ function renderSidebarSessions() {
     ? sessions.filter((session) => matchesSessionQuery(session, query))
     : sessions
 
+  const grouping = document.querySelector('#sidebar-grouping')
+  if (grouping) { grouping.value = state.sidebarGrouping; grouping.setAttribute('aria-label', state.locale === 'zh' ? '会话分类' : 'Group conversations'); grouping.options[0].textContent = state.locale === 'zh' ? '项目' : 'Projects'; grouping.options[1].textContent = state.locale === 'zh' ? '时间' : 'Timeline' }
   els.sessionList.innerHTML = ''
   if (!visible.length && (query || state.sidebarGrouping !== 'project')) {
     els.sessionList.innerHTML = query
@@ -3825,8 +3852,6 @@ function renderSidebarSessions() {
     return
   }
 
-  const grouping = document.querySelector('#sidebar-grouping')
-  if (grouping) { grouping.value = state.sidebarGrouping; grouping.setAttribute('aria-label', state.locale === 'zh' ? '会话分类' : 'Group conversations'); grouping.options[0].textContent = state.locale === 'zh' ? '项目' : 'Projects'; grouping.options[1].textContent = state.locale === 'zh' ? '时间' : 'Timeline' }
   const groups = new Map()
   function getGroup(path, label) {
     const key = state.sidebarGrouping === 'project' ? workspaceKey(path) : label
@@ -5362,6 +5387,7 @@ async function submitChat(event) {
   if (input.startsWith('/')) {
     try {
       if (/^\/(skill|mcp|tool)\s+/.test(input)) await ensureSlashCatalogLoaded()
+      if (state.sending || state.workspaceSwitching || state.currentSessionId !== previousDraftSessionId || els.composerInput.value.trim() !== input) return
       const task = resolveSlashInvocation(input, {
         skills: (state.bootstrap?.skills || []).map(skill => ({ ...skill, slug: deriveSkillSlug(skill) })),
         mcpServers: state.bootstrap?.mcpServers || [], tools: state.slashCatalog.tools || [],
@@ -5480,6 +5506,8 @@ async function stopChat() {
 
 function startNewSession() {
   if (state.sending) return setComposerStatus(t('composer.stopFirst'), true)
+  ++state.sessionLoadToken
+  persistComposerDraft()
   setView('chat')
   state.currentSessionId = null
   state.currentSession = null
@@ -5740,8 +5768,10 @@ async function executeSlashInput(rawInput) {
   if (!input.startsWith('/')) return false
   const [command, ...rest] = input.slice(1).split(/\s+/)
   const argument = rest.join(' ').trim()
+  const originSession = state.currentSessionId, originDraft = els.composerInput.value
 
   const finishSlash = (statusKeyOrText, vars = {}) => {
+    if (state.currentSessionId !== originSession || els.composerInput.value !== originDraft) return
     els.composerInput.value = ''
     clearComposerDraft()
     closeSlashMenu()
@@ -5770,7 +5800,7 @@ async function executeSlashInput(rawInput) {
       })
       finishSlash('slash.executed', { command: input })
       await loadBootstrap({ allowAutoSelect: false })
-      if (command === 'compact' && state.currentSessionId) await loadSession(state.currentSessionId)
+      if (command === 'compact' && originSession && state.currentSessionId === originSession) await loadSession(originSession)
       return true
     }
     case 'new':
@@ -5851,7 +5881,7 @@ function insertSlashItem(item) {
   if (!item || state.sending) return
   const existing = slashQuery().trim()
   // Selecting an exact command must not discard arguments already entered.
-  els.composerInput.value = existing.startsWith(`${item.insertion} `) ? existing : `${item.insertion} `
+  els.composerInput.value = completeSlashInput(existing, item)
   persistComposerDraft(); closeSlashMenu(); syncComposerHeight(); updateComposerState(); els.composerInput.focus()
   setComposerStatus(state.locale === 'zh' ? '已选入命令，可补充任务或参数后发送。' : 'Command selected. Add a task or arguments, then send.')
 }

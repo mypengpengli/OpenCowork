@@ -15,6 +15,8 @@ use std::sync::{Arc, Mutex};
 pub(super) struct WorkspaceEntry {
     id: String,
     path: PathBuf,
+    #[serde(default)]
+    hidden: bool,
 }
 
 #[derive(Clone)]
@@ -58,7 +60,15 @@ impl WorkspaceManager {
             default,
             opened: Default::default(),
         };
-        let entry = manager.remember(&manager.default.cwd)?;
+        // Starting the host must not undo an explicit removal from Recents.
+        let entry = match manager
+            .entries()?
+            .into_iter()
+            .find(|e| same_directory(&e.path, &manager.default.cwd))
+        {
+            Some(entry) => entry,
+            None => manager.remember(&manager.default.cwd)?,
+        };
         manager
             .opened
             .lock()
@@ -85,14 +95,16 @@ impl WorkspaceManager {
         let _lease =
             ExclusiveLease::acquire(&catalog.with_extension("lock")).map_err(internal_error)?;
         let mut entries = self.entries()?;
-        let entry = entries
+        let mut entry = entries
             .iter()
             .find(|e| same_directory(&e.path, path))
             .cloned()
             .unwrap_or_else(|| WorkspaceEntry {
                 id: uuid::Uuid::new_v4().to_string(),
                 path: path.to_owned(),
+                hidden: false,
             });
+        entry.hidden = false;
         entries.retain(|e| e.id != entry.id);
         entries.insert(0, entry.clone());
         write_json_atomic(&catalog, &entries).map_err(internal_error)?;
@@ -167,7 +179,13 @@ pub(super) async fn resolve_request(
 pub(super) async fn list(
     Extension(manager): Extension<WorkspaceManager>,
 ) -> Result<Json<Vec<WorkspaceEntry>>, ApiError> {
-    Ok(Json(manager.entries()?))
+    Ok(Json(
+        manager
+            .entries()?
+            .into_iter()
+            .filter(|e| !e.hidden)
+            .collect(),
+    ))
 }
 
 pub(super) async fn forget(
@@ -179,10 +197,12 @@ pub(super) async fn forget(
         let _lease =
             ExclusiveLease::acquire(&catalog.with_extension("lock")).map_err(internal_error)?;
         let mut entries = manager.entries()?;
-        entries.retain(|entry| entry.id != id);
+        if let Some(entry) = entries.iter_mut().find(|entry| entry.id == id) {
+            entry.hidden = true;
+        }
         // Only edit the recent catalogue; never delete project files or sessions.
         write_json_atomic(&catalog, &entries).map_err(internal_error)?;
-        Ok(Json(entries))
+        Ok(Json(entries.into_iter().filter(|e| !e.hidden).collect()))
     })
     .await
     .map_err(internal_error)?

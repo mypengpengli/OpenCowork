@@ -49,7 +49,7 @@ export function initWorkflows({ state, request, composer, status, prepareTask, o
     try {
       const enabled = !(computerFeatures?.computerEnabled && !paused)
       computerFeatures = await call('/api/features', { computerEnabled: enabled })
-      if (enabled && paused) { const data = await call('/api/computer/takeover', { paused: false }); paused = data.paused }
+      paused = computerFeatures.computerPaused
       window.dispatchEvent(new CustomEvent('opencowork:features-changed', { detail: computerFeatures }))
       renderTakeover()
       status(enabled ? tr('电脑控制已启用。', 'Computer control enabled.') : tr('电脑控制已关闭，已停止当前宿主的活动任务。', 'Computer control disabled; active tasks in this host have been stopped.'))
@@ -73,11 +73,11 @@ export function initWorkflows({ state, request, composer, status, prepareTask, o
   }
   async function refreshTakeover() {
     const version = ++controlVersion
-    const [features, control] = await Promise.all([request('/api/features'), request('/api/computer/takeover')])
-    if (version === controlVersion && !controlButton.dataset.busy) { computerFeatures = features; paused = control.paused; renderTakeover() }
+    const features = await request('/api/features')
+    if (version === controlVersion && !controlButton.dataset.busy) { computerFeatures = features; paused = features.computerPaused; renderTakeover() }
   }
   takeover.addEventListener('ui:action-done', () => { renderTakeover(); window.dispatchEvent(new Event('opencowork:composer-state')) })
-  window.addEventListener('opencowork:features-changed', event => { ++controlVersion; computerFeatures = event.detail; renderTakeover() })
+  window.addEventListener('opencowork:features-changed', event => { ++controlVersion; computerFeatures = event.detail; paused = event.detail.computerPaused; renderTakeover() })
   takeover.append(computerState, controlButton); renderTakeover()
   refreshTakeover().catch(error => { controlButton.textContent = tr('电脑控制：读取失败', 'Computer control: unavailable'); controlButton.title = error.message })
   host.append(takeover, goalPanel)

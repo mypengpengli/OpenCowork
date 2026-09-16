@@ -9,6 +9,18 @@
 
 ## Optimization status and next steps
 
+### Completed: interaction audit follow-up (2026-09-16)
+
+- [x] Keep removed startup folders out of Recents across host restarts; preserve workspace IDs for open pages and explicit reopening.
+- [x] Share in-flight slash catalogue requests and allow retries; prioritize capability use over similarly named settings navigation.
+- [x] Preserve multiline arguments when completing skill aliases, reject stale submissions after navigation, and avoid clearing a newer draft after a local command.
+- [x] Invalidate pending session loads when starting a new conversation; localize grouping controls even with no search results.
+- [x] Clear legacy takeover pause when computer control is explicitly enabled from either settings or the composer.
+
+Validation: 20 shell tests; UI/stream regressions and workspace/features integration checks; live browser checks with two-second request delays for stale navigation and first-use command submission.
+
+Audit scope: recent workspace/chat/control changes. UI-7 (integrated full-text navigation) and UI-8 (safe Markdown/highlighting/file links) remain open, along with the separately listed setup, sync and field-validation work.
+
 ### Completed: workspace and command interaction fixes (2026-09-16)
 
 - [x] Remove unused recent projects from the sidebar/folder chooser without deleting folders or sessions; preserve existing pages and avoid duplicate workers when reopening.

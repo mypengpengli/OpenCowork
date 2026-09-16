@@ -353,7 +353,7 @@ pub(super) async fn diagnostics(
 pub(super) async fn features(State(state): State<ShellState>) -> Result<Json<Value>, ApiError> {
     let config = load_config(&state)?;
     Ok(Json(
-        serde_json::json!({"computerEnabled":config.merged().pointer("/computer/enabled").and_then(Value::as_bool).unwrap_or(true),"computerSupported":cfg!(windows),"backgroundMemoryEnabled":config.merged().pointer("/memory/backgroundEnabled").and_then(Value::as_bool).unwrap_or(false)}),
+        serde_json::json!({"computerEnabled":config.merged().pointer("/computer/enabled").and_then(Value::as_bool).unwrap_or(true),"computerPaused":state.config_home.join("computer-paused.json").exists(),"computerSupported":cfg!(windows),"backgroundMemoryEnabled":config.merged().pointer("/memory/backgroundEnabled").and_then(Value::as_bool).unwrap_or(false)}),
     ))
 }
 
@@ -381,6 +381,13 @@ pub(super) async fn save_features(
         settings["memory"]["backgroundEnabled"] = serde_json::json!(enabled);
     }
     write_settings(&state.cwd, &settings)?;
+    if update.computer_enabled == Some(true) {
+        let pause = state.config_home.join("computer-paused.json");
+        if pause.exists() {
+            fs::remove_file(pause).map_err(internal_error)?;
+            let _ = fs::remove_file(state.config_home.join("computer-state/current.json"));
+        }
+    }
     if update.computer_enabled == Some(false) {
         // A running desktop action must not survive revoking the capability.
         for turn in state.turns.lock().map_err(internal_error)?.values() {

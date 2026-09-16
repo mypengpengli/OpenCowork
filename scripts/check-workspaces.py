@@ -122,7 +122,11 @@ def run(executable):
                 assert Path(api('/api/bootstrap', workspace=nested)['cwd']) == second/'nested'
                 assert (config/'sessions'/f'{session_id}.json').read_bytes() == before
 
-                api('/api/features', {'computerEnabled': True, 'backgroundMemoryEnabled': True}, workspace=b)
+                api('/api/computer/takeover', {'paused': True}, workspace=b)
+                assert api('/api/features', workspace=b)['computerPaused'] is True
+                enabled = api('/api/features', {'computerEnabled': True, 'backgroundMemoryEnabled': True}, workspace=b)
+                assert enabled['computerPaused'] is False
+                assert api('/api/computer/takeover', workspace=b)['paused'] is False
                 features = api('/api/features', {'computerEnabled': False}, workspace=b)
                 assert features['computerEnabled'] is False and features['backgroundMemoryEnabled'] is True
                 features = api('/api/features', {'computerEnabled': True}, workspace=b)
@@ -145,10 +149,14 @@ def run(executable):
                 assert len(stored['messages']) < len(archive['messages'])
                 assert stored['workspace'] == archive['workspace']
 
+                api('/api/workspaces/' + a, method='DELETE')
                 process.terminate(); process.wait(timeout=15); process = start()
+                assert a not in [w['id'] for w in api('/api/workspaces')]
+                assert Path(api('/api/bootstrap')['cwd']) == first
                 assert b in [w['id'] for w in api('/api/workspaces')]
                 assert nested not in [w['id'] for w in api('/api/workspaces')]
                 reopened = api('/api/workspaces/open', {'path': str(second/'nested')})['id']
+                assert reopened == nested
                 assert Path(api('/api/bootstrap', workspace=reopened)['cwd']) == second/'nested'
                 inspect((b, second))
                 print('PASS: folder validation, recent workspace persistence, concurrent project reads, scoped agent writes, session ownership, subfolder Git paths, recent removal and persistent slash commands')

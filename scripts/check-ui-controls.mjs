@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { appendDraft, createUi, processMessageIndexes, resolveSlashInvocation } from '../crates/opencowork-shell/static/ui-controls.mjs'
+import { appendDraft, createUi, processMessageIndexes, resolveSlashInvocation, coalesceAsync, completeSlashInput } from '../crates/opencowork-shell/static/ui-controls.mjs'
 
 const draft = '保留这段草稿\nconst example = "<script>";'
 assert.equal(appendDraft(draft, 'Plan first', true), `Plan first\n\n${draft}`)
@@ -57,3 +57,18 @@ assert.match(resolveSlashInvocation('/tool read_file README.md', catalog), /"rea
 assert.equal(resolveSlashInvocation('/permissions read-only', catalog), null)
 assert.throws(() => resolveSlashInvocation('/tool read_file_typo test', catalog), /Unknown capability/)
 console.log('PASS: slash capability selection, multiword names, multiline arguments and unknown target rejection')
+
+const selectedSkill = { insertion: '/skill ui-planner', aliases: ['/skill UI Planner'] }
+assert.equal(completeSlashInput('/skill UI Planner 整理项目\n保留文件', selectedSkill), '/skill ui-planner 整理项目\n保留文件')
+assert.equal(completeSlashInput('/skill ui', selectedSkill), '/skill ui-planner ')
+let attempts = 0, releaseCatalog
+const loadCatalog = coalesceAsync(() => { attempts++; return new Promise(resolve => { releaseCatalog = resolve }) })
+const menuLoad = loadCatalog(), sendLoad = loadCatalog()
+assert.equal(menuLoad, sendLoad)
+await Promise.resolve(); assert.equal(attempts, 1)
+releaseCatalog(['Read']); assert.deepEqual(await sendLoad, ['Read'])
+let failedLoads = 0
+const retryCatalog = coalesceAsync(async () => { if (++failedLoads === 1) throw Error('offline'); return ['Read'] })
+await assert.rejects(retryCatalog(), /offline/)
+assert.deepEqual(await retryCatalog(), ['Read'])
+console.log('PASS: in-flight catalogue sharing, retry and alias completion without argument loss')
