@@ -72,6 +72,17 @@
       <section class="content-shell">
         <section id="chat-view" class="page-view">
           <header class="status-bar">
+            <div id="session-context" class="session-context" hidden>
+              <button id="session-context-button" class="session-context-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="session-context-menu">
+                <span id="session-context-title"></span>
+                <span class="session-context-project"><span aria-hidden="true">▱</span><span id="session-context-workspace"></span></span>
+                <span class="session-context-chevron" aria-hidden="true">⌄</span>
+              </button>
+              <div id="session-context-menu" class="session-context-menu" role="menu" hidden>
+                <button id="session-reveal" type="button" role="menuitem">在资源管理器中打开</button>
+                <button id="session-rename" type="button" role="menuitem">重命名会话</button>
+              </div>
+            </div>
             <button id="session-overview-launch-button" class="status-tag utility-launch-button" type="button">
               会话概览
             </button>
@@ -253,7 +264,7 @@
           </section>
 
           <footer class="composer-shell">
-            <div class="composer-workspace-row">
+            <div id="composer-workspace-row" class="composer-workspace-row">
               <button id="workspace-picker-button" class="workspace-picker-button" type="button" aria-haspopup="dialog">▱ 工作区 ▾</button>
               <span id="workspace-path-label"></span>
             </div>
@@ -1184,6 +1195,18 @@
       <div id="block-viewer-content" class="block-viewer-content"></div>
     </section>
 
+    <dialog id="session-rename-dialog" class="workspace-dialog session-rename-dialog" aria-labelledby="session-rename-heading">
+      <form id="session-rename-form">
+        <h3 id="session-rename-heading">重命名会话</h3>
+        <label for="session-rename-input" id="session-rename-label">会话名称</label>
+        <input id="session-rename-input" type="text" maxlength="144" required autocomplete="off" />
+        <p id="session-rename-status" role="status"></p>
+        <div class="session-rename-actions">
+          <button id="session-rename-cancel" class="ghost-button" type="button">取消</button>
+          <button id="session-rename-save" class="primary-button" type="submit">保存</button>
+        </div>
+      </form>
+    </dialog>
     <dialog id="workspace-dialog" class="workspace-dialog" aria-labelledby="workspace-dialog-title">
       <div class="workspace-dialog-heading">
         <strong id="workspace-dialog-title">选择工作区</strong>

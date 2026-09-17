@@ -142,6 +142,11 @@ def check_chat(executable):
                 duplicate, conflict = request("/api/chat", {"input": "other", "sessionId": session})
                 assert conflict.status == 409
                 duplicate.close()
+                rename_connection = http.client.HTTPConnection('127.0.0.1', port, timeout=10)
+                rename_connection.request('PATCH', f'/api/sessions/{session}', json.dumps({'title': 'Must not overwrite an active turn'}), {'Content-Type': 'application/json'})
+                rename_response = rename_connection.getresponse()
+                assert rename_response.status == 409, rename_response.read()
+                rename_response.read(); rename_connection.close()
                 deletion, conflict = request(f"/api/sessions/{session}", method="DELETE")
                 assert conflict.status == 409
                 deletion.close()

@@ -61,6 +61,8 @@ def run(executable):
                 connection.request(method or ('POST' if body is not None else 'GET'), path, json.dumps(body) if body is not None else None, headers)
                 response = connection.getresponse(); data = response.read(); connection.close()
                 assert response.status == expected, (path, response.status, data)
+                if expected == 422:
+                    return data.decode()
                 if path == '/api/chat' and expected == 200:
                     return next(json.loads(line)['response'] for line in data.splitlines() if json.loads(line)['type'] == 'complete')
                 return json.loads(data) if data else None
@@ -105,6 +107,22 @@ def run(executable):
                 assert (config/'sessions'/f'{session_id}.json').read_bytes() == before
                 assert api('/api/sessions', workspace=a)[0]['workspace'] == str(second)
 
+                # Names persist independently of generated summaries and never move a project.
+                endpoint = '/api/sessions/' + session_id
+                for invalid in ('', '   ', 'x' * 73, 'line\nbreak'):
+                    api(endpoint, {'title': invalid}, workspace=b, method='PATCH', expected=400)
+                api(endpoint, {'title': 'wrong project'}, workspace=a, method='PATCH', expected=400)
+                api(endpoint, {'title': 'wrong project', 'workspace': str(first)}, workspace=b, method='PATCH', expected=422)
+                renamed = api(endpoint, {'title': '  项目检查 · 已命名  '}, workspace=b, method='PATCH')
+                assert renamed['title'] == '项目检查 · 已命名'
+                assert renamed['workspace'] == str(second)
+                assert renamed['messages'] == json.loads(before)['messages']
+                assert api('/api/sessions', workspace=b)[0]['title'] == renamed['title']
+                continued = api('/api/chat', {'input': 'Continue this named session', 'sessionId': session_id}, workspace=b)
+                assert continued['status'] == 'completed'
+                assert api(endpoint, workspace=b)['title'] == renamed['title']
+                before = (config/'sessions'/f'{session_id}.json').read_bytes()
+
                 # Subfolder status must use paths relative to that selected folder.
                 def git(*args):
                     return subprocess.run(['git', '-c', f'safe.directory={second.as_posix()}', *args], cwd=second, check=True, capture_output=True)
@@ -148,6 +166,7 @@ def run(executable):
                 stored = json.loads((config/'sessions'/f'{session_id}.json').read_text(encoding='utf-8'))
                 assert len(stored['messages']) < len(archive['messages'])
                 assert stored['workspace'] == archive['workspace']
+                assert stored['title'] == renamed['title']
 
                 api('/api/workspaces/' + a, method='DELETE')
                 process.terminate(); process.wait(timeout=15); process = start()
@@ -159,6 +178,7 @@ def run(executable):
                 assert reopened == nested
                 assert Path(api('/api/bootstrap', workspace=reopened)['cwd']) == second/'nested'
                 inspect((b, second))
+                assert api(endpoint, workspace=b)['title'] == renamed['title']
                 print('PASS: folder validation, recent workspace persistence, concurrent project reads, scoped agent writes, session ownership, subfolder Git paths, recent removal and persistent slash commands')
             finally:
                 if process and process.poll() is None:

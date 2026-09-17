@@ -1690,7 +1690,7 @@ async function request(path, options = {}) {
     throw new Error(message)
   }
 
-  return response.json()
+  return response.status === 204 ? null : response.json()
 }
 
 function t(key, vars = {}) {
@@ -1823,7 +1823,7 @@ function latestRoleText(session, role, maxLength = 144) {
 }
 
 function derivedSessionTitle(session, fallbackId = '') {
-  return extractSessionMemorySection(sessionMemoryContent(session), 'Session Title')
+  return session?.title || extractSessionMemorySection(sessionMemoryContent(session), 'Session Title')
     || firstRoleText(session, 'user')
     || firstRoleText(session, 'assistant')
     || fallbackId
@@ -3220,8 +3220,92 @@ function workspaceRemoveButton(entry) {
   return button
 }
 
+function closeSessionMenu(restoreFocus = false) {
+  document.querySelector('#session-context-menu').hidden = true
+  document.querySelector('#session-context-button').setAttribute('aria-expanded', 'false')
+  if (restoreFocus) document.querySelector('#session-context-button').focus()
+}
+
+function initSessionActions() {
+  const context = document.querySelector('#session-context'), trigger = document.querySelector('#session-context-button')
+  const menu = document.querySelector('#session-context-menu'), dialog = document.querySelector('#session-rename-dialog')
+  const input = document.querySelector('#session-rename-input'), feedback = document.querySelector('#session-rename-status')
+  const save = document.querySelector('#session-rename-save')
+  const text = (zh, en) => state.locale === 'zh' ? zh : en
+  let renameId = null
+  function showMenu() {
+    menu.hidden = false; menu.dataset.sessionId = state.currentSessionId || ''
+    trigger.setAttribute('aria-expanded', 'true'); menu.querySelector('button:not(:disabled)').focus()
+  }
+  trigger.addEventListener('click', () => menu.hidden ? showMenu() : closeSessionMenu(true))
+  trigger.addEventListener('keydown', event => { if (event.key === 'ArrowDown') { event.preventDefault(); showMenu() } })
+  menu.addEventListener('keydown', event => {
+    const items = [...menu.querySelectorAll('button:not(:disabled)')]
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+      event.preventDefault()
+      const index = items.indexOf(document.activeElement)
+      items[event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus()
+    }
+    if (event.key === 'Escape') { event.preventDefault(); closeSessionMenu(true) }
+    if (event.key === 'Tab') closeSessionMenu()
+  })
+  document.addEventListener('pointerdown', event => { if (!context.contains(event.target)) closeSessionMenu() })
+  context.addEventListener('focusout', event => { if (event.relatedTarget && !context.contains(event.relatedTarget)) closeSessionMenu() })
+  document.querySelector('#session-reveal').addEventListener('click', async () => {
+    const id = state.currentSessionId; closeSessionMenu(true)
+    if (!id) return
+    try { await request(`/api/sessions/${encodeURIComponent(id)}/reveal`, { method: 'POST' }) }
+    catch (error) { setComposerStatus(error.message, true) }
+  })
+  document.querySelector('#session-rename').addEventListener('click', () => {
+    closeSessionMenu()
+    if (!state.currentSessionId || state.sending) return
+    renameId = state.currentSessionId
+    document.querySelector('#session-rename-heading').textContent = text('重命名会话', 'Rename conversation')
+    document.querySelector('#session-rename-label').textContent = text('会话名称', 'Conversation name')
+    document.querySelector('#session-rename-cancel').textContent = text('取消', 'Cancel')
+    save.textContent = text('保存', 'Save'); save.disabled = false
+    input.value = sessionDisplayTitle(currentSessionDescriptor(), state.currentSession)
+    feedback.textContent = text('只修改会话名称，工作区位置保持不变。', 'Only the conversation name changes. Its workspace stays the same.')
+    dialog.showModal(); input.focus(); input.select()
+  })
+  document.querySelector('#session-rename-cancel').addEventListener('click', () => dialog.close())
+  dialog.addEventListener('close', () => { renameId = null; trigger.focus() })
+  document.querySelector('#session-rename-form').addEventListener('submit', async event => {
+    event.preventDefault()
+    const id = renameId, title = input.value.trim()
+    if (!id || save.disabled) return
+    if (!title || [...title].length > 72 || /[\u0000-\u001f\u007f-\u009f]/.test(title)) {
+      feedback.textContent = text('请输入 1–72 个字符的单行名称。', 'Enter a single-line name of 1–72 characters.'); return
+    }
+    save.disabled = true
+    try {
+      const session = await request(`/api/sessions/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ title }) })
+      const descriptor = state.bootstrap?.sessions?.find(item => item.id === id)
+      if (descriptor) descriptor.title = session.title
+      if (state.currentSessionId === id) state.currentSession = session
+      if (renameId === id) dialog.close()
+      renderAll()
+    } catch (error) { if (renameId === id) feedback.textContent = error.message }
+    finally { save.disabled = false }
+  })
+}
+
 function renderWorkspacePicker() {
   const button = document.querySelector('#workspace-picker-button'), path = state.bootstrap?.cwd || ''
+  const active = Boolean(state.currentSessionId || state.currentSession || state.pendingTurn)
+  document.querySelector('#composer-workspace-row').hidden = active
+  document.querySelector('#session-context').hidden = !active
+  const contextButton = document.querySelector('#session-context-button')
+  document.querySelector('#session-context-title').textContent = sessionDisplayTitle(currentSessionDescriptor(), state.currentSession)
+  document.querySelector('#session-context-workspace').textContent = workspaceName(path)
+  contextButton.title = path
+  contextButton.setAttribute('aria-label', state.locale === 'zh' ? '会话操作' : 'Conversation actions')
+  contextButton.disabled = !state.currentSessionId || state.workspaceSwitching
+  document.querySelector('#session-reveal').textContent = state.locale === 'zh' ? '在资源管理器中打开' : 'Open in file manager'
+  document.querySelector('#session-rename').textContent = state.locale === 'zh' ? '重命名会话' : 'Rename conversation'
+  document.querySelector('#session-rename').disabled = state.sending
+  if (!active || document.querySelector('#session-context-menu').dataset.sessionId !== state.currentSessionId) closeSessionMenu()
   button.textContent = `▱ ${workspaceName(path) || (state.locale === 'zh' ? '选择工作区' : 'Choose workspace')} ▾`
   button.title = path; button.setAttribute('aria-label', state.locale === 'zh' ? '选择工作区' : 'Choose workspace')
   button.disabled = state.sending || state.workspaceSwitching
@@ -3279,6 +3363,7 @@ function initWorkspacePicker() {
     } catch (error) { if (version === browseVersion) { folderList.replaceChildren(); feedback.textContent = error.message } }
   }
   document.querySelector('#workspace-picker-button').addEventListener('click', async () => {
+    if (state.currentSessionId || state.currentSession || state.pendingTurn) return
     if (state.sending) return setComposerStatus(t('composer.stopFirst'), true)
     document.querySelector('#workspace-dialog-title').textContent = text('选择工作区', 'Choose workspace')
     filter.placeholder = text('搜索最近工作区', 'Search recent workspaces'); filter.setAttribute('aria-label', filter.placeholder)
@@ -6717,6 +6802,7 @@ function prepareTask(instruction, { prepend = false, submit = false } = {}) {
 }
 fullHistorySearch = initHistorySearch({ state, request, container: els.historyList, count: els.historyCountChip, openMatch: openHistoryMatch })
 initWorkspacePicker()
+initSessionActions()
 window.addEventListener('opencowork:composer-state', updateComposerState)
 featurePanels = initFeaturePanels({state, request, composer: els.composerInput, status: setComposerStatus, openSession: loadSession, prepareTask})
 

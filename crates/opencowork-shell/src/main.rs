@@ -6,6 +6,7 @@ mod learning;
 mod provider_diagnostics;
 mod review;
 mod schedules;
+mod session_actions;
 mod setup;
 mod team_sync;
 mod workflows;
@@ -574,7 +575,13 @@ async fn main() -> anyhow::Result<()> {
             axum::routing::delete(delete_provider_profile),
         )
         .route("/api/sessions", get(list_sessions))
-        .route("/api/sessions/:id", get(get_session).delete(delete_session))
+        .route(
+            "/api/sessions/:id",
+            get(get_session)
+                .delete(delete_session)
+                .patch(session_actions::rename),
+        )
+        .route("/api/sessions/:id/reveal", post(session_actions::reveal))
         .route(
             "/api/workflows/:id",
             get(workflows::get).post(workflows::change),
@@ -2291,6 +2298,13 @@ impl From<&SessionMemoryState> for SessionMemoryStateView {
 }
 
 fn derive_session_title(session: &Session, fallback_id: &str) -> String {
+    if let Some(title) = session
+        .title
+        .as_deref()
+        .filter(|title| !title.trim().is_empty())
+    {
+        return title.to_owned();
+    }
     extract_session_memory_section_line(
         session.current_session_memory.as_deref(),
         "Session Title",

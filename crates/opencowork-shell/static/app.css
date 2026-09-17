@@ -2646,3 +2646,30 @@ button:disabled {
 
 .team-sync-card .feature-toggle:has(input:not([type=checkbox])) { display: flex; flex-direction: column-reverse; align-items: stretch; gap: 5px; margin: 10px 0; }
 .team-sync-card input:not([type=checkbox]) { width: 100%; box-sizing: border-box; }
+
+/* Existing conversations keep their project fixed; new chats retain the folder picker. */
+.composer-workspace-row[hidden], .session-context[hidden], .session-context-menu[hidden] { display: none; }
+.status-bar { gap: 12px; flex-wrap: nowrap; }
+.session-context { position: relative; min-width: 0; margin-right: auto; max-width: calc(100% - 110px); }
+.session-context-button { display: flex; align-items: center; gap: 10px; min-width: 0; max-width: 100%; padding: 6px 8px; border: 1px solid transparent; border-radius: 9px; color: var(--text); background: transparent; cursor: pointer; text-align: left; }
+.session-context-button:hover, .session-context-button[aria-expanded="true"] { background: rgba(255,255,255,.055); border-color: var(--line); }
+#session-context-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
+.session-context-project { display: flex; align-items: center; gap: 5px; flex-shrink: 0; max-width: 180px; padding: 4px 8px; border-radius: 6px; color: var(--text-soft); background: rgba(255,255,255,.055); font-size: 11px; font-weight: 400; }
+#session-context-workspace { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-context-chevron { color: var(--text-faint); flex-shrink: 0; }
+.session-context-menu { position: absolute; top: calc(100% + 7px); left: 0; z-index: 12; width: 220px; padding: 5px; border: 1px solid var(--line); border-radius: 11px; background: var(--bg-panel, #242526); box-shadow: 0 12px 32px rgba(0,0,0,.3); }
+.session-context-menu button { display: block; width: 100%; padding: 10px 12px; border: 0; border-radius: 7px; background: transparent; color: var(--text); text-align: left; font-size: 13px; cursor: pointer; }
+.session-context-menu button:hover, .session-context-menu button:focus-visible { background: rgba(255,255,255,.08); }
+.session-context-menu button:disabled { opacity: .45; cursor: default; }
+.session-context-button:focus-visible, .session-context-menu button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.session-rename-dialog { max-width: 420px; }
+.session-rename-dialog h3 { margin: 0 0 20px; }
+.session-rename-dialog label { display: block; color: var(--text-soft); font-size: 13px; margin-bottom: 8px; }
+.session-rename-dialog input { box-sizing: border-box; width: 100%; }
+#session-rename-status { min-height: 20px; color: var(--text-soft); font-size: 12px; }
+.session-rename-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+@media (max-width: 600px) {
+  .session-context-button { gap: 6px; padding-inline: 2px; }
+  .session-context-project { max-width: 90px; padding-inline: 5px; }
+  .session-context-menu { max-width: calc(100vw - 40px); }
+}
