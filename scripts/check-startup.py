@@ -67,7 +67,7 @@ def check_startup(executable):
                 port = reservation.getsockname()[1]
             environment = {key: value for key, value in os.environ.items()
                            if not key.startswith("OPENCOWORK_")}
-            environment.update(OPENCOWORK_CONFIG_HOME=str(config), OPENCOWORK_SHELL_PORT=str(port))
+            environment.update(OPENCOWORK_CONFIG_HOME=str(config), OPENCOWORK_SHELL_PORT=str(port), STARTUP_TEST_UNUSED_KEY="fixture-only")
             base = f"http://127.0.0.1:{port}"
             # Ignore machine proxy settings for these loopback-only checks.
             opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))

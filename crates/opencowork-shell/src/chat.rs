@@ -735,6 +735,35 @@ mod tests {
     }
 
     #[test]
+    fn worker_completion_preserves_active_memory_timestamp() {
+        let mut session = Session::new();
+        session.session_memory_state.extraction_started_at_unix_ms = Some(1_789_544_000_000);
+        let message = Message::Complete {
+            response: ChatResponse {
+                session_id: "fixture".into(),
+                session,
+                events: vec![],
+                iterations: 1,
+                estimated_prompt_tokens: 40000,
+                compacted: false,
+                status: "completed".into(),
+                error: None,
+            },
+        };
+        let decoded: Message = serde_json::from_slice(&encode(&message)).unwrap();
+        let Message::Complete { response } = decoded else {
+            panic!("wrong event")
+        };
+        assert_eq!(
+            response
+                .session
+                .session_memory_state
+                .extraction_started_at_unix_ms,
+            Some(1_789_544_000_000)
+        );
+    }
+
+    #[test]
     fn session_ids_cannot_escape_storage() {
         for id in ["", "../secret", "C:\\secret", "a/b", "a.json"] {
             assert!(!valid_id(id));

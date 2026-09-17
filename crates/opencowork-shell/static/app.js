@@ -1,6 +1,10 @@
+import { initSetup } from '/setup.mjs'
+import { renderMarkdown } from '/markdown.mjs'
+import { initHistorySearch } from '/history-search.mjs'
 import { readChatStream, appendChatEvent } from '/chat-stream.mjs'
 import { initFeaturePanels } from '/features.mjs'
 import { appendDraft, processMessageIndexes, resolveSlashInvocation, coalesceAsync, completeSlashInput } from '/ui-controls.mjs'
+let fullHistorySearch
 let featurePanels
 const selectedWorkspaceId = new URL(location.href).searchParams.get('workspace') || ''
 const workspaceHeaders = selectedWorkspaceId ? { 'X-OpenCowork-Workspace': selectedWorkspaceId } : {}
@@ -510,7 +514,7 @@ const MESSAGES = {
     'sidebar.conversations': '会话列表',
     'sidebar.refresh': '刷新会话',
     'sidebar.search': '搜索会话',
-    'sidebar.searchPlaceholder': '搜索标题或内容',
+    'sidebar.searchPlaceholder': '搜索标题或摘要',
     'sidebar.noMatch': '没有匹配当前筛选条件的会话。',
     'sidebar.empty': '还没有已保存的会话。',
     'menu.chat': '对话',
@@ -600,7 +604,7 @@ const MESSAGES = {
     'history.open': '打开',
     'history.copyId': '复制 ID',
     'history.messages': '{{count}} 条消息',
-    'history.searchPlaceholder': '搜索标题、摘要或会话号',
+    'history.searchPlaceholder': '搜索全部会话正文与归档',
     'history.today': '今天',
     'history.yesterday': '昨天',
     'history.earlier': '更早',
@@ -843,7 +847,7 @@ const MESSAGES = {
     'memory.projectNotes': '项目记忆文档',
     'memory.teamNotes': '团队记忆文档',
     'memory.relevantCandidates': '可召回候选',
-    'memory.memoryReady': '记忆层已经对齐到三层结构，可以继续追参考仓库剩余缺口。',
+    'memory.memoryReady': '项目、团队和会话记忆已接入，可在此查看来源并管理文档。',
     'memory.inFlight': '后台更新中',
     'memory.idle': '空闲',
     'memory.exists': '已存在',
@@ -1200,7 +1204,7 @@ const MESSAGES = {
     'history.open': 'Open',
     'history.copyId': 'Copy ID',
     'history.messages': '{{count}} messages',
-    'history.searchPlaceholder': 'Search titles, previews or session IDs',
+    'history.searchPlaceholder': 'Search all messages and archives',
     'history.today': 'Today',
     'history.yesterday': 'Yesterday',
     'history.earlier': 'Earlier',
@@ -1526,7 +1530,7 @@ const MESSAGES = {
     'memory.projectNotes': 'Project Memory Notes',
     'memory.teamNotes': 'Team Memory Notes',
     'memory.relevantCandidates': 'Recall Candidates',
-    'memory.memoryReady': 'The memory layer is already split into three layers and can keep closing the remaining parity gaps.',
+    'memory.memoryReady': 'Project, team and session memory are available here with source details and document management.',
     'memory.inFlight': 'Refreshing in background',
     'memory.idle': 'Idle',
     'memory.exists': 'Exists',
@@ -2515,6 +2519,7 @@ function setLocale(locale) {
   persistLocale()
   applyStaticLocale()
   featurePanels?.localize()
+  window.dispatchEvent(new Event('opencowork:locale-changed'))
   renderAll()
   setDrawerMode(state.drawerMode)
 }
@@ -2908,7 +2913,7 @@ function looksLikeCodeContent(content, label = '', type = '') {
 
 function renderBlockViewerContent() {
   const content = String(state.blockViewer.content || '')
-  const isCodeish = looksLikeCodeContent(content, state.blockViewer.title, state.blockViewer.kind)
+  const isCodeish = Boolean(state.blockViewer.line) || looksLikeCodeContent(content, state.blockViewer.title, state.blockViewer.kind)
   els.blockViewerContent.innerHTML = ''
   els.blockViewerContent.classList.toggle('is-code', isCodeish)
   els.blockViewerContent.classList.toggle('is-plain', !isCodeish)
@@ -2945,12 +2950,12 @@ function renderBlockViewerContent() {
   els.blockViewerContent.appendChild(shell)
 }
 
-function openBlockViewer({ title, content }) {
+function openBlockViewer({ title, content, line = null }) {
   const normalized = String(content || '')
   state.blockViewer = {
     title: title || 'block',
     content: normalized,
-    kind: title || 'block',
+    kind: title || 'block', line,
     meta: t('message.viewerMeta', {
       type: title || 'block',
       chars: normalized.length,
@@ -2963,6 +2968,7 @@ function openBlockViewer({ title, content }) {
   els.blockViewerOverlay.classList.remove('is-hidden')
   els.blockViewer.classList.remove('is-hidden')
   els.blockViewer.setAttribute('aria-hidden', 'false')
+  if (line) requestAnimationFrame(() => { const target = els.blockViewerContent.querySelectorAll('.block-viewer-line')[Math.max(0, line - 1)]; target?.classList.add('is-search-match'); target?.scrollIntoView({ block: 'center' }) })
 }
 
 function closeBlockViewer() {
@@ -3222,7 +3228,7 @@ function renderWorkspacePicker() {
   document.querySelector('#workspace-path-label').textContent = path
 }
 
-async function switchWorkspace(path, sessionId = null) {
+async function switchWorkspace(path, sessionId = null, match = null) {
   if (state.sending) return setComposerStatus(t('composer.stopFirst'), true)
   if (state.workspaceSwitching) return
   persistComposerDraft(); state.workspaceSwitching = true; updateComposerState(); renderWorkspacePicker()
@@ -3230,6 +3236,7 @@ async function switchWorkspace(path, sessionId = null) {
     const workspace = await request('/api/workspaces/open', { method: 'POST', body: JSON.stringify({ path }) })
     const url = new URL(location.href); url.search = ''; url.searchParams.set('workspace', workspace.id)
     if (sessionId) url.searchParams.set('session', sessionId)
+    if (match) { url.searchParams.set('message', String(match.messageIndex)); url.searchParams.set('archived', String(Boolean(match.archived))); url.searchParams.set('query', match.query || '') }
     location.assign(url.href)
   } catch (error) {
     document.querySelector('#workspace-dialog-status').textContent = error.message
@@ -4106,10 +4113,11 @@ function renderMessages() {
       const content = blockContent(block)
       const label = blockLabel(block)
       const isTextBlock = block.type === 'text'
+      const markdown = isTextBlock && roleValue === 'assistant'
       const summary = blockSummaryText(block)
       const chips = blockSummaryChips(block).filter(chip => chip.tone !== 'neutral')
       const key = `${messageIndex}:${blockIndex}`
-      const isCodeish = looksLikeCodeContent(content, label, block.type)
+      const isCodeish = !markdown && looksLikeCodeContent(content, label, block.type)
       const isToolBlock = block.type === 'tool_use' || block.type === 'tool_result'
       const isProcessBlock = isToolBlock || processIndexes.has(messageIndex)
       const collapseCandidate = isProcessBlock
@@ -4250,11 +4258,11 @@ function renderMessages() {
         } catch { /* Keep non-JSON tool errors visible as ordinary text. */ }
       }
 
-      const contentNode = document.createElement('pre')
-      contentNode.className = 'message-block-content'
+      const contentNode = markdown ? renderMarkdown(content, { onFile: openFileReference, onError: error => setComposerStatus(error.message, true), locale: state.locale }) : document.createElement('pre')
+      contentNode.classList.add('message-block-content')
       contentNode.id = `message-block-${messageIndex}-${blockIndex}`
       contentNode.tabIndex = 0
-      if (isCodeish) {
+      if (isCodeish && !markdown) {
         contentNode.classList.add('message-block-content--codeish')
       }
       if (isPending) {
@@ -4264,7 +4272,7 @@ function renderMessages() {
         if (isProcessBlock) contentNode.hidden = true
         else contentNode.classList.add('is-collapsed')
       }
-      contentNode.textContent = content
+      if (!markdown) contentNode.textContent = content
 
       blockNode.appendChild(contentNode)
       body.appendChild(blockNode)
@@ -4273,6 +4281,7 @@ function renderMessages() {
     article.appendChild(body)
     row.appendChild(avatar)
     row.appendChild(article)
+    row.dataset.messageIndex = String(messageIndex)
     els.messageList.appendChild(row)
   })
 
@@ -4334,6 +4343,8 @@ function renderEvents() {
 function renderHistoryList() {
   const sessions = sortedSessions(state.bootstrap?.sessions || [])
   const query = state.historyFilter.trim().toLowerCase()
+  if (query && fullHistorySearch) { fullHistorySearch.render(query); return }
+  fullHistorySearch?.clear()
   const visible = query
     ? sessions.filter((session) => matchesSessionQuery(session, query))
     : sessions
@@ -5282,6 +5293,7 @@ function refreshTeamMemorySync() {
 
 async function loadBootstrap({ allowAutoSelect = false } = {}) {
   state.bootstrap = await request('/api/bootstrap')
+  window.dispatchEvent(new Event('opencowork:bootstrap-loaded'))
   refreshTeamMemorySync()
   if (state.sending) {
     renderShellMeta()
@@ -6685,7 +6697,7 @@ renderMcpEditor()
 
 loadBootstrap({ allowAutoSelect: false }).then(async () => {
   const session = new URL(location.href).searchParams.get('session')
-  if (session) await loadSession(session)
+  if (session) { await loadSession(session); const params = new URL(location.href).searchParams; if (params.has('message')) showSearchMatch({ messageIndex: Number(params.get('message')), archived: params.get('archived') === 'true', query: params.get('query') || '' }) }
   state.workspaceEntries = await request('/api/workspaces'); renderSidebarSessions()
 }).catch((error) => {
   setComposerStatus(error.message || t('composer.refreshFailed'), true)
@@ -6703,6 +6715,34 @@ function prepareTask(instruction, { prepend = false, submit = false } = {}) {
     setComposerStatus(state.locale === 'zh' ? '已保留草稿并加入任务要求，请检查后发送。' : 'Draft preserved with task instructions. Review before sending.')
   }
 }
+fullHistorySearch = initHistorySearch({ state, request, container: els.historyList, count: els.historyCountChip, openMatch: openHistoryMatch })
 initWorkspacePicker()
 window.addEventListener('opencowork:composer-state', updateComposerState)
 featurePanels = initFeaturePanels({state, request, composer: els.composerInput, status: setComposerStatus, openSession: loadSession, prepareTask})
+
+async function openFileReference(path, line = 1) {
+  let relative = String(path).replaceAll('\\', '/')
+  const root = String(state.bootstrap?.cwd || '').replaceAll('\\', '/').replace(/\/$/, '')
+  if (relative.toLowerCase().startsWith(`${root.toLowerCase()}/`)) relative = relative.slice(root.length + 1)
+  relative = relative.replace(/^\.\//, '')
+  const result = await request(`/api/workspace/file?path=${encodeURIComponent(relative)}`)
+  openBlockViewer({ title: `${relative}:${line}${result.truncated ? ' (truncated)' : ''}`, content: result.content, line })
+}
+function showSearchMatch(match) {
+  const messages = match.archived ? state.currentSession?.context_collapse_archive : state.currentSession?.messages
+  const message = messages?.[match.messageIndex]
+  if (!message || (match.query && !(message.blocks || []).map(blockContent).join('\n').toLocaleLowerCase().includes(match.query.toLocaleLowerCase()))) throw new Error(state.locale === 'zh' ? '历史已变化，请重新搜索。' : 'History changed. Search again.')
+  if (match.archived) { openBlockViewer({ title: state.locale === 'zh' ? '匹配的归档消息' : 'Matching archived message', content: (message.blocks || []).map(blockContent).join('\n\n') }); return }
+  for (let i = 0; i < (message.blocks || []).length; i++) state.expandedBlocks.add(`${match.messageIndex}:${i}`)
+  state.forceMessageScroll = false; renderMessages()
+  requestAnimationFrame(() => { const row = els.messageList.querySelector(`[data-message-index="${match.messageIndex}"]`); row?.classList.add('is-search-match'); row?.scrollIntoView({ block: 'center' }) })
+}
+async function openHistoryMatch(match) {
+  if (state.sending) throw new Error(t('composer.stopFirst'))
+  const path = match.workspace
+  if (path && workspaceKey(path) !== workspaceKey(state.bootstrap?.cwd)) return switchWorkspace(path, match.sessionId, match)
+  try { setView('chat'); await loadSession(match.sessionId); if (state.currentSessionId === match.sessionId) showSearchMatch(match) }
+  catch (error) { setComposerStatus(error.message, true); throw error }
+}
+
+initSetup({ state, request, status: setComposerStatus, openSettings: tab => { setView('settings'); setSettingsTab(tab) } })

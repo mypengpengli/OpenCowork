@@ -9,6 +9,16 @@
 
 ## Optimization status and next steps
 
+### Completed: final UI and reliability cleanup (2026-09-16)
+
+- [x] Safe assistant Markdown, code copying/highlighting, workspace file links with line selection; raw HTML remains inert.
+- [x] Full-text history search with active-message highlighting, archived-original viewer, cross-workspace links and stale-result rejection.
+- [x] Provider first-run checklist, credential presence distinct from connection verification, optional MCP/skill setup shortcuts.
+- [x] Team sync conflict preservation and reviewed-version checks, token files, bounded requests/responses, persisted remote base, periodic pulls and per-workspace services.
+- [x] Fix worker completion parsing when an active session-memory extraction timestamp is present; add a regression case.
+- [x] Remove stale in-app memory roadmap text and distinguish title/summary sidebar filtering from full-text history search.
+- [x] Keep failed real-model attempts in the validation record; do not mark network-dependent or unavailable-hardware checks as passed.
+
 ### Completed: interaction audit follow-up (2026-09-16)
 
 - [x] Keep removed startup folders out of Recents across host restarts; preserve workspace IDs for open pages and explicit reopening.
@@ -19,7 +29,7 @@
 
 Validation: 20 shell tests; UI/stream regressions and workspace/features integration checks; live browser checks with two-second request delays for stale navigation and first-use command submission.
 
-Audit scope: recent workspace/chat/control changes. UI-7 (integrated full-text navigation) and UI-8 (safe Markdown/highlighting/file links) remain open, along with the separately listed setup, sync and field-validation work.
+Audit scope: recent workspace/chat/control changes. The subsequent cleanup above completes UI-7, UI-8, setup and sync work; external-model and hardware validation limitations remain explicitly listed.
 
 ### Completed: workspace and command interaction fixes (2026-09-16)
 
@@ -58,16 +68,16 @@ quick settings, Chinese/English labels and a 680px viewport. Rebuilt shell and d
 - [x] Read each session once when building history summaries; perform bootstrap disk scans off the async executor.
 - [x] Validate with 64 unit tests and isolated startup/launcher checks. Observed service readiness: 507 ms; bootstrap with 30 fixture sessions: 9 ms. These are local service measurements, not full desktop-window timings or a before/after benchmark.
 
-### Existing requirements still open
+### Earlier requirements — delivery status
 
-These were already requested in the priorities below; the startup work does not complete them:
+The startup and subsequent cleanup work now cover these concrete requirements:
 
 - [x] Simplify history, chat metadata, and settings; improve code/tool block interactions. Delivered 2026-09-11: fixed composer, grouped tool dock, date-grouped history, secondary actions and usage disclosures, advanced execution settings, keyboard navigation and compact window layout.
 - [x] Show included prompt layers, attachment budgets, truncation and context reasons; continue refining deferred-tool explanations.
 - [x] Remove extra provider calls for memory selection; add bounded lexical recall, repeated-note throttling and optional background durable-memory extraction.
-- [ ] Improve team-memory authentication, conflict handling, and large-payload behavior.
+- [x] Improve team-memory authentication, conflict handling, and large-payload behavior: token env/file, explicit stale-safe conflict review, bounded payloads and per-workspace service state.
 - [x] Add portable shell/desktop packaging, WebView2 checks and visible startup errors.
-- [ ] Further reduce first-run provider/MCP setup friction.
+- [x] Reduce first-run provider/MCP setup friction: readiness checklist, credential presence, manual capability check and optional MCP/skill shortcuts.
 
 ### Priorities after reviewing Z Code
 
@@ -135,7 +145,8 @@ the same loopback suites. Real-model and physical mixed-DPI limits remain below.
 ### Remaining validation / extensions
 
 - [ ] Run physical multi-display and mixed-DPI desktop checks on suitable hardware; the current fixture covers owned windows, focus, modal identity, input and occluded capture.
-- [ ] Benchmark real external models on the fixed task suite, reporting success and interventions, rather than extrapolating mock-provider results.
+- [x] Add and run an opt-in real-model smoke benchmark with completion evidence, usage, latency and intervention counts. Read/write and edit/readback succeeded; browser open/fill succeeded but subsequent provider requests failed. See docs/validation.md.
+- [ ] Complete a broader real-model benchmark and the browser end-to-end case after provider connectivity is stable; smoke results do not establish comparative task success.
 - [ ] Add optional OS sandboxing, scoped third-party subprocess credentials, native provider protocols, cross-process iframe support and persistent authenticated browser sessions if needed.
 - [ ] Extend scheduling beyond an open local host and the local inbox when a delivery channel is explicitly configured.
 
@@ -167,8 +178,8 @@ References: [Codex worktrees](https://learn.chatgpt.com/docs/environments/git-wo
 - [x] UI-4 Validate execution ranges before saving and display the effective values returned by the host.
 - [x] UI-5 Keep task/queue and computer takeover status visible; clear stale session state and gate unavailable actions.
 - [x] UI-6 Disable file/session actions until a valid selection exists; show selection and loading failures clearly.
-- [ ] UI-7 Integrate full-text search into history with navigation to matching messages (follow-up enhancement).
-- [ ] UI-8 Add safe Markdown, code highlighting and file navigation (follow-up enhancement).
+- [x] UI-7 Integrate full-text search into history with navigation to matching messages and archived originals.
+- [x] UI-8 Add safe Markdown, code highlighting/copy and workspace file navigation to a line.
 
 UI-1–6 verified on 2026-09-14: UI helper regression checks, 19 shell tests,
 stream parser checks and five chat regression cases passed. Browser checks cover
@@ -195,7 +206,7 @@ session, takeover/resume controls, and file actions before/after selection.
 - Done: remove synchronous provider-based memory selection; use bounded lexical selection. A model-based side-query selector remains optional future work.
 - Done: throttle repeated recalled notes and cap the number and characters loaded per turn.
 - Done: optional automatic durable-memory extraction runs separately after successful turns.
-- Next: keep tightening team-memory sync around richer auth, conflict handling, and large-payload edge cases
+- Done: token environment/file authentication, 401/403 handling, local-preserving conflicts and review UI, 412 preconditions, bounded payloads and per-workspace sync state.
 
 ### Packaging
 

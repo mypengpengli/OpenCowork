@@ -126,6 +126,22 @@ export function initWorkflows({ state, request, composer, status, prepareTask, o
   document.querySelector('#settings-permission-panel .settings-card-list').append(settings)
   request('/api/execution-settings').then(d => { applyExecution(d.execution); browser.checked = d.browser?.enabled !== false; learn.checked = d.learning?.enabled === true; auto.checked = d.learning?.autoAdopt === true; saveSettings.disabled = false; executionReady = true; updateControls() }).catch(e => { settingsState.textContent = e.message })
 
+  const syncCard = el('article', '', 'settings-card team-sync-card'), syncEnabled = input('启用团队记忆同步', 'checkbox')
+  const syncEndpoint = input('同步服务地址'), syncRepo = input('仓库标识，例如 owner/project'), syncEnv = input('令牌环境变量名'), syncFile = input('令牌文件完整路径')
+  const syncStatus = el('p'), syncConflicts = el('div')
+  async function loadSyncConflicts() {
+    const data = await request('/api/team-memory-conflicts')
+    syncConflicts.replaceChildren(...data.conflicts.map(conflict => {
+      const card = detail(conflict.path), local = el('pre', conflict.local, 'feature-file-preview'), remote = el('pre', conflict.remote, 'feature-file-preview')
+      const resolve = async choice => { await call('/api/team-memory-conflicts', { id: conflict.id, choice, remoteHash: conflict.remoteHash, localHash: conflict.localHash }); await loadSyncConflicts() }
+      card.append(el('h4', tr('本地版本', 'Local version')), local, el('h4', tr('远端版本', 'Remote version')), remote, row(btn(tr('保留本地版本', 'Keep local'), () => resolve('local')), btn(tr('使用远端版本', 'Use remote'), () => resolve('remote')))); return card
+    }))
+    if (!data.conflicts.length) syncConflicts.append(el('p', tr('没有待处理的同步冲突', 'No pending sync conflicts')))
+  }
+  syncCard.append(el('h3', tr('团队记忆同步', 'Team memory sync')), el('p', tr('可选功能。令牌选择环境变量或本地文件；冲突会保留双方内容，处理后再上传。', 'Optional. Use a token environment variable or local file. Conflicts preserve both versions and pause uploads.')), label(tr('启用同步', 'Enable sync'), syncEnabled), label(tr('服务地址', 'Endpoint'), syncEndpoint), label(tr('仓库标识', 'Repository'), syncRepo), label(tr('令牌环境变量', 'Token environment variable'), syncEnv), label(tr('令牌文件', 'Token file'), syncFile), row(btn(tr('保存同步设置', 'Save sync settings'), async () => { await call('/api/team-memory-settings', { enabled: syncEnabled.checked, endpoint: syncEndpoint.value, repo: syncRepo.value, tokenEnv: syncEnv.value, tokenFile: syncFile.value }); syncStatus.textContent = tr('设置已保存，重新启动应用后生效。', 'Saved. Restart the app to apply.'); }), btn(tr('查看同步冲突', 'Review sync conflicts'), loadSyncConflicts)), syncStatus, syncConflicts)
+  document.querySelector('#settings-memory-panel .settings-card-list').append(syncCard)
+  request('/api/team-memory-settings').then(data => { syncEnabled.checked = data.enabled; syncEndpoint.value = data.endpoint || ''; syncRepo.value = data.repo || ''; syncEnv.value = data.tokenEnv || ''; syncFile.value = data.tokenFile || '' }).catch(e => { syncStatus.textContent = e.message })
+
   const review = detail('审阅更改与恢复'), file = input('选择或输入工作区文件路径'), reviewBody = el('div'), snapshots = el('div'); let revision
   async function refreshReview() { if (!file.value.trim()) return; revision = await request(`/api/review?path=${encodeURIComponent(file.value.trim())}`); renderReview() }
   async function changeReview(action, hunk) { if (!revision) return; const r = await call('/api/review', { action, hunk, path: revision.path, version: revision.version }); if (r.snapshotId) status(`更改已恢复，恢复点：${r.snapshotId}`); await refreshReview() }

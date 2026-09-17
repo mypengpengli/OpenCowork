@@ -65,8 +65,21 @@ pub struct SessionMemoryState {
     pub last_summarized_message_count: usize,
     #[serde(default)]
     pub tokens_at_last_extraction: usize,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_timestamp"
+    )]
     pub extraction_started_at_unix_ms: Option<u128>,
+}
+
+// Internally tagged worker messages deserialize through Serde Content, which
+// supports u64 but not u128. Millisecond timestamps fit in u64; keep the public
+// in-memory type compatible with duration arithmetic and existing session files.
+fn deserialize_timestamp<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<u128>, D::Error> {
+    Option::<u64>::deserialize(deserializer).map(|value| value.map(u128::from))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

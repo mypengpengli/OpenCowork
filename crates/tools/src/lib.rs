@@ -39,7 +39,9 @@ use team_memory::guard_team_memory_write;
 use team_memory_sync::notify_team_memory_write_if_needed;
 pub use team_memory_sync::{
     force_pull_team_memory, force_push_team_memory, notify_team_memory_write,
-    start_team_memory_sync, stop_team_memory_sync, team_memory_sync_status, TeamMemorySyncStatus,
+    resolve_team_memory_conflict, start_team_memory_sync, stop_team_memory_sync,
+    team_memory_conflicts, team_memory_sync_status, team_memory_sync_status_for,
+    TeamMemorySyncStatus,
 };
 use tokio::runtime::Runtime;
 

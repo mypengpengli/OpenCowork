@@ -26,6 +26,10 @@ export const executionRanges = {
 }
 
 const english = {
+  '启用团队记忆同步': 'Enable team memory sync', '同步服务地址': 'Sync service endpoint',
+  '仓库标识，例如 owner/project': 'Repository, for example owner/project',
+  '令牌环境变量名': 'Token environment variable name', '令牌文件完整路径': 'Absolute token file path',
+
   '目标、补充要求与消息队列': 'Goal, steering and message queue',
   '把本次消息设为目标': 'Use this message as a goal',
   '把本次消息设为目标并自动继续': 'Use this message as a goal and continue automatically',

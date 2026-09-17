@@ -6,6 +6,8 @@ mod learning;
 mod provider_diagnostics;
 mod review;
 mod schedules;
+mod setup;
+mod team_sync;
 mod workflows;
 mod workspace;
 mod workspace_manager;
@@ -465,6 +467,24 @@ async fn main() -> anyhow::Result<()> {
         .route("/app.css", get(app_css))
         .route("/app.js", get(app_js))
         .route(
+            "/markdown.mjs",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+                    include_str!("../static/markdown.mjs"),
+                )
+            }),
+        )
+        .route(
+            "/history-search.mjs",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+                    include_str!("../static/history-search.mjs"),
+                )
+            }),
+        )
+        .route(
             "/ui-controls.mjs",
             get(|| async {
                 (
@@ -522,6 +542,14 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/health", get(|| async { StatusCode::NO_CONTENT }))
         .route("/api/bootstrap", get(get_bootstrap))
         .route("/api/team-memory-sync", get(get_team_memory_sync))
+        .route(
+            "/api/team-memory-settings",
+            get(team_sync::settings).post(team_sync::save),
+        )
+        .route(
+            "/api/team-memory-conflicts",
+            get(team_sync::conflicts).post(team_sync::resolve),
+        )
         .route("/api/slash-specs", get(list_slash_specs))
         .route("/api/tool-manifest", get(get_tool_manifest))
         .route("/api/slash", post(run_slash_command))
@@ -562,6 +590,16 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/review", get(review::get).post(review::change))
         .route("/api/review/history", get(review::history))
         .route("/api/history-search", get(history_search::search))
+        .route("/api/setup-status", get(setup::status))
+        .route(
+            "/setup.mjs",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+                    include_str!("../static/setup.mjs"),
+                )
+            }),
+        )
         .route("/api/provider-probe", post(provider_diagnostics::probe))
         .route(
             "/api/schedules",
@@ -653,7 +691,7 @@ fn build_bootstrap(state: &ShellState) -> Result<BootstrapResponse, ApiError> {
     let acp = state.acp.overview(&settings).map_err(ApiError::internal)?;
     let (provider_profiles, active_provider_profile_id) =
         provider_profile_views(&settings, &provider_view(&config, &model));
-    let sync_status = AppRuntime::current_team_memory_sync_status();
+    let sync_status = AppRuntime::current_team_memory_sync_status(&state.cwd, &state.config_home);
     Ok(BootstrapResponse {
         app_name: "OpenCowork",
         cwd: state.cwd.display().to_string(),
@@ -2223,19 +2261,19 @@ fn memory_parity_checklist() -> Vec<MemoryParityItemView> {
             detail: "The shell can now inspect and edit project, team, and current session memory files.".to_string(),
         },
         MemoryParityItemView {
-            status: "next".to_string(),
-            title: "Split relevant recall into a dedicated side-query route".to_string(),
-            detail: "Relevant-memory selection still rides the main provider path instead of a stricter side-query flow.".to_string(),
+            status: "done".to_string(),
+            title: "Bounded relevant-memory recall".to_string(),
+            detail: "Relevant notes are selected locally with lexical matching and capped before prompt assembly, without an extra provider request.".to_string(),
         },
         MemoryParityItemView {
-            status: "next".to_string(),
-            title: "Add surfaced-memory throttling".to_string(),
-            detail: "Reference repos throttle how many recalled memories can surface across turns; OpenCoWork still needs that guard.".to_string(),
+            status: "done".to_string(),
+            title: "Repeated-memory throttling".to_string(),
+            detail: "Repeated notes and the number and size of recalled memories are limited across turns.".to_string(),
         },
         MemoryParityItemView {
-            status: "next".to_string(),
-            title: "Finish memory distillation and richer team sync handling".to_string(),
-            detail: "Auto-memory distillation plus richer team-memory auth and conflict handling remain behind the reference behavior.".to_string(),
+            status: "done".to_string(),
+            title: "Background extraction and reviewed team sync".to_string(),
+            detail: "Optional extraction records sources and conflicts. Team sync supports token credentials, bounded payloads and explicit conflict resolution without overwriting local edits.".to_string(),
         },
     ]
 }

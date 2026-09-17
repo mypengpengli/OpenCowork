@@ -18,8 +18,8 @@ use opencowork_runtime::{
 };
 use opencowork_skills::{render_skill_listing, SkillCatalog, SkillDefinition};
 use opencowork_tools::{
-    lsp_servers_from_runtime, start_team_memory_sync, team_memory_sync_status, GlobalToolRegistry,
-    TeamMemorySyncStatus, ToolSearchSettings,
+    lsp_servers_from_runtime, start_team_memory_sync, team_memory_sync_status_for,
+    GlobalToolRegistry, TeamMemorySyncStatus, ToolSearchSettings,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -121,12 +121,12 @@ impl AppRuntime {
 
     #[must_use]
     pub fn team_memory_sync_status(&self) -> TeamMemorySyncStatus {
-        team_memory_sync_status()
+        team_memory_sync_status_for(&self.cwd, &self.config_home)
     }
 
     /// Read local sync state without constructing a runtime or contacting MCP servers.
-    pub fn current_team_memory_sync_status() -> TeamMemorySyncStatus {
-        team_memory_sync_status()
+    pub fn current_team_memory_sync_status(cwd: &Path, config_home: &Path) -> TeamMemorySyncStatus {
+        team_memory_sync_status_for(cwd, config_home)
     }
 
     /// Initialize team memory independently of model and tool discovery.
@@ -135,7 +135,7 @@ impl AppRuntime {
             .load()
             .map_err(|error| error.to_string())?;
         start_team_memory_sync(cwd, &default_config_home(), &config)?;
-        Ok(team_memory_sync_status())
+        Ok(team_memory_sync_status_for(cwd, &default_config_home()))
     }
 
     #[must_use]

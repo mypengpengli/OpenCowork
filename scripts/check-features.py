@@ -69,7 +69,7 @@ def check(executable):
             def api(path,payload=None,status=200):
                 conn=http.client.HTTPConnection('127.0.0.1',port,timeout=45)
                 conn.request('POST' if payload is not None else 'GET',path,json.dumps(payload) if payload is not None else None,{'Content-Type':'application/json'})
-                response=conn.getresponse(); data=response.read(); assert response.status==status,(path,response.status,data);conn.close()
+                response=conn.getresponse(); data=response.read(); assert response.status in (status if isinstance(status,tuple) else (status,)),(path,response.status,data);conn.close()
                 return json.loads(data) if data else None
             def chat(prompt,refs=None):
                 conn=http.client.HTTPConnection('127.0.0.1',port,timeout=45)
@@ -77,7 +77,7 @@ def check(executable):
                 response=conn.getresponse(); assert response.status==200,response.read()
                 messages=[json.loads(line) for line in response if line.strip()];conn.close()
                 final=next(m['response'] for m in messages if m['type']=='complete')
-                assert final['status']=='completed',final
+                assert final['status']=='completed',{'status':final['status'],'error':final.get('error')}
                 for event in final['events']:
                     if event['type']=='tool_result': assert not event['is_error'],event
                 return final
@@ -134,7 +134,14 @@ def check(executable):
                     time.sleep(.2)
                 assert provenance['conflicts'],provenance
                 conflict=provenance['conflicts'][0];assert conflict['status']=='needs_review';assert 'Rust 2024' not in note.read_text(encoding='utf-8')
-                api('/api/memory-provenance',{'id':conflict['id'],'action':'replace'});assert 'Rust 2024' in note.read_text(encoding='utf-8')
+                # Conflict records can appear before the extraction worker releases its lease.
+                for _ in range(30):
+                    resolved=api('/api/memory-provenance',{'id':conflict['id'],'action':'replace'},status=(200,400))
+                    if 'error' not in resolved:break
+                    assert 'Memory extraction is running' in resolved['error'],resolved
+                    time.sleep(.1)
+                assert 'error' not in resolved,resolved
+                assert 'Rust 2024' in note.read_text(encoding='utf-8')
                 print('PASS: memory provenance, conflict staging and explicit replacement')
 
                 print('PASS: workspace diffs, path containment, reference/session budgets, diagnostics, resumable plans, computer snapshot/image input, feature switch, independent budgeted memory extraction')
