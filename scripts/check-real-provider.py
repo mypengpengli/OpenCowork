@@ -5,6 +5,34 @@ Reads the active local shell provider. Never prints or copies API keys to disk.
 import argparse, collections, http.client, http.server, json, os, socket, subprocess, tempfile, threading, time
 from pathlib import Path
 
+def browser_evidence_checks(result):
+    """Require successful browser actions, observed page state and a matching answer."""
+    events=result.get('events',[])
+    calls={e['id']:e for e in events if e['type']=='tool_call'}
+    expected_actions=iter(('open','fill','click'))
+    expected=next(expected_actions)
+    page_result=False
+    for event in events:
+        if event['type']!='tool_result' or event.get('is_error'): continue
+        call=calls.get(event.get('tool_use_id'),{})
+        if call.get('name')!='Browser': continue
+        try:
+            payload=call.get('input',{})
+            if isinstance(payload,str): payload=json.loads(payload)
+            output=json.loads(event.get('output','{}'))
+        except (ValueError,TypeError): continue
+        action=payload.get('action')
+        if action==expected and (action!='fill' or payload.get('text')=='Ada'):
+            expected=next(expected_actions,None)
+        if action in ('click','snapshot','wait'):
+            page_result=any(element.get('role')=='StaticText' and element.get('name')=='Hello Ada' for element in output.get('elements',[]))
+    answer=''.join(e.get('text','') for e in events if e['type']=='assistant_text_delta')
+    return {
+        'browserActions':expected is None,
+        'observedPageResult':page_result,
+        'finalAnswerMatches':'Hello Ada' in answer,
+    }
+
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('executable');parser.add_argument('--run',action='store_true');parser.add_argument('--output',required=True);parser.add_argument('--case',action='append');args=parser.parse_args()
     if not args.run: parser.error('--run is required: real model requests consume usage')
@@ -41,7 +69,8 @@ def main():
                     config_data['permissionMode'] = 'danger-full-access' if name == 'browser-form' else 'workspace-write'
                     (project/'.opencowork/settings.json').write_text(json.dumps(config_data),encoding='utf-8')
                     started=time.monotonic();raw=api('/api/chat',{'input':prompt});events=[json.loads(line) for line in raw.splitlines() if line.strip()];result=next((e['response'] for e in events if e['type']=='complete'),{});text='\n'.join(e.get('output','') for e in result.get('events',[]) if e['type']=='tool_result' and not e.get('is_error'));calls=[e for e in result.get('events',[]) if e['type']=='tool_call'];usage=[e['usage'] for e in result.get('events',[]) if e['type']=='usage'];counts=collections.Counter((e['name'],json.dumps(e.get('input'),sort_keys=True)) for e in calls)
-                    item={'case':name,'passed':bool(result.get('status')=='completed' and check(text)),'elapsedMs':round((time.monotonic()-started)*1000),'toolCalls':len(calls),'repeatedIdenticalCalls':sum(max(0,n-1) for n in counts.values()),'interventions':0,'foregroundUsage':usage,'backgroundRequests':0,'status':result.get('status','error'),'error':result.get('error'),'evidence':[e for e in result.get('events',[]) if e['type'] in ('tool_call','tool_result','assistant_text_delta')]};report['results'].append(item);print(json.dumps({k:v for k,v in item.items() if k != 'evidence'},ensure_ascii=False),flush=True)
+                    checks=browser_evidence_checks(result) if name=='browser-form' else {'fileResult':check(text)}
+                    item={'case':name,'passed':bool(result.get('status')=='completed' and all(checks.values())),'checks':checks,'elapsedMs':round((time.monotonic()-started)*1000),'toolCalls':len(calls),'repeatedIdenticalCalls':sum(max(0,n-1) for n in counts.values()),'interventions':0,'foregroundUsage':usage,'backgroundRequests':0,'status':result.get('status','error'),'error':result.get('error'),'evidence':[e for e in result.get('events',[]) if e['type'] in ('tool_call','tool_result','assistant_text_delta')]};report['results'].append(item);print(json.dumps({k:v for k,v in item.items() if k != 'evidence'},ensure_ascii=False),flush=True)
             finally:process.terminate();process.wait(timeout=15)
     page.shutdown();Path(args.output).write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     if not all(r['passed'] for r in report['results']):raise SystemExit(1)

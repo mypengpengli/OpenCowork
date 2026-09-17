@@ -153,7 +153,7 @@ Markdown 使用受限的本地 DOM 渲染，不执行模型返回的 HTML，也�
 - **Git 分块范围**：分块操作支持普通现有文本文件，暂不处理二进制、新增、删除或重命名文件；完整文件暂存支持新增文件。worktree 不自动复制本地配置、安装依赖或合并分支。
 - **定时任务范围**：需要 OpenCoWork 宿主保持运行，结果投递到本地收件箱；不支持关机后执行。异常或执行结果未知的任务暂停，不自动重放。
 - **模型协议**：当前使用 OpenAI 兼容的 Chat Completions 工具／图像协议，尚未实现原生 Responses 或 Anthropic Messages。
-- **验证范围**：已有本地替身服务回归及原生窗口测试；真实外部模型的任务成功率、物理多屏混合 DPI 和全新机器安装仍需进一步实测。
+- **验证范围**：已有本地替身服务回归、原生窗口测试及真实模型浏览器表单完整流程实测；更广泛的任务成功率与全新机器安装仍需进一步实测。
 
 ## 开发与验证
 
@@ -211,6 +211,13 @@ Node.js 和 Python 用于上述开发检查，不是桌面应用的启动依赖�
 
 流式接口 `POST /api/chat` 返回 NDJSON（`started`、`event`、`complete`）；`POST /api/chat/:turn_id/cancel` 请求取消。会话通过独占租约避免并发写入。内置 `bash` 的默认超时为 120 秒，可通过 `timeoutMs` 设置为 100–600000 毫秒。
 
-真实模型实测中，能力检测、文件读写及编辑回读已通过；浏览器任务在打开页面、填写后遇到提供方连接失败，端到端流程尚未验证通过。真实模型复测可使用 `scripts/check-real-provider.py`（显式传入 `--run`，会消耗已配置 API 的用量）。
+真实模型实测中，能力检测、文件读写及编辑回读已通过。2026-09-17 使用当前配置的 `[编程]gpt-5.4` 跑通浏览器表单完整流程：打开一次性本地页面 → 填写 Ada → 点击提交 → 读取页面 Hello Ada → 返回一致的最终回答，耗时 76.3 秒，三次浏览器调用成功，无人工接管或重复调用。该结果覆盖内置浏览器与真实模型的调用链，不代表所有外部网站的兼容性或长期成功率。
+
+复测命令如下（会消耗已配置 API 的用量，报告保存在本地临时目录）：
+
+```powershell
+New-Item -ItemType Directory -Force .tmp | Out-Null
+python scripts/check-real-provider.py "$env:LOCALAPPDATA\OpenClaw\target\debug\opencowork-shell.exe" --run --case browser-form --output .tmp/browser-real.json
+```
 
 仓库保留程序源码、构建与回归脚本，以及 `third-party` 中随依赖分发所需的许可证。构建产物、临时测试报告和本地配置不纳入版本控制。
