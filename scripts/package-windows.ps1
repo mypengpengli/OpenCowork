@@ -33,20 +33,23 @@ popd
 
 1. Extract the whole ZIP to a writable folder.
 2. Double-click Start-OpenCowork.bat. No Rust, Cargo, Python or Node installation is needed.
-3. To use an existing project, drag its folder onto Start-OpenCowork.bat, or pass its path as the first argument.
+3. To use an existing project, drag its folder onto Start-OpenCowork.bat, or select a workspace inside the app.
 4. Configure a model in Settings > Provider. For screenshot-based control choose a model that accepts image inputs.
 
 Requires Windows x64 and Microsoft Edge WebView2 Evergreen Runtime:
 https://developer.microsoft.com/microsoft-edge/webview2/
 
-Computer control is enabled by default. Settings > Permissions includes its switch and optional background memory extraction.
+Browser control requires Chrome or Edge; no browser extension is needed.
+Git review and isolated workspaces require Git.
+Computer and browser control are enabled by default; change them in Settings > Permissions.
 Stopping a chat stops its owned processes. Disabling computer control stops active chats.
 Startup errors appear in a dialog. Logs: %LOCALAPPDATA%\OpenCowork\logs.
 The workspace holds project settings; session history and extracted memories use the normal OpenCowork config home.
+
+Full usage guide and known limitations:
+https://github.com/mypengpengli/OpenCowork/blob/ui-shell-session-naming-slash-polish/README.md
 '@ | Set-Content -LiteralPath (Join-Path $package 'README.md') -Encoding UTF8
     Copy-Item -LiteralPath (Join-Path $projectRoot 'third-party\windows-capture-LICENSE.txt') -Destination $package
-    Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\computer-control.md') -Destination $package
-    Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/autonomous-workflows.md') -Destination $package
     $manifest = Get-ChildItem -LiteralPath $package -File | ForEach-Object { [ordered]@{name=$_.Name;bytes=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash} }
     $manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $package 'manifest.json') -Encoding UTF8
     $archive = "$package.zip"

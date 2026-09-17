@@ -4,21 +4,17 @@
 
 **电脑控制和浏览器控制已内置，默认开启。** 不需要安装浏览器扩展，也不依赖智谱、Codex 或 Hermes 的电脑控制服务。模型请求使用你自己配置的 Provider API；截图识别需要支持图像输入的模型。
 
-[快速开始](#快速开始) · [功能与入口](#功能与入口) · [默认设置](#默认设置) · [使用边界](#使用边界) · [开发与验证](#开发与验证) · [开发清单](TODOLIST.md)
+[快速开始](#快速开始) · [功能与入口](#功能与入口) · [默认设置](#默认设置) · [使用边界](#使用边界) · [开发与验证](#开发与验证)
 
-## 最近更新
-
-截至 **2026-09-16**，P0 / P1 / P2 基础功能、六个方向的后续优化，以及紧凑聊天、工作区切换和会话分类已落地：
+## 主要功能
 
 - **回答与历史**：助手回答支持安全 Markdown、表格、代码高亮与复制；文件链接可定位到行。“会话”页直接全文搜索正文、工具结果和归档，并跳到匹配消息。
 - **配置与同步**：Provider 页面增加开始使用清单与四项能力检测；团队记忆支持令牌环境变量／文件、冲突双方审阅、大小限制和工作区隔离。
-- **本地自动操作**：Windows 窗口与无障碍控件操作、窗口截图、电脑接管与恢复；独立浏览器的页面读取、表单操作、截图及诊断。
+- **本地自动操作**：Windows 窗口与无障碍控件操作、窗口截图、电脑控制开关；独立浏览器的页面读取、表单操作、截图及诊断。
 - **持续任务与恢复**：目标模式、步骤与完成证据、暂停续跑、运行中补充要求、消息队列，以及宿主中断后的检查点恢复。
 - **项目审阅**：文件和历史会话引用、上下文用量说明、Git 文件／分块暂存与撤销、恢复点，以及独立 worktree。
 - **记忆与经验**：中文历史全文搜索、记忆来源与冲突处理、可审阅的技能候选、定时任务与本地结果收件箱。
 - **界面与交互**：固定底部输入框，左下角“+”集中提供附件与工具；权限、模型、推理强度和发送／停止位于同一工具栏。过程记录默认收成一行，最终回答完整展示；侧栏可按项目或时间分类。已修复草稿丢失、切换会话残留任务状态、语言切换影响表单、设置保存错误提示及重复提交等问题。
-
-本轮已补齐会话全文搜索定位、Markdown／代码高亮、首次配置清单和团队同步冲突处理。硬件与外部模型相关的未完成验证单列在 [待办清单](TODOLIST.md) 和 [验证记录](docs/validation.md) 中。
 
 ## 快速开始
 
@@ -102,7 +98,7 @@ Markdown 使用受限的本地 DOM 渲染，不执行模型返回的 HTML，也�
 
 ### 电脑与浏览器怎样工作
 
-**电脑控制**通过本地 Windows API 操作真实桌面。输入绑定选定窗口及最新观察状态，操作后返回新状态；窗口截图使用 Windows Graphics Capture，并在需要时报告兼容回退。每个聊天工作进程复用自己的电脑助手。详细操作与限制见 [电脑控制说明](docs/computer-control.md)。
+**电脑控制**通过本地 Windows API 操作真实桌面。输入绑定选定窗口及最新观察状态，操作后返回新状态；窗口截图使用 Windows Graphics Capture，并在需要时报告兼容回退。每个聊天工作进程复用自己的电脑助手。输入与用户共享活动桌面，可能受窗口焦点和系统权限限制；最小化、受保护或部分硬件加速窗口可能无法截图。已经交给 Windows 的输入不会因停止任务而撤回。
 
 **浏览器控制是软件内置能力。** 它通过 CDP 启动本机 Chrome／Edge 的独立无头实例，使用独立配置目录，不导入你日常浏览器的账号登录状态。它与操作真实 Windows 窗口的电脑工具是两种不同入口，可根据任务选择。
 
@@ -120,7 +116,13 @@ Markdown 使用受限的本地 DOM 渲染，不执行模型返回的 HTML，也�
 
 前台记忆检索采用有界文本匹配，最多选取 3 条／6000 字符，不为挑选记忆额外调用模型。后台记忆提取和技能候选生成需在设置中开启；候选附带来源证据并支持人工审阅，采用后写入项目的 `.opencowork/skills/learned-*/SKILL.md`。
 
-更完整的操作方式、预算规则和异常恢复说明见 [自动工作流说明](docs/autonomous-workflows.md)。
+### 团队记忆同步（可选）
+
+在 **设置 → 记忆 → 团队记忆同步** 配置 HTTP(S) 服务地址、仓库标识，以及令牌环境变量或本地令牌文件（完整路径，最多 16 KB）。更改后重启应用生效。指定的环境变量缺失或认证失败会报错，并保留本地内容；未配置同步不影响日常使用。
+
+每个工作区独立同步。双方修改同一文件时暂停上传，在“查看同步冲突”中对比并选择保留本地或使用远端。需要手工合并时先编辑本地文件，刷新后再保留本地；目前不传播删除操作。
+
+需要自行提供兼容的同步服务，支持 GET/PUT、ETag/checksum 和 If-Match／If-None-Match 条件请求，204 响应需返回 ETag。单文件最多 250 KB，每次最多 512 项，请求／响应最多 4 MiB；首次创建使用 If-None-Match: *。
 
 ## 默认设置
 
@@ -189,11 +191,13 @@ cargo test --target-dir "$env:LOCALAPPDATA\OpenClaw\target"
 # 界面、流式解析与隔离集成回归
 node scripts/check-ui-controls.mjs
 node scripts/check-chat-stream.mjs
+node scripts/check-markdown.mjs
 python scripts/check-workspaces.py "$env:LOCALAPPDATA\OpenClaw\target\debug\opencowork-shell.exe"
 python scripts/check-launcher.py
 python scripts/check-startup.py "$env:LOCALAPPDATA\OpenClaw\target\debug\opencowork-shell.exe"
 python scripts/check-chat.py "$env:LOCALAPPDATA\OpenClaw\target\debug\opencowork-shell.exe"
 python scripts/check-features.py "$env:LOCALAPPDATA\OpenClaw\target\debug\opencowork-shell.exe"
+python scripts/check-setup-sync.py "$env:LOCALAPPDATA\OpenClaw\target\debug\opencowork-shell.exe"
 python scripts/check-optimizations.py "$env:LOCALAPPDATA\OpenClaw\target\debug\opencowork-shell.exe"
 
 # 原生窗口测试：需要交互式 Windows 桌面，会操作自己的测试窗口
@@ -207,8 +211,6 @@ Node.js 和 Python 用于上述开发检查，不是桌面应用的启动依赖�
 
 流式接口 `POST /api/chat` 返回 NDJSON（`started`、`event`、`complete`）；`POST /api/chat/:turn_id/cancel` 请求取消。会话通过独占租约避免并发写入。内置 `bash` 的默认超时为 120 秒，可通过 `timeoutMs` 设置为 100–600000 毫秒。
 
-更多实现进度与验收记录见 [TODOLIST](TODOLIST.md)，运行规则见 [CLAUDE.md](CLAUDE.md)。
+真实模型实测中，能力检测、文件读写及编辑回读已通过；浏览器任务在打开页面、填写后遇到提供方连接失败，端到端流程尚未验证通过。真实模型复测可使用 `scripts/check-real-provider.py`（显式传入 `--run`，会消耗已配置 API 的用量）。
 
-### 本轮实测记录
-
-2026-09-16 的验证包含原生 Windows 窗口操作、回归测试和实际配置模型的小型任务实测。真实模型四项能力检测通过，文件读写及编辑回读已成功；浏览器任务在打开页面、填写后遇到提供方连接失败，未宣称端到端成功。当前只有一块显示器，多屏混合 DPI 尚不能实测。详见 [验证记录与复现](docs/validation.md)。
+仓库保留程序源码、构建与回归脚本，以及 `third-party` 中随依赖分发所需的许可证。构建产物、临时测试报告和本地配置不纳入版本控制。
