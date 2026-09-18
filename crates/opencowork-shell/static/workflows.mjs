@@ -84,9 +84,9 @@ export function initWorkflows({ state, request, composer, status, prepareTask, o
 
   const settings = el('article', '', 'settings-card workflow-settings'); settings.append(el('h3', '自动执行与模型能力'))
   const advanced = detail('高级设置：预算与后台模型')
-  const fields = { maxIterations: ['每个任务最多模型迭代', 500], maxTokens: ['单段自动续跑 token 阈值', 250000], maxSeconds: ['单段自动续跑秒数', 900], repeatedResults: ['连续无进展停止阈值', 3], maxOutputTokens: ['单次最大输出 token', 8192] }
+  const fields = { maxIterations: ['模型迭代上限（0 为不限）', 0], maxTokens: ['单段自动续跑 token 阈值', 250000], maxSeconds: ['单段自动续跑秒数', 900], repeatedResults: ['连续无进展停止阈值', 3], maxOutputTokens: ['单次最大输出 token', 8192] }
   const values = {}
-  advanced.append(el('p', '达到单段时间或 token 阈值时会保存进度并自动继续；任务最多迭代 500 次，连续无进展时停止，避免失控循环。', 'settings-card-copy'))
+  advanced.append(el('p', '默认不限模型迭代次数，可填写正整数设置上限。达到单段时间或 token 阈值时保存进度并自动继续；连续无进展时停止，也可随时点击停止。', 'settings-card-copy'))
   for (const [key, [name, value]] of Object.entries(fields)) { values[key] = input(name, 'number', value); const [min, max] = executionRanges[key]; values[key].min = String(min); values[key].max = String(max); values[key].step = '1'; values[key].required = true; advanced.append(label(name, values[key])) }
   const background = input('后台模型名称（留空跟随当前模型）'), reasoning = el('select'); bind(reasoning, '推理强度', 'aria-label'); background.maxLength = 200
   for (const [value, name] of [['', '推理强度：提供方默认'], ['none', '无'], ['minimal', '最少'], ['low', '低'], ['medium', '中'], ['high', '高']]) { const n = el('option', name); n.value = value; reasoning.append(n) }

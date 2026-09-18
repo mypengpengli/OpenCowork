@@ -35,6 +35,13 @@ def run(executable):
                     data=json.dumps({'choices':[{'message':message}],'usage':{'prompt_tokens':1000,'completion_tokens':100,'prompt_tokens_details':{'cached_tokens':600}}}).encode()
                     self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
                 if 'root-escape' in user and n==0:tool=('write_file',{'path':str(root/'outside.txt'),'content':'must not write'})
+                elif 'time-boundary-resume' in user:
+                    if not auto_continuation:time.sleep(4)
+                    if not results:tool=('read_file',{'path':'fixture.txt'})
+                elif 'cancel-boundary-check' in user:
+                    gate.wait(10)
+                elif 'cross-segment-loop' in user:
+                    tool=('read_file',{'path':'fixture.txt'})
                 elif 'budget-resume' in user:
                     completed=[r for r in results if 'automatic_continuation:' not in str(r.get('content',''))]
                     if not completed:tool=('read_file',{'path':'fixture.txt'})
@@ -71,8 +78,10 @@ def run(executable):
                     else:gate.wait(30)
                 elif 'steering-check' in user and n==0:
                     gate.wait(10);tool=('read_file',{'path':'fixture.txt'})
+                elif 'queued-budget-check' in user:
+                    gate.wait(10)
                 delta={'tool_calls':[{'index':0,'id':f'call-{n}','type':'function','function':{'name':tool[0],'arguments':json.dumps(tool[1])}}]} if tool else {'content':text}
-                prompt_tokens=100 if auto_continuation else 1000
+                prompt_tokens=100 if auto_continuation and 'cross-segment-loop' not in user else 1000
                 chunks=[{'choices':[{'delta':delta}]},{'choices':[],'usage':{'prompt_tokens':prompt_tokens,'completion_tokens':100,'prompt_tokens_details':{'cached_tokens':0 if auto_continuation else 600}}}]
                 data=''.join('data: '+json.dumps(c)+'\n\n' for c in chunks).encode()+b'data: [DONE]\n\n'
                 self.send_response(200);self.send_header('Content-Type','text/event-stream');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
@@ -122,6 +131,26 @@ def run(executable):
             for marker in ['extra-steering-marker','extra-queued-marker']:
                 texts=[b.get('text') for m in stored['messages'] if m['role']=='user' for b in m['blocks']];assert texts.count(marker)==1,(marker,texts)
             assert all(m['status']=='delivered' for m in api('/api/workflows/'+queue_id)['messages']);passed('in-flight steering queued messages and stable IDs')
+            # A completed text response at the cap must not start the queued turn
+            # or acknowledge it as delivered. It remains available on resume.
+            initial=chat('budget-queue-seed');budget_queue_id=initial['sessionId']
+            settings['execution']['maxIterations']=1;setting_path.write_text(json.dumps(settings),encoding='utf-8')
+            gate.clear();capped=[]
+            worker=threading.Thread(target=lambda:capped.append(chat('queued-budget-check',sessionId=budget_queue_id)),daemon=True);worker.start()
+            deadline=time.monotonic()+10
+            while time.monotonic()<deadline and not (config/'turn-journals'/f'{budget_queue_id}.json').exists():time.sleep(.05)
+            api('/api/workflows/'+budget_queue_id,{'action':'queue','text':'budget-queued-marker','id':'budget-queue-fixture'})
+            gate.set();worker.join(30)
+            assert capped and capped[0]['status']=='failed' and 'task iteration limit' in capped[0]['error'],capped
+            assert capped[0]['iterations']==1,capped
+            pending=api('/api/workflows/'+budget_queue_id)['messages']
+            assert any(m['id']=='budget-queue-fixture' and m['status']=='pending' for m in pending),pending
+            assert not any(e['type']=='user_message' and e['id']=='budget-queue-fixture' for e in capped[0]['events']),capped
+            settings['execution']['maxIterations']=40;setting_path.write_text(json.dumps(settings),encoding='utf-8')
+            continued=chat('Resume the queued task',sessionId=budget_queue_id)
+            assert continued['status']=='completed',continued
+            assert all(m['status']=='delivered' for m in api('/api/workflows/'+budget_queue_id)['messages'])
+            passed('task iteration cap preserves queued input for later resume')
             settings['learning']={'enabled':True,'autoAdopt':False};setting_path.write_text(json.dumps(settings),encoding='utf-8');chat('goal-check')
             deadline=time.monotonic()+20;candidates=[]
             while time.monotonic()<deadline:
@@ -131,11 +160,33 @@ def run(executable):
             assert candidates,learning;c=candidates[0];assert c['status']=='pending' and c['evidenceIds']
             api('/api/learning',{'id':c['id'],'action':'adopt'});assert (project/'.opencowork/skills'/c['slug']/'SKILL.md').is_file()
             api('/api/learning',{'id':c['id'],'action':'disable'});assert not (project/'.opencowork/skills'/c['slug']/'SKILL.md').exists();passed('evidence-linked skill candidate adopt disable')
-            settings['learning']['enabled']=False;settings['execution']['maxTokens']=500;setting_path.write_text(json.dumps(settings),encoding='utf-8')
+            settings['learning']['enabled']=False;settings['execution']['maxIterations']=0;settings['execution']['maxTokens']=500;setting_path.write_text(json.dumps(settings),encoding='utf-8')
             resumed=chat('budget-resume');assert resumed['status']=='completed',resumed;assert any(e['type']=='tool_result' and not e['is_error'] for e in resumed['events']);assert any(e['type']=='tool_result' and e['is_error'] and 'automatic_continuation' in e['output'] for e in resumed['events']);passed('token boundary checkpoints and resumes automatically')
             settings['execution']['maxTokens']=100;setting_path.write_text(json.dumps(settings),encoding='utf-8')
             stalled=chat('budget-resume');assert stalled['status']=='failed' and 'no_progress' in stalled['error'],stalled;passed('automatic continuation stops after repeated no progress')
-            settings['execution']['maxTokens']=250000;setting_path.write_text(json.dumps(settings),encoding='utf-8')
+            settings['execution']['maxTokens']=1500;setting_path.write_text(json.dumps(settings),encoding='utf-8')
+            repeated=chat('cross-segment-loop');assert repeated['status']=='failed' and 'no_progress' in repeated['error'],repeated
+            assert len([e for e in repeated['events'] if e['type']=='tool_result' and not e['is_error']])==3,repeated
+            assert any(e['type']=='tool_result' and 'automatic_continuation:' in e['output'] for e in repeated['events']),repeated
+            passed('repeated action guard survives automatic segment restarts')
+            settings['execution']['maxTokens']=250000;settings['execution']['maxSeconds']=2;setting_path.write_text(json.dumps(settings),encoding='utf-8')
+            resumed=chat('time-boundary-resume');assert resumed['status']=='completed',resumed
+            assert any(e['type']=='tool_result' and not e['is_error'] for e in resumed['events']),resumed
+            assert any(b.get('text','').startswith('[OpenCowork automatic continuation]') for m in resumed['session']['messages'] for b in m['blocks']),resumed
+            passed('time boundary resumes with unlimited iteration setting')
+            gate.clear();cancelled=[]
+            worker=threading.Thread(target=lambda:cancelled.append(chat('cancel-boundary-check',turnId='cancel-budget-fixture')),daemon=True);worker.start()
+            def cancel_requests():return [b for b in requests if b.get('stream') and any('cancel-boundary-check' in str(m.get('content','')) for m in b['messages'])]
+            deadline=time.monotonic()+15
+            while time.monotonic()<deadline and len(cancel_requests())<2:time.sleep(.05)
+            assert len(cancel_requests())>=2,'No automatic segment restart before cancellation'
+            assert api('/api/chat/cancel-budget-fixture/cancel',{})['requested']
+            worker.join(10);gate.set()
+            assert cancelled and cancelled[0]['status']=='cancelled',cancelled
+            count=len(cancel_requests());time.sleep(.2);assert len(cancel_requests())==count
+            passed('stop cancels an automatically resumed worker without restarting')
+            settings['execution']['maxSeconds']=120
+            settings['execution']['maxIterations']=40;settings['execution']['maxTokens']=250000;setting_path.write_text(json.dumps(settings),encoding='utf-8')
             diagnostics=api('/api/provider-probe',{});assert all(c['status']=='verified' for c in diagnostics['checks']),diagnostics;passed('provider tools vision stream diagnostics')
             r=chat('browser-check');assert r['status']=='completed',(r,failures);assert len([e for e in r['events'] if e['type']=='tool_result'])==8,(r,failures);passed('owned browser form responsive iframe diagnostics stale refs')
             if os.name=='nt':

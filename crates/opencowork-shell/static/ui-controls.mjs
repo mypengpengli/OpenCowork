@@ -21,7 +21,7 @@ export function processMessageIndexes(messages) {
 }
 
 export const executionRanges = {
-  maxIterations: [1, 1000], maxTokens: [100, 10000000], maxSeconds: [1, 86400],
+  maxIterations: [0, 1000], maxTokens: [100, 10000000], maxSeconds: [1, 86400],
   repeatedResults: [2, 20], maxOutputTokens: [128, 131072],
 }
 
@@ -42,6 +42,9 @@ const english = {
   '已恢复电脑操作权限；从新观察继续。': 'Computer control resumed; observe again before acting.',
   '自动执行与模型能力': 'Execution and model capabilities', '高级设置：预算与后台模型': 'Advanced: budgets and background model',
   '每轮最多迭代': 'Iterations per turn', '每轮 token 上限': 'Tokens per turn', '每轮秒数上限': 'Seconds per turn',
+  '模型迭代上限（0 为不限）': 'Model iteration limit (0 = unlimited)', '单段自动续跑 token 阈值': 'Tokens before automatic continuation',
+  '单段自动续跑秒数': 'Seconds before automatic continuation', '连续无进展停止阈值': 'Consecutive no-progress limit',
+  '默认不限模型迭代次数，可填写正整数设置上限。达到单段时间或 token 阈值时保存进度并自动继续；连续无进展时停止，也可随时点击停止。': 'Model iterations are unlimited by default; enter a positive number to set a cap. Time and token boundaries save progress and continue automatically. Repeated lack of progress stops the task, and you can stop it at any time.',
   '重复结果停止阈值': 'Repeated result limit', '单次最大输出 token': 'Output tokens per request',
   '后台模型名称（留空跟随当前模型）': 'Background model (blank uses current model)', '后台模型': 'Background model',
   '推理强度': 'Reasoning effort', '推理强度：提供方默认': 'Reasoning: provider default', '无': 'None', '最少': 'Minimal', '低': 'Low', '中': 'Medium', '高': 'High',

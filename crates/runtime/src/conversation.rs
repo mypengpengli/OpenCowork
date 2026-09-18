@@ -128,9 +128,9 @@ pub struct TurnLimits {
 impl Default for TurnLimits {
     fn default() -> Self {
         Self {
-            // Match Hermes' generous model-loop backstop. The desktop host
-            // checkpoints and resumes shorter time/token execution segments.
-            max_iterations: 500,
+            // Zero leaves model-loop iterations unlimited. Callers can opt in
+            // to a finite cap without disabling the no-progress guard.
+            max_iterations: 0,
             max_tokens: 250_000,
             max_seconds: 900,
             repeated_results: 3,
@@ -142,11 +142,15 @@ impl TurnLimits {
         let mut v: Self =
             serde_json::from_value(settings.get("execution").cloned().unwrap_or(Value::Null))
                 .unwrap_or_default();
-        v.max_iterations = v.max_iterations.clamp(1, 1000);
+        v.max_iterations = v.max_iterations.min(1000);
         v.max_tokens = v.max_tokens.clamp(100, 10_000_000);
         v.max_seconds = v.max_seconds.clamp(1, 86400);
         v.repeated_results = v.repeated_results.clamp(2, 20);
         v
+    }
+
+    pub fn iteration_limit_reached(&self, completed: usize) -> bool {
+        self.max_iterations != 0 && completed >= self.max_iterations
     }
 }
 
@@ -323,7 +327,7 @@ where
                 ));
             }
             iterations += 1;
-            if iterations > self.max_iterations {
+            if self.max_iterations != 0 && iterations > self.max_iterations {
                 return Err(RuntimeError::new(
                     "turn_budget_reached: iteration limit; progress saved",
                 ));
@@ -693,8 +697,58 @@ mod tests {
     }
 
     #[test]
-    fn default_task_iteration_backstop_matches_long_running_agents() {
-        assert_eq!(TurnLimits::default().max_iterations, 500);
+    fn unlimited_turn_runs_past_the_old_cap_and_explicit_cap_still_stops() {
+        struct CountingApi(usize);
+        impl ApiClient for CountingApi {
+            fn stream(
+                &mut self,
+                _request: ApiRequest,
+            ) -> Result<Vec<AssistantEvent>, RuntimeError> {
+                self.0 += 1;
+                if self.0 > 501 {
+                    return Ok(vec![
+                        AssistantEvent::TextDelta("done".into()),
+                        AssistantEvent::MessageStop,
+                    ]);
+                }
+                Ok(vec![
+                    AssistantEvent::ToolUse {
+                        id: format!("call-{}", self.0),
+                        name: "step".into(),
+                        input: self.0.to_string(),
+                        required_permission: PermissionMode::ReadOnly,
+                    },
+                    AssistantEvent::MessageStop,
+                ])
+            }
+        }
+        for (settings, expected_cap) in [
+            (serde_json::json!({}), None),
+            (serde_json::json!({"execution":{"maxIterations":0}}), None),
+            (
+                serde_json::json!({"execution":{"maxIterations":2}}),
+                Some(2),
+            ),
+        ] {
+            let mut runtime = ConversationRuntime::new(
+                Session::new(),
+                CountingApi(0),
+                StaticToolExecutor::new().register("step", |input| Ok(input.to_string())),
+                PermissionPolicy::new(PermissionMode::ReadOnly),
+                vec![],
+                HookRunner::default(),
+            )
+            .with_limits(TurnLimits::from_settings(&settings));
+            let result = runtime.run_turn("complete every step", None);
+            if let Some(cap) = expected_cap {
+                assert!(result.unwrap_err().to_string().contains("iteration limit"));
+                assert_eq!(runtime.api_client.0, cap);
+            } else {
+                let summary = result.unwrap();
+                assert_eq!(summary.iterations, 502);
+                assert_eq!(summary.tool_results.len(), 501);
+            }
+        }
     }
 
     impl ApiClient for ScriptedApi {

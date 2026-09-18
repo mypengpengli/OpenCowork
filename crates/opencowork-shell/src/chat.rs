@@ -284,7 +284,8 @@ async fn drive_turn(
                 break Ok(response);
             }
             Err(message)
-                if is_budget_boundary(&message) && progress.iterations < limits.max_iterations =>
+                if is_budget_boundary(&message)
+                    && !limits.iteration_limit_reached(progress.iterations) =>
             {
                 let successful_results = progress.successful_tool_results();
                 if successful_results > successful_results_at_boundary {
@@ -466,9 +467,20 @@ async fn execute_worker(
                     Message::Complete { response } => break Ok(response),
                     Message::Error { message } => break Err(message),
                     Message::Event { ref event, seq } => {
+                        // Goal/queued continuations announce their next user
+                        // input before starting another model call. Stop at the
+                        // task-wide cap while leaving that input pending.
+                        if matches!(event, AppEvent::UserMessage { .. })
+                            && limits.iteration_limit_reached(progress.iterations)
+                        {
+                            break Err("turn_budget_reached: task iteration limit; progress saved".into());
+                        }
                         progress.apply(event.clone());
+                        if progress.repeated_tool_results >= limits.repeated_results {
+                            break Err("no_progress: repeated identical action/results across execution segments; inspect state before resuming".into());
+                        }
                         if matches!(event, AppEvent::MessageStop)
-                            && progress.iterations >= limits.max_iterations
+                            && limits.iteration_limit_reached(progress.iterations)
                             && !progress.unresolved.is_empty()
                         {
                             break Err("turn_budget_reached: task iteration limit; a pending tool outcome may be unknown; progress saved".into());
@@ -644,6 +656,9 @@ struct PartialTurn {
     events: Vec<AppEvent>,
     iterations: usize,
     unresolved: BTreeMap<String, String>,
+    tool_inputs: BTreeMap<String, String>,
+    previous_tool_result: Option<String>,
+    repeated_tool_results: usize,
 }
 
 impl PartialTurn {
@@ -656,6 +671,9 @@ impl PartialTurn {
             events: vec![],
             iterations: 0,
             unresolved: BTreeMap::new(),
+            tool_inputs: BTreeMap::new(),
+            previous_tool_result: None,
+            repeated_tool_results: 0,
         }
     }
 
@@ -671,6 +689,11 @@ impl PartialTurn {
     fn apply(&mut self, event: AppEvent) {
         match &event {
             AppEvent::UserMessage { id, text } => {
+                // New queued work can legitimately repeat an earlier action.
+                // Internal budget continuations use append_internal_user and
+                // intentionally retain the same no-progress counter.
+                self.previous_tool_result = None;
+                self.repeated_tool_results = 0;
                 self.session.delivered_user_messages.insert(id.clone());
                 self.flush();
                 self.session.messages.push(ConversationMessage::user(text));
@@ -686,6 +709,7 @@ impl PartialTurn {
                 id, name, input, ..
             } => {
                 self.unresolved.insert(id.clone(), name.clone());
+                self.tool_inputs.insert(id.clone(), input.clone());
                 self.pending.push(ContentBlock::ToolUse {
                     id: id.clone(),
                     name: name.clone(),
@@ -700,6 +724,19 @@ impl PartialTurn {
             } => {
                 self.flush();
                 self.unresolved.remove(tool_use_id);
+                if let Some(input) = self.tool_inputs.remove(tool_use_id) {
+                    // Internal boundary results do not represent executed
+                    // actions and must not reset the cross-segment loop guard.
+                    if !(*is_error && output.starts_with("automatic_continuation:")) {
+                        let signature = format!("{tool_name}:{input}:{is_error}:{output}");
+                        if self.previous_tool_result.as_ref() == Some(&signature) {
+                            self.repeated_tool_results += 1;
+                        } else {
+                            self.previous_tool_result = Some(signature);
+                            self.repeated_tool_results = 1;
+                        }
+                    }
+                }
                 self.session.messages.push(ConversationMessage::tool_result(
                     tool_use_id,
                     tool_name,
