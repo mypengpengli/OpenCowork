@@ -203,7 +203,11 @@ pub fn compact_session(session: &Session, config: CompactConfig) -> CompactResul
     if let Some(result) =
         compact_session_with_session_memory(session, config, SessionMemoryCompactConfig::default())
     {
-        return result;
+        // The memory strategy can retain the entire transcript to meet its
+        // minimum context budget. Fall back to ordinary compaction in that case.
+        if result.removed_message_count > 0 {
+            return result;
+        }
     }
 
     let existing_summary = session
@@ -214,6 +218,13 @@ pub fn compact_session(session: &Session, config: CompactConfig) -> CompactResul
                 .messages
                 .first()
                 .and_then(extract_existing_compacted_summary)
+        })
+        .or_else(|| {
+            session
+                .current_session_memory
+                .as_deref()
+                .filter(|memory| !memory.trim().is_empty())
+                .map(|memory| build_session_memory_compact_summary(memory).0)
         });
     let compacted_prefix_len = usize::from(
         session
@@ -222,10 +233,25 @@ pub fn compact_session(session: &Session, config: CompactConfig) -> CompactResul
             .and_then(extract_existing_compacted_summary)
             .is_some(),
     );
-    let keep_from = session
-        .messages
-        .len()
-        .saturating_sub(config.preserve_recent_messages);
+    let keep_from = adjust_index_to_preserve_tool_pairs(
+        session,
+        session
+            .messages
+            .len()
+            .saturating_sub(config.preserve_recent_messages),
+        compacted_prefix_len,
+    );
+    if keep_from <= compacted_prefix_len {
+        return CompactResult {
+            summary: existing_summary.clone().unwrap_or_default(),
+            formatted_summary: existing_summary
+                .as_deref()
+                .map(format_compact_summary)
+                .unwrap_or_default(),
+            compacted_session: session.clone(),
+            removed_message_count: 0,
+        };
+    }
     let removed = &session.messages[compacted_prefix_len..keep_from];
     let preserved = session.messages[keep_from..].to_vec();
     let new_commit_summary = summarize_messages(removed);
@@ -297,7 +323,7 @@ pub fn budget_session_tool_results(session: &Session, config: ToolResultBudgetCo
 
 fn compact_session_with_session_memory(
     session: &Session,
-    _compact_config: CompactConfig,
+    compact_config: CompactConfig,
     session_memory_config: SessionMemoryCompactConfig,
 ) -> Option<CompactResult> {
     let session_memory = session.current_session_memory.as_deref()?.trim();
@@ -310,10 +336,22 @@ fn compact_session_with_session_memory(
         0 => session.messages.len().checked_sub(1)?,
         count => count.min(session.messages.len()).saturating_sub(1),
     };
-    let keep_from = calculate_session_memory_keep_from(
+    let memory_keep_from = calculate_session_memory_keep_from(
         session,
         last_summarized_index,
         session_memory_config,
+        compacted_prefix_len,
+    );
+    let keep_from = adjust_index_to_preserve_tool_pairs(
+        session,
+        memory_keep_from
+            .min(
+                session
+                    .messages
+                    .len()
+                    .saturating_sub(compact_config.preserve_recent_messages),
+            )
+            .max(compacted_prefix_len),
         compacted_prefix_len,
     );
     let removed = &session.messages[compacted_prefix_len..keep_from];
@@ -1413,6 +1451,76 @@ mod tests {
         assert_eq!(result.compacted_session, session);
         assert!(result.summary.is_empty());
         assert!(result.formatted_summary.is_empty());
+    }
+
+    #[test]
+    fn manual_compaction_falls_back_when_memory_retains_all_messages() {
+        let mut session = Session::from_messages(
+            (0..12)
+                .map(|i| ConversationMessage::user(format!("record {i}")))
+                .collect(),
+        );
+        session.current_session_memory = Some("# Current State\nSmall memory summary".into());
+        session.title = Some("User title".into());
+        let result = compact_session(
+            &session,
+            CompactConfig {
+                max_estimated_tokens: 0,
+                ..Default::default()
+            },
+        );
+        assert_eq!(result.removed_message_count, 6);
+        assert_eq!(
+            result.compacted_session.context_collapse_archive,
+            session.messages[..6]
+        );
+        assert_eq!(
+            result.compacted_session.messages[1..],
+            session.messages[6..]
+        );
+        assert_eq!(result.compacted_session.title, session.title);
+        let again = compact_session(
+            &result.compacted_session,
+            CompactConfig {
+                max_estimated_tokens: 0,
+                ..Default::default()
+            },
+        );
+        assert_eq!(again.removed_message_count, 0);
+        assert_eq!(again.compacted_session, result.compacted_session);
+    }
+
+    #[test]
+    fn ordinary_compaction_preserves_tool_pair_across_cutoff() {
+        let mut messages = vec![
+            ConversationMessage::user("old request"),
+            ConversationMessage::user("old context"),
+            ConversationMessage::assistant(
+                vec![ContentBlock::ToolUse {
+                    id: "keep-tool".into(),
+                    name: "read_file".into(),
+                    input: "{}".into(),
+                }],
+                None,
+            ),
+            ConversationMessage::tool_result("keep-tool", "read_file", "file content", false),
+        ];
+        messages.extend((0..5).map(|i| ConversationMessage::user(format!("recent {i}"))));
+        let session = Session::from_messages(messages);
+        let config = CompactConfig {
+            max_estimated_tokens: 0,
+            ..Default::default()
+        };
+        let result = compact_session(&session, config);
+        assert_eq!(result.removed_message_count, 2);
+        assert_eq!(
+            result.compacted_session.messages[1..],
+            session.messages[2..]
+        );
+        let only_pair_and_recent = session.with_messages(session.messages[2..].to_vec());
+        let unchanged = compact_session(&only_pair_and_recent, config);
+        assert_eq!(unchanged.removed_message_count, 0);
+        assert_eq!(unchanged.compacted_session, only_pair_and_recent);
     }
 
     #[test]

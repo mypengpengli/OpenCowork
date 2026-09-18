@@ -895,10 +895,11 @@ async fn run_slash_command(
             }
             Ok(Json(SlashExecuteResponse {
                 title: "/compact".into(),
-                output: format!(
-                    "Compacted: {} messages. Recent messages retained.",
-                    result.removed_message_count
-                ),
+                output: if result.removed_message_count == 0 {
+                    format!("无需压缩：当前没有可归档的较早消息。保留最近 6 条消息及相关工具调用，历史未修改。\n\nNo compaction needed: keeping the latest 6 messages and their tool calls. History unchanged.\n当前消息数 / Messages: {}", session.messages.len())
+                } else {
+                    format!("已压缩 {} 条较早消息，原文已归档，可在历史全文搜索中查看。\n当前上下文：{} → {} 条消息（含摘要）；近期消息与工具调用保留。\n\nCompacted: {} messages. Originals archived and searchable; recent messages and tool calls retained.", result.removed_message_count, session.messages.len(), result.compacted_session.messages.len(), result.removed_message_count)
+                },
             }))
         })
         .await

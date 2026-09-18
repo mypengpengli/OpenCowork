@@ -147,6 +147,9 @@ def check_chat(executable):
                 rename_response = rename_connection.getresponse()
                 assert rename_response.status == 409, rename_response.read()
                 rename_response.read(); rename_connection.close()
+                compact_connection, compact_response = request('/api/slash', {'input': '/compact', 'sessionId': session})
+                assert compact_response.status == 409, compact_response.read()
+                compact_response.read(); compact_connection.close()
                 deletion, conflict = request(f"/api/sessions/{session}", method="DELETE")
                 assert conflict.status == 409
                 deletion.close()

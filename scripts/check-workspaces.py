@@ -157,16 +157,24 @@ def run(executable):
                 assert api('/api/bootstrap', workspace=a)['permissionMode'] == 'workspace-write'
                 api('/api/slash', {'input': '/permissions unknown'}, workspace=b, expected=400)
                 api('/api/slash', {'input': '/compact', 'sessionId': '../escape'}, workspace=b, expected=400)
+                api('/api/slash', {'input': '/compact'}, workspace=b, expected=400)
                 api('/api/slash', {'input': '/compact', 'sessionId': session_id}, workspace=a, expected=400)
                 archive = json.loads(before)
                 archive['messages'] = archive['messages'] * 8
+                archive['current_session_memory'] = '# Current State\nKeep the manual title and workspace while compacting.'
                 (config/'sessions'/f'{session_id}.json').write_text(json.dumps(archive), encoding='utf-8')
                 compact = api('/api/slash', {'input': '/compact', 'sessionId': session_id}, workspace=b)
-                assert 'Compacted: 0' not in compact['output'], compact
+                assert '已压缩' in compact['output'] and 'Compacted:' in compact['output'], compact
                 stored = json.loads((config/'sessions'/f'{session_id}.json').read_text(encoding='utf-8'))
                 assert len(stored['messages']) < len(archive['messages'])
                 assert stored['workspace'] == archive['workspace']
                 assert stored['title'] == renamed['title']
+                assert stored['context_collapse_archive']
+                assert len(stored['context_collapse_archive']) + len(stored['messages']) - 1 == len(archive['messages'])
+                saved = (config/'sessions'/f'{session_id}.json').read_bytes()
+                repeated = api('/api/slash', {'input': '/compact', 'sessionId': session_id}, workspace=b)
+                assert '无需压缩' in repeated['output'], repeated
+                assert (config/'sessions'/f'{session_id}.json').read_bytes() == saved
 
                 api('/api/workspaces/' + a, method='DELETE')
                 process.terminate(); process.wait(timeout=15); process = start()

@@ -40,6 +40,7 @@ const state = {
   currentSessionId: null,
   currentSession: null,
   sending: false,
+  slashExecuting: false,
   activeTurnId: null,
   stopping: false,
   slashCatalog: {
@@ -2166,11 +2167,11 @@ function updateComposerState() {
   featurePanels?.updateControls()
   const settingsBusy = Boolean(document.querySelector('.composer-toolbar [data-busy]'))
   const empty = !els.composerInput.value.trim()
-  els.sendButton.disabled = state.sending || state.workspaceSwitching || settingsBusy || empty
+  els.sendButton.disabled = state.sending || state.slashExecuting || state.workspaceSwitching || settingsBusy || empty
   els.sendButton.classList.toggle('is-hidden', state.sending)
   els.sendButton.setAttribute('aria-label', t('composer.send'))
   els.sendButton.title = t('composer.send')
-  els.composerInput.readOnly = state.sending
+  els.composerInput.readOnly = state.sending || state.slashExecuting
   els.stopButton.classList.toggle('is-hidden', !state.sending)
   els.stopButton.disabled = !state.activeTurnId || state.stopping
   els.stopButton.setAttribute('aria-label', t(state.stopping ? 'composer.stopping' : 'composer.stop'))
@@ -5470,6 +5471,7 @@ async function loadSession(sessionId, rerender = true) {
 // ACTIONS
 async function submitChat(event) {
   event.preventDefault()
+  if (state.slashExecuting) return
   if (state.workspaceSwitching) return
   if (document.querySelector('.composer-toolbar [data-busy]')) return
   if (state.sending) return
@@ -5861,6 +5863,7 @@ function openMcpFromSlash(name) {
 }
 
 async function executeSlashInput(rawInput) {
+  if (state.slashExecuting || state.sending) return false
   const input = String(rawInput || '').trim()
   if (!input.startsWith('/')) return false
   const [command, ...rest] = input.slice(1).split(/\s+/)
@@ -5884,21 +5887,22 @@ async function executeSlashInput(rawInput) {
     case 'status':
     case 'compact':
     case 'permissions': {
-      const response = await request('/api/slash', {
-        method: 'POST',
-        body: JSON.stringify({
-          input,
-          sessionId: state.currentSessionId,
-        }),
-      })
-      openBlockViewer({
-        title: response.title,
-        content: response.output,
-      })
-      finishSlash('slash.executed', { command: input })
-      await loadBootstrap({ allowAutoSelect: false })
-      if (command === 'compact' && originSession && state.currentSessionId === originSession) await loadSession(originSession)
-      return true
+      state.slashExecuting = true
+      closeSlashMenu(); updateComposerState()
+      setComposerStatus(state.locale === 'zh' ? `正在执行 ${input}…` : `Running ${input}…`)
+      try {
+        const response = await request('/api/slash', {
+          method: 'POST',
+          body: JSON.stringify({ input, sessionId: originSession }),
+        })
+        if (state.currentSessionId !== originSession) return true
+        finishSlash('slash.executed', { command: input })
+        await loadBootstrap({ allowAutoSelect: false })
+        if (command === 'compact' && originSession && state.currentSessionId === originSession) await loadSession(originSession)
+        // loadSession closes old viewers; show the command result after refresh.
+        if (state.currentSessionId === originSession) openBlockViewer({ title: response.title, content: response.output })
+        return true
+      } finally { state.slashExecuting = false; updateComposerState() }
     }
     case 'new':
       finishSlash('slash.executed', { command: input })
