@@ -2,7 +2,7 @@ mod openai_compat;
 
 pub use openai_compat::{
     default_openai_profile_for_model, OpenAiCompatClient, OpenAiCompatProfile,
-    DEFAULT_OPENAI_BASE_URL, DEFAULT_XAI_BASE_URL,
+    DEFAULT_OPENAI_BASE_URL, DEFAULT_PROVIDER_MAX_RETRIES, DEFAULT_XAI_BASE_URL,
 };
 
 use serde::{Deserialize, Serialize};

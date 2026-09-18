@@ -1,8 +1,9 @@
 use reqwest::blocking::{Client, Response};
+use reqwest::header::RETRY_AFTER;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::{
     InputMessage, InputToolCall, ProviderClient, ProviderEvent, ProviderRequest, ProviderResponse,
@@ -10,6 +11,10 @@ use crate::{
 
 pub const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
 pub const DEFAULT_XAI_BASE_URL: &str = "https://api.x.ai/v1";
+pub const DEFAULT_PROVIDER_MAX_RETRIES: u32 = 2;
+const MAX_PROVIDER_MAX_RETRIES: u32 = 5;
+const MAX_RETRY_AFTER_SECS: u64 = 120;
+const MAX_BACKOFF_MILLIS: u64 = 8_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenAiCompatProfile {
@@ -18,6 +23,7 @@ pub struct OpenAiCompatProfile {
     pub base_url_env: Option<String>,
     pub base_url: String,
     pub timeout_ms: u64,
+    pub max_retries: u32,
     pub reasoning_effort: Option<String>,
 }
 
@@ -30,6 +36,7 @@ impl OpenAiCompatProfile {
             base_url_env: Some("OPENAI_BASE_URL".to_string()),
             base_url: DEFAULT_OPENAI_BASE_URL.to_string(),
             timeout_ms: 90_000,
+            max_retries: DEFAULT_PROVIDER_MAX_RETRIES,
             reasoning_effort: None,
         }
     }
@@ -42,6 +49,7 @@ impl OpenAiCompatProfile {
             base_url_env: Some("XAI_BASE_URL".to_string()),
             base_url: DEFAULT_XAI_BASE_URL.to_string(),
             timeout_ms: 90_000,
+            max_retries: DEFAULT_PROVIDER_MAX_RETRIES,
             reasoning_effort: None,
         }
     }
@@ -59,6 +67,7 @@ impl OpenAiCompatProfile {
             base_url_env,
             base_url: base_url.into(),
             timeout_ms: 90_000,
+            max_retries: DEFAULT_PROVIDER_MAX_RETRIES,
             reasoning_effort: None,
         }
     }
@@ -66,6 +75,12 @@ impl OpenAiCompatProfile {
     #[must_use]
     pub fn with_timeout_ms(mut self, timeout_ms: u64) -> Self {
         self.timeout_ms = timeout_ms;
+        self
+    }
+
+    #[must_use]
+    pub fn with_max_retries(mut self, max_retries: u32) -> Self {
+        self.max_retries = max_retries.min(MAX_PROVIDER_MAX_RETRIES);
         self
     }
 
@@ -119,7 +134,8 @@ impl OpenAiCompatClient {
         if let Some(effort) = &self.profile.reasoning_effort {
             body["reasoning_effort"] = effort.clone().into();
         }
-        for attempt in 0..2 {
+        let attempts = self.profile.max_retries.saturating_add(1);
+        for attempt in 0..attempts {
             let result = self
                 .http
                 .post(self.request_url())
@@ -127,20 +143,42 @@ impl OpenAiCompatClient {
                 .json(&body)
                 .send();
             match result {
-                Ok(response) if attempt == 0 && matches!(response.status().as_u16(), 429 | 503) => {
-                    std::thread::sleep(Duration::from_millis(500));
+                Ok(response)
+                    if should_retry_response(&response) && attempt < self.profile.max_retries =>
+                {
+                    std::thread::sleep(retry_delay(&response, attempt));
+                }
+                Ok(response) if should_retry_response(&response) => {
+                    return Err(format!(
+                        "{}; automatic retries exhausted after {attempts} attempts",
+                        http_response_error(&response, &self.profile)
+                    ));
                 }
                 Ok(response) => return Ok(response),
-                Err(e) if attempt == 0 && e.is_connect() => {}
-                Err(e) => return Err(if e.is_timeout() {
-                    "provider_timeout: request outcome is unknown; no automatic replay"
-                } else {
-                    "provider_connection: connection failed; check provider URL, proxy and network"
+                Err(e)
+                    if (e.is_connect() || e.is_timeout()) && attempt < self.profile.max_retries =>
+                {
+                    std::thread::sleep(retry_delay_without_response(attempt));
                 }
-                .into()),
+                Err(e) if e.is_timeout() => {
+                    return Err(format!(
+                        "provider_timeout: request timed out after {attempts} attempts"
+                    ));
+                }
+                Err(e) if e.is_connect() => {
+                    return Err(format!(
+                        "provider_connection: connection failed after {attempts} attempts; check provider URL, proxy and network"
+                    ));
+                }
+                Err(_) => {
+                    return Err(
+                        "provider_connection: connection failed; check provider URL, proxy and network"
+                            .into(),
+                    );
+                }
             }
         }
-        Err("provider_connection: retry exhausted".into())
+        Err("provider_connection: automatic retries exhausted".into())
     }
 
     fn request_url(&self) -> String {
@@ -149,6 +187,51 @@ impl OpenAiCompatClient {
             self.profile.resolved_base_url().trim_end_matches('/')
         )
     }
+}
+
+fn is_retryable_status(status: u16) -> bool {
+    matches!(status, 408 | 409 | 429 | 500..=599)
+}
+
+fn should_retry_response(response: &Response) -> bool {
+    match response
+        .headers()
+        .get("x-should-retry")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+    {
+        Some("true") => return true,
+        Some("false") => return false,
+        _ => {}
+    }
+    let retry_after_too_long = response
+        .headers()
+        .get(RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .is_some_and(|seconds| seconds > MAX_RETRY_AFTER_SECS);
+    !retry_after_too_long && is_retryable_status(response.status().as_u16())
+}
+
+fn retry_delay(response: &Response, attempt: u32) -> Duration {
+    response
+        .headers()
+        .get(RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|seconds| *seconds <= MAX_RETRY_AFTER_SECS)
+        .map(Duration::from_secs)
+        .unwrap_or_else(|| retry_delay_without_response(attempt))
+}
+
+fn retry_delay_without_response(attempt: u32) -> Duration {
+    let base = 500_u64
+        .saturating_mul(1_u64 << attempt.min(4))
+        .min(MAX_BACKOFF_MILLIS);
+    let jitter = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(1_000, |time| 750 + u64::from(time.subsec_nanos() % 251));
+    Duration::from_millis(base.saturating_mul(jitter) / 1_000)
 }
 
 impl ProviderClient for OpenAiCompatClient {
@@ -203,7 +286,7 @@ fn read_success_payload(
 ) -> Result<Value, String> {
     let status = response.status();
     if !status.is_success() {
-        return Err(http_error(status.as_u16(), profile));
+        return Err(http_response_error(&response, profile));
     }
     response.json::<Value>().map_err(|error| error.to_string())
 }
@@ -386,7 +469,7 @@ fn read_stream_events(
 ) -> Result<Vec<ProviderEvent>, String> {
     let status = response.status();
     if !status.is_success() {
-        return Err(http_error(status.as_u16(), profile));
+        return Err(http_response_error(&response, profile));
     }
 
     let mut state = StreamState::default();
@@ -568,14 +651,93 @@ fn parse_cached_tokens(object: &Map<String, Value>, container: &str, field: &str
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+    use std::time::Duration;
+
+    use reqwest::blocking::Client;
     use serde_json::json;
 
     use crate::{InputMessage, InputToolCall, ProviderEvent, ProviderRequest, ToolDefinition};
 
     use super::{
         build_chat_completion_request, default_openai_profile_for_model,
-        normalize_chat_completion_payload, OpenAiCompatProfile, DEFAULT_OPENAI_BASE_URL,
+        normalize_chat_completion_payload, OpenAiCompatClient, OpenAiCompatProfile,
+        DEFAULT_OPENAI_BASE_URL,
     };
+
+    fn test_request() -> ProviderRequest {
+        ProviderRequest {
+            model: "test-model".to_string(),
+            max_output_tokens: Some(16),
+            system_prompt: Vec::new(),
+            messages: vec![InputMessage {
+                role: "user".to_string(),
+                content: Some("hello".to_string()),
+                image_urls: Vec::new(),
+                tool_calls: Vec::new(),
+                tool_call_id: None,
+            }],
+            tools: Vec::new(),
+        }
+    }
+
+    fn start_http_sequence(statuses: Vec<u16>) -> (String, thread::JoinHandle<usize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock provider");
+        let address = listener.local_addr().expect("mock address");
+        let handle = thread::spawn(move || {
+            let mut count = 0;
+            for status in statuses {
+                let (mut stream, _) = listener.accept().expect("accept request");
+                let mut request = Vec::new();
+                let mut byte = [0_u8; 1];
+                while !request.ends_with(b"\r\n\r\n") {
+                    stream.read_exact(&mut byte).expect("read request header");
+                    request.push(byte[0]);
+                }
+                let header = String::from_utf8_lossy(&request);
+                let content_length = header
+                    .lines()
+                    .find_map(|line| {
+                        line.strip_prefix("content-length:")
+                            .or_else(|| line.strip_prefix("Content-Length:"))
+                    })
+                    .and_then(|value| value.trim().parse::<usize>().ok())
+                    .unwrap_or(0);
+                let mut body = vec![0_u8; content_length];
+                stream.read_exact(&mut body).expect("read request body");
+                let (reason, response_body) = if status == 200 {
+                    ("OK", r#"{"choices":[{"message":{"content":"ok"}}]}"#)
+                } else {
+                    ("Temporary Error", r#"{"error":"temporary"}"#)
+                };
+                write!(
+                    stream,
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nRetry-After: 0\r\nConnection: close\r\n\r\n{response_body}",
+                    response_body.len()
+                )
+                .expect("write response");
+                count += 1;
+            }
+            count
+        });
+        (format!("http://{address}"), handle)
+    }
+
+    fn mock_client(base_url: String, max_retries: u32) -> OpenAiCompatClient {
+        let profile = OpenAiCompatProfile::custom("Mock", "MOCK_API_KEY", base_url, None)
+            .with_timeout_ms(2_000)
+            .with_max_retries(max_retries);
+        OpenAiCompatClient {
+            http: Client::builder()
+                .timeout(Duration::from_secs(2))
+                .build()
+                .expect("http client"),
+            profile,
+            api_key: "test".to_string(),
+        }
+    }
 
     #[test]
     fn chooses_xai_profile_for_grok_models() {
@@ -675,6 +837,39 @@ mod tests {
     fn resolves_default_openai_base_url_when_env_is_absent() {
         let profile = OpenAiCompatProfile::openai();
         assert_eq!(profile.base_url, DEFAULT_OPENAI_BASE_URL);
+        assert_eq!(profile.max_retries, 2);
+    }
+
+    #[test]
+    fn retries_transient_http_errors_until_success() {
+        let (base_url, server) = start_http_sequence(vec![504, 503, 200]);
+        let client = mock_client(base_url, 2);
+        let response = client
+            .send(&test_request(), false)
+            .expect("eventual success");
+        assert_eq!(response.status().as_u16(), 200);
+        assert_eq!(server.join().expect("server complete"), 3);
+    }
+
+    #[test]
+    fn reports_retry_exhaustion_for_transient_http_errors() {
+        let (base_url, server) = start_http_sequence(vec![504, 504, 504]);
+        let client = mock_client(base_url, 2);
+        let error = client
+            .send(&test_request(), false)
+            .expect_err("retry exhaustion");
+        assert!(error.contains("HTTP 504"));
+        assert!(error.contains("after 3 attempts"));
+        assert_eq!(server.join().expect("server complete"), 3);
+    }
+
+    #[test]
+    fn does_not_retry_non_transient_http_errors() {
+        let (base_url, server) = start_http_sequence(vec![400]);
+        let client = mock_client(base_url, 2);
+        let response = client.send(&test_request(), false).expect("raw response");
+        assert_eq!(response.status().as_u16(), 400);
+        assert_eq!(server.join().expect("server complete"), 1);
     }
 
     #[test]
@@ -723,6 +918,8 @@ fn http_error(status: u16, profile: &OpenAiCompatProfile) -> String {
     let (kind, hint) = match status {
         401 | 403 => ("authentication", "check API key and model access"),
         404 => ("endpoint", "check base URL and model name"),
+        408 => ("timeout", "provider did not answer in time"),
+        409 => ("conflict", "provider reported a temporary conflict"),
         429 => ("rate_limit", "wait or check quota"),
         400 | 422 => (
             "capability",
@@ -735,4 +932,19 @@ fn http_error(status: u16, profile: &OpenAiCompatProfile) -> String {
         "provider_{kind}: {} HTTP {status}; {hint}",
         profile.provider_name
     )
+}
+
+fn http_response_error(response: &Response, profile: &OpenAiCompatProfile) -> String {
+    let mut message = http_error(response.status().as_u16(), profile);
+    if let Some(request_id) = response
+        .headers()
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        message.push_str("; request id ");
+        message.push_str(request_id);
+    }
+    message
 }

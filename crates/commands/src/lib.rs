@@ -123,9 +123,19 @@ mod tests {
     #[test]
     fn parses_commands() {
         assert_eq!(SlashCommand::parse("/help"), Some(SlashCommand::Help));
+        assert_eq!(SlashCommand::parse("/status"), Some(SlashCommand::Status));
+        assert_eq!(SlashCommand::parse("/compact"), Some(SlashCommand::Compact));
         assert_eq!(
             SlashCommand::parse("/permissions read-only"),
             Some(SlashCommand::Permissions(Some("read-only".to_string())))
+        );
+        assert_eq!(
+            SlashCommand::parse("/permissions"),
+            Some(SlashCommand::Permissions(None))
+        );
+        assert_eq!(
+            SlashCommand::parse("/unknown"),
+            Some(SlashCommand::Unknown("unknown".to_string()))
         );
     }
 

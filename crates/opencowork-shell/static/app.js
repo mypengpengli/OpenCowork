@@ -314,6 +314,7 @@ const els = {
   providerBaseUrl: document.querySelector('#provider-base-url'),
   providerBaseUrlEnv: document.querySelector('#provider-base-url-env'),
   providerTimeoutMs: document.querySelector('#provider-timeout-ms'),
+  providerMaxRetries: document.querySelector('#provider-max-retries'),
   providerProfileActivate: document.querySelector('#provider-profile-activate'),
   resetProviderButton: document.querySelector('#reset-provider-button'),
   deleteProviderProfileButton: document.querySelector('#delete-provider-profile-button'),
@@ -660,7 +661,7 @@ const MESSAGES = {
     'provider.reset': 'Provider 已恢复默认设置。',
     'provider.defaultState': '使用默认值',
     'provider.savedState': '已保存到项目',
-    'provider.formNote': '模型、API Key、Base URL 和超时会随当前 Provider 档一起保存。',
+    'provider.formNote': '模型、API Key、Base URL、超时和重试次数会随当前 Provider 档一起保存。',
     'provider.formNoteSaved': '当前 Provider 已保存到项目配置；修改后会继续覆盖项目级设置。',
     'provider.formNoteDefault': '当前 Provider 仍在使用默认值；保存后才会落到项目配置。',
     'provider.modelPlaceholder': 'claude-sonnet-4-5',
@@ -674,6 +675,8 @@ const MESSAGES = {
     'provider.baseUrlHint': '填写兼容接口根地址；如果走官方默认地址，可保留默认值。',
     'provider.baseUrlEnvHint': '如果你会在不同环境之间切换地址，可以只在这里保存变量名。',
     'provider.timeoutHint': '请求超时只影响这层壳子的请求等待时间。',
+    'provider.maxRetries': '临时错误重试次数',
+    'provider.maxRetriesHint': '默认重试 2 次。仅重试连接失败、HTTP 408/409/429 和 5xx；已经开始输出的流不会自动重放。',
     'providerProfiles.title': 'Provider 配置档',
     'providerProfiles.copy': '可以保存多个 API 提供商配置档，并选择一个作为当前启用项。',
     'providerProfiles.new': '新建 Provider 档',
@@ -947,6 +950,8 @@ const MESSAGES = {
     'message.assistant': '助手',
     'message.system': '系统',
     'message.copy': '复制',
+    'message.resume': '继续任务',
+    'message.resumePrompt': '继续完成上一轮未完成的任务。先检查已保存的工具结果和当前文件状态，避免重复执行已经完成的操作。',
     'message.copyBlock': '复制块',
     'message.blocks': '{{count}} 个块',
     'message.chars': '{{count}} 字符',
@@ -1343,7 +1348,7 @@ const MESSAGES = {
     'provider.reset': 'Provider settings reset to defaults.',
     'provider.defaultState': 'Using defaults',
     'provider.savedState': 'Saved in project',
-    'provider.formNote': 'Model, API key, Base URL, and timeout are saved with the current provider profile.',
+    'provider.formNote': 'Model, API key, Base URL, timeout, and retries are saved with the current provider profile.',
     'provider.formNoteSaved': 'This provider is already saved in the project config; changes here will overwrite the project-level entry.',
     'provider.formNoteDefault': 'This provider is still using defaults; it will only be written after you save it.',
     'provider.modelPlaceholder': 'claude-sonnet-4-5',
@@ -1357,6 +1362,8 @@ const MESSAGES = {
     'provider.baseUrlHint': 'Use the compatible API root. Keep the default if you rely on the standard host.',
     'provider.baseUrlEnvHint': 'If you switch endpoints by environment, keep only the variable name here.',
     'provider.timeoutHint': 'Timeout only affects request waiting on this shell layer.',
+    'provider.maxRetries': 'Transient error retries',
+    'provider.maxRetriesHint': 'Defaults to 2 retries. Only connection failures and HTTP 408/409/429/5xx are retried; a stream that already started is never replayed.',
     'providerProfiles.title': 'Provider Profiles',
     'providerProfiles.copy': 'Save multiple API provider profiles and choose one as the active runtime profile.',
     'providerProfiles.new': 'New Provider Profile',
@@ -1630,6 +1637,8 @@ const MESSAGES = {
     'message.assistant': 'Assistant',
     'message.system': 'System',
     'message.copy': 'Copy',
+    'message.resume': 'Resume task',
+    'message.resumePrompt': 'Continue the preceding unfinished task. Check the saved tool results and current files first so completed actions are not repeated.',
     'message.copyBlock': 'Copy Block',
     'message.blocks': '{{count}} blocks',
     'message.chars': '{{count}} chars',
@@ -3227,6 +3236,11 @@ function closeSessionMenu(restoreFocus = false) {
   if (restoreFocus) document.querySelector('#session-context-button').focus()
 }
 
+function isRecoverableTurnFailure(message) {
+  if (String(message?.role || '').toLowerCase() !== 'system') return false
+  return messagePlainText(message).trim().startsWith('The preceding turn did not complete:')
+}
+
 function initSessionActions() {
   const context = document.querySelector('#session-context'), trigger = document.querySelector('#session-context-button')
   const menu = document.querySelector('#session-context-menu'), dialog = document.querySelector('#session-rename-dialog')
@@ -4187,6 +4201,22 @@ function renderMessages() {
 
     heading.appendChild(role)
     heading.appendChild(meta)
+    if (isRecoverableTurnFailure(message)) {
+      const resumeButton = document.createElement('button')
+      resumeButton.type = 'button'
+      resumeButton.className = 'message-action-button'
+      resumeButton.textContent = t('message.resume')
+      resumeButton.disabled = state.sending || state.slashExecuting
+      resumeButton.addEventListener('click', () => {
+        if (state.sending || state.slashExecuting) return
+        els.composerInput.value = t('message.resumePrompt')
+        persistComposerDraft()
+        syncComposerHeight()
+        updateComposerState()
+        els.composerForm.requestSubmit()
+      })
+      actions.appendChild(resumeButton)
+    }
     actions.appendChild(copyButton)
     header.appendChild(heading)
     header.appendChild(actions)
@@ -4589,6 +4619,7 @@ function renderProviderProfileEditor() {
     baseUrl: runtimeProvider.baseUrl || '',
     baseUrlEnv: runtimeProvider.baseUrlEnv || '',
     timeoutMs: runtimeProvider.timeoutMs || 90000,
+    maxRetries: runtimeProvider.maxRetries ?? 2,
     active: true,
   }
 
@@ -4599,6 +4630,7 @@ function renderProviderProfileEditor() {
   els.providerBaseUrl.value = source.baseUrl || ''
   els.providerBaseUrlEnv.value = source.baseUrlEnv || ''
   els.providerTimeoutMs.value = source.timeoutMs || 90000
+  els.providerMaxRetries.value = source.maxRetries ?? 2
   els.providerProfileActivate.checked = profile ? Boolean(profile.active) : true
   if (els.providerClearApiKey) {
     els.providerClearApiKey.checked = false
@@ -6088,6 +6120,7 @@ async function submitProvider(event) {
         baseUrl: els.providerBaseUrl.value.trim(),
         baseUrlEnv: els.providerBaseUrlEnv.value.trim() || null,
         timeoutMs: Number(els.providerTimeoutMs.value || 90000),
+        maxRetries: Math.max(0, Math.min(5, Math.trunc(Number(els.providerMaxRetries.value || 2)))),
         activate: Boolean(els.providerProfileActivate.checked),
       }),
     })

@@ -152,6 +152,12 @@ def run(executable):
                 assert api('/api/features', workspace=a)['backgroundMemoryEnabled'] is False
                 api('/api/features', {'backgroundMemoryEnabled': False}, workspace=b)
 
+                help_result = api('/api/slash', {'input': '/help'}, workspace=b)
+                assert all(command in help_result['output'] for command in ['/help', '/status', '/compact', '/permissions'])
+                status_result = api('/api/slash', {'input': '/status', 'sessionId': session_id}, workspace=b)
+                assert 'Messages' in status_result['output'] and 'Permission mode' in status_result['output']
+                permission_result = api('/api/slash', {'input': '/permissions'}, workspace=b)
+                assert 'Permission mode' in permission_result['output']
                 api('/api/slash', {'input': '/permissions read-only'}, workspace=b)
                 assert api('/api/bootstrap', workspace=b)['permissionMode'] == 'read-only'
                 assert api('/api/bootstrap', workspace=a)['permissionMode'] == 'workspace-write'
@@ -175,6 +181,16 @@ def run(executable):
                 repeated = api('/api/slash', {'input': '/compact', 'sessionId': session_id}, workspace=b)
                 assert '无需压缩' in repeated['output'], repeated
                 assert (config/'sessions'/f'{session_id}.json').read_bytes() == saved
+
+                profiles = api('/api/provider-profiles', {
+                    'label': 'Fixture retries', 'model': 'fixture', 'name': 'Fixture',
+                    'apiKeyEnv': 'WORKSPACE_TEST_KEY',
+                    'baseUrl': f'http://127.0.0.1:{provider.server_port}/v1',
+                    'timeoutMs': 45000, 'maxRetries': 4, 'activate': True,
+                }, workspace=b)
+                retry_profile = next(profile for profile in profiles if profile['label'] == 'Fixture retries')
+                assert retry_profile['active'] is True and retry_profile['maxRetries'] == 4
+                assert api('/api/bootstrap', workspace=b)['provider']['maxRetries'] == 4
 
                 api('/api/workspaces/' + a, method='DELETE')
                 process.terminate(); process.wait(timeout=15); process = start()

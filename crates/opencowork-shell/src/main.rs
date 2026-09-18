@@ -24,7 +24,7 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Extension as State;
 use axum::{Json, Router};
-use opencowork_api::default_openai_profile_for_model;
+use opencowork_api::{default_openai_profile_for_model, DEFAULT_PROVIDER_MAX_RETRIES};
 use opencowork_app::{AppEvent, AppRuntime};
 use opencowork_commands::{handle_command, specs as slash_specs, SlashCommand};
 use opencowork_mcp::{McpAuthConfig, McpTransport};
@@ -183,6 +183,7 @@ struct ProviderSettingsView {
     base_url: String,
     base_url_env: Option<String>,
     timeout_ms: u64,
+    max_retries: u32,
     persisted: bool,
 }
 
@@ -199,7 +200,12 @@ struct ProviderProfileView {
     base_url: String,
     base_url_env: Option<String>,
     timeout_ms: u64,
+    max_retries: u32,
     active: bool,
+}
+
+const fn default_provider_max_retries() -> u32 {
+    DEFAULT_PROVIDER_MAX_RETRIES
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -215,6 +221,8 @@ struct ProviderProfileRecord {
     base_url: String,
     base_url_env: Option<String>,
     timeout_ms: u64,
+    #[serde(default = "default_provider_max_retries")]
+    max_retries: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -312,6 +320,7 @@ struct ProviderUpdateRequest {
     base_url: String,
     base_url_env: Option<String>,
     timeout_ms: Option<u64>,
+    max_retries: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -327,6 +336,7 @@ struct ProviderProfileUpsertRequest {
     base_url: String,
     base_url_env: Option<String>,
     timeout_ms: Option<u64>,
+    max_retries: Option<u32>,
     activate: bool,
 }
 
@@ -1033,6 +1043,12 @@ async fn save_provider(
     if let Some(timeout_ms) = payload.timeout_ms {
         provider.insert("timeoutMs".to_string(), Value::Number(timeout_ms.into()));
     }
+    if let Some(max_retries) = payload.max_retries {
+        provider.insert(
+            "maxRetries".to_string(),
+            Value::Number(max_retries.min(5).into()),
+        );
+    }
     root.insert("provider".to_string(), Value::Object(provider));
     {
         let shell = shell_mut(root);
@@ -1135,6 +1151,10 @@ async fn save_provider_profile(
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned),
         timeout_ms: payload.timeout_ms.unwrap_or(90_000),
+        max_retries: payload
+            .max_retries
+            .unwrap_or(DEFAULT_PROVIDER_MAX_RETRIES)
+            .min(5),
     };
 
     if let Some(existing) = profiles.iter_mut().find(|profile| profile.id == next_id) {
@@ -1633,6 +1653,7 @@ fn provider_view(config: &opencowork_runtime::RuntimeConfig, model: &str) -> Pro
             base_url: provider.base_url().to_string(),
             base_url_env: provider.base_url_env().map(ToOwned::to_owned),
             timeout_ms: provider.timeout_ms(),
+            max_retries: provider.max_retries(),
             persisted: true,
         };
     }
@@ -1646,6 +1667,7 @@ fn provider_view(config: &opencowork_runtime::RuntimeConfig, model: &str) -> Pro
         base_url,
         base_url_env: profile.base_url_env,
         timeout_ms: profile.timeout_ms,
+        max_retries: profile.max_retries,
         persisted: false,
     }
 }
@@ -1700,6 +1722,7 @@ fn default_provider_profile_record(
         base_url: provider.base_url,
         base_url_env: provider.base_url_env,
         timeout_ms: provider.timeout_ms,
+        max_retries: provider.max_retries,
     }
 }
 
@@ -1740,6 +1763,7 @@ fn provider_profile_views(
             base_url: fallback.base_url.clone(),
             base_url_env: fallback.base_url_env.clone(),
             timeout_ms: fallback.timeout_ms,
+            max_retries: fallback.max_retries,
         });
         active_id = Some("default-provider".to_string());
     }
@@ -1762,6 +1786,7 @@ fn provider_profile_views(
                 base_url: profile.base_url,
                 base_url_env: profile.base_url_env,
                 timeout_ms: profile.timeout_ms,
+                max_retries: profile.max_retries,
             })
             .collect(),
         active_id,
@@ -1804,6 +1829,10 @@ fn apply_provider_profile(root: &mut Map<String, Value>, profile: &ProviderProfi
     provider.insert(
         "timeoutMs".to_string(),
         Value::Number(profile.timeout_ms.into()),
+    );
+    provider.insert(
+        "maxRetries".to_string(),
+        Value::Number(profile.max_retries.min(5).into()),
     );
     root.insert("provider".to_string(), Value::Object(provider));
 }

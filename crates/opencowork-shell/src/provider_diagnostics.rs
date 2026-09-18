@@ -26,6 +26,7 @@ pub(super) fn profile(
             p.base_url(),
             p.base_url_env().map(str::to_owned),
         )
+        .with_max_retries(p.max_retries())
     } else {
         default_openai_profile_for_model(&model)
     }

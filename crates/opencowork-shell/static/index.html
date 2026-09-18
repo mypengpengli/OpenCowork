@@ -961,6 +961,11 @@
             <input id="provider-timeout-ms" name="timeoutMs" type="number" min="1000" />
             <small class="field-hint" data-i18n="provider.timeoutHint">请求超时只影响这层壳子的请求等待时间。</small>
           </label>
+          <label>
+            <span data-i18n="provider.maxRetries">临时错误重试次数</span>
+            <input id="provider-max-retries" name="maxRetries" type="number" min="0" max="5" step="1" value="2" />
+            <small class="field-hint" data-i18n="provider.maxRetriesHint">默认重试 2 次。仅重试连接失败、HTTP 408/409/429 和 5xx；已经开始输出的流不会自动重放。</small>
+          </label>
           <label class="toggle-chip toggle-chip--inline">
             <input id="provider-profile-activate" type="checkbox" checked />
             <span data-i18n="providerProfiles.activate">保存后设为当前启用</span>

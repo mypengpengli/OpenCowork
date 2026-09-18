@@ -1,4 +1,4 @@
-use opencowork_api::{DEFAULT_OPENAI_BASE_URL, DEFAULT_XAI_BASE_URL};
+use opencowork_api::{DEFAULT_OPENAI_BASE_URL, DEFAULT_PROVIDER_MAX_RETRIES, DEFAULT_XAI_BASE_URL};
 use opencowork_mcp::{
     McpAuthConfig, McpOAuthConfig, McpServerDefinition, McpToolDefinition, McpToolPermission,
     McpTransport,
@@ -74,6 +74,7 @@ pub struct RuntimeProviderConfig {
     base_url: String,
     base_url_env: Option<String>,
     timeout_ms: u64,
+    max_retries: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -518,6 +519,11 @@ impl RuntimeProviderConfig {
     pub const fn timeout_ms(&self) -> u64 {
         self.timeout_ms
     }
+
+    #[must_use]
+    pub const fn max_retries(&self) -> u32 {
+        self.max_retries
+    }
 }
 
 impl RuntimeContextConfig {
@@ -889,6 +895,9 @@ fn parse_provider(root: &Value) -> Result<Option<RuntimeProviderConfig>, ConfigE
     if let Some(timeout_ms) = object.get("timeoutMs").and_then(Value::as_u64) {
         provider.timeout_ms = timeout_ms;
     }
+    if let Some(max_retries) = object.get("maxRetries").and_then(Value::as_u64) {
+        provider.max_retries = u32::try_from(max_retries).unwrap_or(u32::MAX).min(5);
+    }
     Ok(Some(provider))
 }
 
@@ -1173,6 +1182,7 @@ fn provider_from_kind(kind: &str) -> Result<RuntimeProviderConfig, ConfigError> 
             base_url: DEFAULT_OPENAI_BASE_URL.to_string(),
             base_url_env: Some("OPENAI_BASE_URL".to_string()),
             timeout_ms: 90_000,
+            max_retries: DEFAULT_PROVIDER_MAX_RETRIES,
         }),
         "xai" => Ok(RuntimeProviderConfig {
             kind: RuntimeProviderKind::OpenAiCompatible,
@@ -1181,6 +1191,7 @@ fn provider_from_kind(kind: &str) -> Result<RuntimeProviderConfig, ConfigError> 
             base_url: DEFAULT_XAI_BASE_URL.to_string(),
             base_url_env: Some("XAI_BASE_URL".to_string()),
             timeout_ms: 90_000,
+            max_retries: DEFAULT_PROVIDER_MAX_RETRIES,
         }),
         other => Err(ConfigError::Invalid(format!(
             "unsupported provider kind `{other}`"
@@ -1518,7 +1529,8 @@ mod tests {
                 "provider": {
                     "kind": "openai-compatible",
                     "name": "Local Gateway",
-                    "timeoutMs": 12345
+                    "timeoutMs": 12345,
+                    "maxRetries": 4
                 },
                 "context": {
                     "preserveRecentMessages": 4,
@@ -1557,6 +1569,7 @@ mod tests {
 
         let loaded = ConfigLoader::new(&cwd, &home).load().expect("load config");
         assert_eq!(loaded.provider().expect("provider").timeout_ms(), 12_345);
+        assert_eq!(loaded.provider().expect("provider").max_retries(), 4);
         assert_eq!(loaded.context().preserve_recent_messages(), 4);
         assert_eq!(loaded.context().max_prompt_tokens(), 2_048);
         assert_eq!(loaded.context().max_instruction_tokens(), 512);

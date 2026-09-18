@@ -483,6 +483,7 @@ fn resolve_provider_profile(config: &RuntimeConfig, model: &str) -> OpenAiCompat
             provider.base_url_env().map(ToOwned::to_owned),
         )
         .with_timeout_ms(provider.timeout_ms())
+        .with_max_retries(provider.max_retries())
     } else {
         default_openai_profile_for_model(model)
     };
