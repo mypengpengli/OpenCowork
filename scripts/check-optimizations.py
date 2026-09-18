@@ -20,6 +20,7 @@ def run(executable):
             def model(self):
                 b=json.loads(self.rfile.read(int(self.headers['Content-Length'])));requests.append(b)
                 messages=b['messages'];user='\n'.join(m['content'] for m in messages if m['role']=='user' and isinstance(m.get('content'),str));results=[m for m in messages if m['role']=='tool'];n=len(results);tool=None;text='Verified 中文深层事实：桌面自动化完成。'
+                auto_continuation='[OpenCowork automatic continuation]' in user
                 if not b.get('stream'):
                     system=' '.join(m.get('content','') for m in messages if m['role']=='system')
                     if 'Independently check' in system:
@@ -34,6 +35,10 @@ def run(executable):
                     data=json.dumps({'choices':[{'message':message}],'usage':{'prompt_tokens':1000,'completion_tokens':100,'prompt_tokens_details':{'cached_tokens':600}}}).encode()
                     self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
                 if 'root-escape' in user and n==0:tool=('write_file',{'path':str(root/'outside.txt'),'content':'must not write'})
+                elif 'budget-resume' in user:
+                    completed=[r for r in results if 'automatic_continuation:' not in str(r.get('content',''))]
+                    if not completed:tool=('read_file',{'path':'fixture.txt'})
+                    else:text='Budget continuation completed after verified read.'
                 elif 'ambiguous-edit' in user and n==0:tool=('edit_file',{'path':'ambiguous.txt','old':'same','new':'other'})
                 elif 'loop-check' in user:tool=('read_file',{'path':'fixture.txt'})
                 elif 'goal-check' in user:
@@ -67,7 +72,8 @@ def run(executable):
                 elif 'steering-check' in user and n==0:
                     gate.wait(10);tool=('read_file',{'path':'fixture.txt'})
                 delta={'tool_calls':[{'index':0,'id':f'call-{n}','type':'function','function':{'name':tool[0],'arguments':json.dumps(tool[1])}}]} if tool else {'content':text}
-                chunks=[{'choices':[{'delta':delta}]},{'choices':[],'usage':{'prompt_tokens':1000,'completion_tokens':100,'prompt_tokens_details':{'cached_tokens':600}}}]
+                prompt_tokens=100 if auto_continuation else 1000
+                chunks=[{'choices':[{'delta':delta}]},{'choices':[],'usage':{'prompt_tokens':prompt_tokens,'completion_tokens':100,'prompt_tokens_details':{'cached_tokens':0 if auto_continuation else 600}}}]
                 data=''.join('data: '+json.dumps(c)+'\n\n' for c in chunks).encode()+b'data: [DONE]\n\n'
                 self.send_response(200);self.send_header('Content-Type','text/event-stream');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
         server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Model);threading.Thread(target=server.serve_forever,daemon=True).start()
@@ -126,7 +132,9 @@ def run(executable):
             api('/api/learning',{'id':c['id'],'action':'adopt'});assert (project/'.opencowork/skills'/c['slug']/'SKILL.md').is_file()
             api('/api/learning',{'id':c['id'],'action':'disable'});assert not (project/'.opencowork/skills'/c['slug']/'SKILL.md').exists();passed('evidence-linked skill candidate adopt disable')
             settings['learning']['enabled']=False;settings['execution']['maxTokens']=500;setting_path.write_text(json.dumps(settings),encoding='utf-8')
-            limited=chat('ambiguous-edit');assert limited['status']=='failed' and 'turn_budget_reached' in limited['error'];assert not any(e['type']=='tool_result' and not e['is_error'] for e in limited['events']);passed('token budget stops before tool execution')
+            resumed=chat('budget-resume');assert resumed['status']=='completed',resumed;assert any(e['type']=='tool_result' and not e['is_error'] for e in resumed['events']);assert any(e['type']=='tool_result' and e['is_error'] and 'automatic_continuation' in e['output'] for e in resumed['events']);passed('token boundary checkpoints and resumes automatically')
+            settings['execution']['maxTokens']=100;setting_path.write_text(json.dumps(settings),encoding='utf-8')
+            stalled=chat('budget-resume');assert stalled['status']=='failed' and 'no_progress' in stalled['error'],stalled;passed('automatic continuation stops after repeated no progress')
             settings['execution']['maxTokens']=250000;setting_path.write_text(json.dumps(settings),encoding='utf-8')
             diagnostics=api('/api/provider-probe',{});assert all(c['status']=='verified' for c in diagnostics['checks']),diagnostics;passed('provider tools vision stream diagnostics')
             r=chat('browser-check');assert r['status']=='completed',(r,failures);assert len([e for e in r['events'] if e['type']=='tool_result'])==8,(r,failures);passed('owned browser form responsive iframe diagnostics stale refs')

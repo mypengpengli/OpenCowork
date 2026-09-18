@@ -21,6 +21,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 
+const AUTOMATIC_CONTINUATION_PREFIX: &str = "[OpenCowork automatic continuation]";
+
 pub(super) type TurnRegistry = Arc<Mutex<BTreeMap<String, ActiveTurn>>>;
 
 pub(super) struct ActiveTurn {
@@ -232,7 +234,7 @@ async fn drive_turn(
     state: ShellState,
     turn_id: String,
     session_id: String,
-    input: WorkerInput,
+    mut input: WorkerInput,
     store: SessionStore,
     sender: mpsc::Sender<Bytes>,
     mut cancel: watch::Receiver<bool>,
@@ -257,16 +259,79 @@ async fn drive_turn(
         .config_home
         .join("turn-journals")
         .join(format!("{session_id}.json"));
-    let result = execute_worker(
-        &state,
-        &turn_id,
-        &session_id,
-        input,
-        &sender,
-        &mut cancel,
-        &mut progress,
-    )
-    .await;
+    let limits = super::load_config(&state)
+        .map(|config| opencowork_runtime::TurnLimits::from_settings(config.merged()))
+        .unwrap_or_default();
+    let mut successful_results_at_boundary = 0usize;
+    let mut consecutive_no_progress_boundaries = 0usize;
+    let result = loop {
+        match execute_worker(
+            &state,
+            &turn_id,
+            &session_id,
+            &input,
+            &sender,
+            &mut cancel,
+            &mut progress,
+        )
+        .await
+        {
+            Ok(mut response) => {
+                // A task may span several worker processes. The host owns the
+                // complete streamed trace and model-iteration count.
+                response.events = progress.events.clone();
+                response.iterations = progress.iterations;
+                break Ok(response);
+            }
+            Err(message)
+                if is_budget_boundary(&message) && progress.iterations < limits.max_iterations =>
+            {
+                let successful_results = progress.successful_tool_results();
+                if successful_results > successful_results_at_boundary {
+                    consecutive_no_progress_boundaries = 0;
+                } else {
+                    consecutive_no_progress_boundaries += 1;
+                }
+                successful_results_at_boundary = successful_results;
+                if consecutive_no_progress_boundaries >= limits.repeated_results {
+                    break Err(format!(
+                        "no_progress: automatic continuation reached {} execution boundaries without a successful tool result; inspect state before resuming ({message})",
+                        consecutive_no_progress_boundaries
+                    ));
+                }
+
+                for event in progress.resolve_budget_boundary(&message) {
+                    progress.apply(event.clone());
+                    if sender
+                        .send(encode(&Message::Event { event, seq: 0 }))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                if sender.is_closed() {
+                    break Err("Client disconnected; turn stopped.".into());
+                }
+                if let Err(error) = checkpoint(&journal, &progress) {
+                    break Err(error);
+                }
+
+                let continuation = automatic_continuation_prompt(&message);
+                // The worker appends payload.input once. Keep the parent's
+                // reconstructed session in lock-step without emitting a fake
+                // user bubble in the live event stream.
+                input.session = progress.session.clone();
+                progress.append_internal_user(&continuation);
+                input.payload.input = continuation;
+                input.payload.goal = None;
+                input.payload.references.clear();
+                input.reference_text.clear();
+                input.reference_diagnostics = serde_json::json!({});
+            }
+            Err(message) => break Err(message),
+        }
+    };
     let mut response = match result {
         Ok(response) => response,
         Err(message) => {
@@ -319,7 +384,7 @@ async fn execute_worker(
     state: &ShellState,
     turn_id: &str,
     session_id: &str,
-    input: WorkerInput,
+    input: &WorkerInput,
     sender: &mpsc::Sender<Bytes>,
     cancel: &mut watch::Receiver<bool>,
     progress: &mut PartialTurn,
@@ -362,7 +427,7 @@ async fn execute_worker(
         .map_err(|e| e.to_string())?;
     let mut stdin = child.stdin.take().ok_or("Worker stdin missing")?;
     let mut lines = BufReader::new(child.stdout.take().ok_or("Worker stdout missing")?).lines();
-    let encoded = serde_json::to_vec(&input).map_err(|e| e.to_string())?;
+    let encoded = serde_json::to_vec(input).map_err(|e| e.to_string())?;
     stdin.write_all(&encoded).await.map_err(|e| e.to_string())?;
     drop(stdin); // Worker waits for EOF before initializing providers or tools.
     sender
@@ -402,6 +467,12 @@ async fn execute_worker(
                     Message::Error { message } => break Err(message),
                     Message::Event { ref event, seq } => {
                         progress.apply(event.clone());
+                        if matches!(event, AppEvent::MessageStop)
+                            && progress.iterations >= limits.max_iterations
+                            && !progress.unresolved.is_empty()
+                        {
+                            break Err("turn_budget_reached: task iteration limit; a pending tool outcome may be unknown; progress saved".into());
+                        }
                         if !matches!(event,AppEvent::AssistantTextDelta{..}) || last_checkpoint.elapsed()>=Duration::from_millis(250) {
                             if let Err(e)=checkpoint(&journal,progress) {break Err(e);}
                             if let Err(e)=opencowork_runtime::write_json_atomic(&ack_path,&seq) {break Err(e.to_string());}
@@ -645,6 +716,48 @@ impl PartialTurn {
         self.events.push(event);
     }
 
+    fn append_internal_user(&mut self, text: &str) {
+        self.flush();
+        self.session.messages.push(ConversationMessage::user(text));
+    }
+
+    fn successful_tool_results(&self) -> usize {
+        self.events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    AppEvent::ToolResult {
+                        is_error: false,
+                        ..
+                    }
+                )
+            })
+            .count()
+    }
+
+    fn resolve_budget_boundary(&mut self, reason: &str) -> Vec<AppEvent> {
+        self.flush();
+        let definitely_not_run = reason.contains("tool not executed");
+        std::mem::take(&mut self.unresolved)
+            .into_iter()
+            .map(|(tool_use_id, tool_name)| AppEvent::ToolResult {
+                tool_use_id,
+                tool_name,
+                output: if definitely_not_run {
+                    format!(
+                        "automatic_continuation: the execution segment ended before this tool ran ({reason})"
+                    )
+                } else {
+                    format!(
+                        "automatic_continuation: the execution segment ended while this tool was pending; its outcome is unknown. Inspect current state before retrying ({reason})"
+                    )
+                },
+                is_error: true,
+            })
+            .collect()
+    }
+
     fn finish(&mut self, reason: &str) {
         self.flush();
         for (id, name) in std::mem::take(&mut self.unresolved) {
@@ -658,6 +771,16 @@ impl PartialTurn {
                 "The preceding turn did not complete: {reason}"
             )));
     }
+}
+
+fn is_budget_boundary(message: &str) -> bool {
+    message.starts_with("turn_budget_reached:")
+}
+
+fn automatic_continuation_prompt(reason: &str) -> String {
+    format!(
+        "{AUTOMATIC_CONTINUATION_PREFIX} The previous execution segment reached a time, token, or iteration boundary: {reason}. Continue the unfinished user task from the saved progress. Inspect current files and successful tool results first. A pending tool with an unknown outcome may have run; verify state before any retry and never blindly repeat side effects. Finish only when the original task is complete or genuinely blocked."
+    )
 }
 
 fn checkpoint(path: &std::path::Path, progress: &PartialTurn) -> Result<(), String> {
@@ -732,6 +855,28 @@ mod tests {
         assert!(
             matches!(&turn.session.messages[2].blocks[0], ContentBlock::ToolResult { tool_use_id, is_error: true, .. } if tool_use_id == "call-1")
         );
+    }
+
+    #[test]
+    fn budget_boundary_pairs_pending_tool_for_safe_automatic_resume() {
+        let mut turn = PartialTurn::new(Session::new(), "inspect");
+        turn.apply(AppEvent::ToolCall {
+            id: "call-1".into(),
+            name: "bash".into(),
+            input: "{}".into(),
+            required_permission: "full".into(),
+        });
+        let events =
+            turn.resolve_budget_boundary("turn_budget_reached: tool not executed; progress saved");
+        assert!(matches!(
+            &events[0],
+            AppEvent::ToolResult { tool_use_id, output, is_error: true, .. }
+                if tool_use_id == "call-1" && output.contains("before this tool ran")
+        ));
+        assert!(is_budget_boundary(
+            "turn_budget_reached: time limit; progress saved"
+        ));
+        assert!(!is_budget_boundary("provider_unavailable: HTTP 504"));
     }
 
     #[test]

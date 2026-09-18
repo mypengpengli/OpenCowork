@@ -128,7 +128,9 @@ pub struct TurnLimits {
 impl Default for TurnLimits {
     fn default() -> Self {
         Self {
-            max_iterations: 80,
+            // Match Hermes' generous model-loop backstop. The desktop host
+            // checkpoints and resumes shorter time/token execution segments.
+            max_iterations: 500,
             max_tokens: 250_000,
             max_seconds: 900,
             repeated_results: 3,
@@ -192,7 +194,7 @@ where
             tool_executor,
             permission_policy,
             system_prompt,
-            max_iterations: 80,
+            max_iterations: TurnLimits::default().max_iterations,
             limits: TurnLimits::default(),
             usage_tracker,
             hooks,
@@ -323,7 +325,7 @@ where
             iterations += 1;
             if iterations > self.max_iterations {
                 return Err(RuntimeError::new(
-                    "tool loop exceeded the configured iteration cap",
+                    "turn_budget_reached: iteration limit; progress saved",
                 ));
             }
 
@@ -677,7 +679,7 @@ impl ToolExecutor for StaticToolExecutor {
 mod tests {
     use super::{
         ApiClient, ApiRequest, AssistantEvent, ConversationRuntime, RuntimeError,
-        RuntimePromptAugmenter, RuntimePromptUpdate, StaticToolExecutor,
+        RuntimePromptAugmenter, RuntimePromptUpdate, StaticToolExecutor, TurnLimits,
     };
     use crate::hooks::HookRunner;
     use crate::permissions::{
@@ -688,6 +690,11 @@ mod tests {
 
     struct ScriptedApi {
         calls: usize,
+    }
+
+    #[test]
+    fn default_task_iteration_backstop_matches_long_running_agents() {
+        assert_eq!(TurnLimits::default().max_iterations, 500);
     }
 
     impl ApiClient for ScriptedApi {

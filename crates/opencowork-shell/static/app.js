@@ -2456,7 +2456,11 @@ function buildPendingMessages() {
 }
 
 function buildVisibleMessages() {
-  return [...(state.currentSession?.messages || []), ...buildPendingMessages()]
+  const saved = (state.currentSession?.messages || []).filter(message => {
+    if (message.role !== 'user') return true
+    return !(message.blocks || []).some(block => block.type === 'text' && String(block.text || '').startsWith('[OpenCowork automatic continuation]'))
+  })
+  return [...saved, ...buildPendingMessages()]
 }
 
 function renderConversationSurface() {
