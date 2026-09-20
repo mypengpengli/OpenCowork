@@ -20,6 +20,23 @@ export function processMessageIndexes(messages) {
   return indexes
 }
 
+// Consecutive work records share one disclosure. User messages, final answers
+// and system notices remain outside it, including errors with recovery actions.
+export function processMessageGroups(messages, indexes = processMessageIndexes(messages)) {
+  const groups = []
+  messages.forEach((message, index) => {
+    if (!indexes.has(index) || !['assistant', 'tool'].includes(message.role)) return
+    let group = groups.at(-1)
+    if (!group || group.end !== index - 1) {
+      group = { start: index, end: index, count: 0 }
+      groups.push(group)
+    }
+    group.end = index
+    group.count += (message.blocks || []).length
+  })
+  return groups
+}
+
 export const executionRanges = {
   maxIterations: [0, 1000], maxTokens: [100, 10000000], maxSeconds: [1, 86400],
   repeatedResults: [2, 20], maxOutputTokens: [128, 131072],

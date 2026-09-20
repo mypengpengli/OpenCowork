@@ -3,7 +3,7 @@ import { renderMarkdown } from '/markdown.mjs'
 import { initHistorySearch } from '/history-search.mjs'
 import { readChatStream, appendChatEvent } from '/chat-stream.mjs'
 import { initFeaturePanels } from '/features.mjs'
-import { appendDraft, processMessageIndexes, resolveSlashInvocation, coalesceAsync, completeSlashInput } from '/ui-controls.mjs'
+import { appendDraft, processMessageIndexes, processMessageGroups, resolveSlashInvocation, coalesceAsync, completeSlashInput } from '/ui-controls.mjs'
 let fullHistorySearch
 let featurePanels
 const selectedWorkspaceId = new URL(location.href).searchParams.get('workspace') || ''
@@ -4122,10 +4122,17 @@ function renderTurnStats() {
 function renderMessages() {
   const messages = buildVisibleMessages()
   const processIndexes = processMessageIndexes(messages)
+  const groups = processMessageGroups(messages, processIndexes)
+  const groupStarts = new Map(groups.map(group => [group.start, group]))
+  const processKeyPrefix = `${state.currentSessionId || 'pending'}:`
+  const previousGroups = new Map([...els.messageList.querySelectorAll('.execution-process')].map(node => [
+    node.dataset.processKey, { open: node.open, scrollTop: node.querySelector('.execution-process-body').scrollTop },
+  ]).filter(([key]) => key.startsWith(processKeyPrefix)))
   const collapsibleKeys = []
   const previousScrollTop = els.messageScroll.scrollTop
   const previousBottomGap = els.messageScroll.scrollHeight - els.messageScroll.scrollTop - els.messageScroll.clientHeight
-  const keepPinned = state.forceMessageScroll || previousBottomGap < 96
+  const keepPinned = state.forceMessageScroll || (previousBottomGap < 96 &&
+    ![...previousGroups.values()].some(group => group.open))
   els.messageList.innerHTML = ''
   els.messageCount.textContent = String(messages.length)
 
@@ -4136,7 +4143,43 @@ function renderMessages() {
     return
   }
 
+  let processBody = null
+  let processEnd = -1
+  const restoredPanels = []
+  const refreshExpandAll = () => {
+    const allExpanded = collapsibleKeys.length > 0 &&
+      collapsibleKeys.every(key => state.expandedBlocks.has(key)) &&
+      [...els.messageList.querySelectorAll('.execution-process')].every(node => node.open)
+    els.expandAllButton.disabled = collapsibleKeys.length === 0
+    els.expandAllButton.textContent = allExpanded ? t('conversation.collapseAll') : t('conversation.expandAll')
+  }
   messages.forEach((message, messageIndex) => {
+    const group = groupStarts.get(messageIndex)
+    if (group) {
+      const disclosure = document.createElement('details')
+      disclosure.className = 'execution-process'
+      disclosure.dataset.processKey = `${processKeyPrefix}${group.start}`
+      const previous = previousGroups.get(disclosure.dataset.processKey)
+      disclosure.open = previous?.open || false
+      const summary = document.createElement('summary')
+      summary.className = 'execution-process-toggle'
+      const title = document.createElement('span')
+      title.textContent = state.locale === 'zh' ? '执行过程' : 'Work log'
+      const count = document.createElement('span')
+      count.className = 'execution-process-count'
+      count.textContent = state.locale === 'zh' ? `${group.count} 条记录` : `${group.count} records`
+      summary.append(title, count)
+      processBody = document.createElement('div')
+      processBody.className = 'execution-process-body'
+      processBody.tabIndex = 0
+      processBody.setAttribute('role', 'region')
+      processBody.setAttribute('aria-label', state.locale === 'zh' ? '执行过程，可上下滚动查看' : 'Work log, scroll to browse')
+      disclosure.append(summary, processBody)
+      disclosure.addEventListener('toggle', refreshExpandAll)
+      els.messageList.appendChild(disclosure)
+      restoredPanels.push({ body: processBody, scrollTop: previous?.scrollTop || 0 })
+      processEnd = group.end
+    }
     const roleValue = String(message.role || 'assistant').toLowerCase()
     const isPending = Boolean(message.__pending)
     const row = document.createElement('div')
@@ -4402,13 +4445,12 @@ function renderMessages() {
     row.appendChild(avatar)
     row.appendChild(article)
     row.dataset.messageIndex = String(messageIndex)
-    els.messageList.appendChild(row)
+    if (processBody && messageIndex <= processEnd) processBody.appendChild(row)
+    else els.messageList.appendChild(row)
   })
 
-  const allExpanded =
-    collapsibleKeys.length > 0 && collapsibleKeys.every((key) => state.expandedBlocks.has(key))
-  els.expandAllButton.disabled = collapsibleKeys.length === 0
-  els.expandAllButton.textContent = allExpanded ? t('conversation.collapseAll') : t('conversation.expandAll')
+  restoredPanels.forEach(({ body, scrollTop }) => { body.scrollTop = scrollTop })
+  refreshExpandAll()
   if (keepPinned) {
     els.messageScroll.scrollTop = els.messageScroll.scrollHeight
   } else {
@@ -5577,7 +5619,6 @@ async function submitChat(event) {
           renderScheduled = true
           requestAnimationFrame(() => {
             renderScheduled = false
-            state.forceMessageScroll = true
             renderConversationSurface()
           })
         }
@@ -5594,8 +5635,6 @@ async function submitChat(event) {
     state.currentSessionId = response.sessionId
     state.currentSession = response.session
     state.pendingTurn = null
-    state.forceMessageScroll = true
-    state.expandedBlocks.clear()
     renderConversationSurface()
 
     await loadBootstrap({ allowAutoSelect: false }).catch(() => {})
@@ -6080,12 +6119,14 @@ function toggleExpandAll() {
     })
   })
 
-  const allExpanded = keys.length > 0 && keys.every((key) => state.expandedBlocks.has(key))
+  const allExpanded = keys.length > 0 && keys.every((key) => state.expandedBlocks.has(key)) &&
+    [...els.messageList.querySelectorAll('.execution-process')].every(node => node.open)
   if (allExpanded) {
     keys.forEach((key) => state.expandedBlocks.delete(key))
   } else {
     keys.forEach((key) => state.expandedBlocks.add(key))
   }
+  els.messageList.querySelectorAll('.execution-process').forEach(node => { node.open = !allExpanded })
   renderMessages()
 }
 
@@ -6860,9 +6901,17 @@ function showSearchMatch(match) {
   const message = messages?.[match.messageIndex]
   if (!message || (match.query && !(message.blocks || []).map(blockContent).join('\n').toLocaleLowerCase().includes(match.query.toLocaleLowerCase()))) throw new Error(state.locale === 'zh' ? '历史已变化，请重新搜索。' : 'History changed. Search again.')
   if (match.archived) { openBlockViewer({ title: state.locale === 'zh' ? '匹配的归档消息' : 'Matching archived message', content: (message.blocks || []).map(blockContent).join('\n\n') }); return }
-  for (let i = 0; i < (message.blocks || []).length; i++) state.expandedBlocks.add(`${match.messageIndex}:${i}`)
+  const visibleIndex = buildVisibleMessages().indexOf(message)
+  if (visibleIndex < 0) { openBlockViewer({ title: t('message.inspectBlock'), content: messagePlainText(message) }); return }
+  for (let i = 0; i < (message.blocks || []).length; i++) state.expandedBlocks.add(`${visibleIndex}:${i}`)
   state.forceMessageScroll = false; renderMessages()
-  requestAnimationFrame(() => { const row = els.messageList.querySelector(`[data-message-index="${match.messageIndex}"]`); row?.classList.add('is-search-match'); row?.scrollIntoView({ block: 'center' }) })
+  requestAnimationFrame(() => {
+    const row = els.messageList.querySelector(`[data-message-index="${visibleIndex}"]`)
+    const process = row?.closest('.execution-process')
+    if (process) process.open = true
+    row?.classList.add('is-search-match')
+    row?.scrollIntoView({ block: 'center' })
+  })
 }
 async function openHistoryMatch(match) {
   if (state.sending) throw new Error(t('composer.stopFirst'))

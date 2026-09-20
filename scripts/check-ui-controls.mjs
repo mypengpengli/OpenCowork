@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { appendDraft, createUi, processMessageIndexes, resolveSlashInvocation, coalesceAsync, completeSlashInput } from '../crates/opencowork-shell/static/ui-controls.mjs'
+import { appendDraft, createUi, processMessageIndexes, processMessageGroups, resolveSlashInvocation, coalesceAsync, completeSlashInput } from '../crates/opencowork-shell/static/ui-controls.mjs'
 
 const draft = '保留这段草稿\nconst example = "<script>";'
 assert.equal(appendDraft(draft, 'Plan first', true), `Plan first\n\n${draft}`)
@@ -15,6 +15,17 @@ const history = [text('user', 'Task one'), text('assistant', 'I will inspect the
   text('assistant', 'Another complete answer\n'.repeat(60))]
 assert.deepEqual([...processMessageIndexes(history)].sort(), [1, 2, 3])
 assert.equal(processMessageIndexes([text('assistant', 'Stopped partial output')]).size, 0)
+assert.deepEqual(processMessageGroups(history), [{ start: 1, end: 3, count: 3 }])
+assert.deepEqual(processMessageGroups([text('assistant', 'Complete answer')]), [])
+const interrupted = [...history.slice(0, 4), text('system', 'Provider failed; resume task'),
+  history[2], history[3], history[4], ...history.slice(0, 5)]
+assert.deepEqual(processMessageGroups(interrupted), [
+  { start: 1, end: 3, count: 3 }, { start: 5, end: 6, count: 2 }, { start: 9, end: 11, count: 3 },
+])
+assert.deepEqual(processMessageGroups([text('user', 'Inspect'),
+  { role: 'assistant', blocks: [{ type: 'text', text: 'Checking' }, { type: 'tool_use', name: 'Read' }] },
+  history[3], text('assistant', 'Final answer')]), [{ start: 1, end: 2, count: 3 }])
+console.log('PASS: grouped work logs preserve final answers, user boundaries and visible recovery errors')
 
 // Exercise actual async button behavior: one in-flight action, local error, retry.
 const feedback = { textContent: '', dataset: {} }

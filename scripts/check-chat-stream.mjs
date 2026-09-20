@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { readChatStream, appendChatEvent } from '../crates/opencowork-shell/static/chat-stream.mjs'
+import { processMessageGroups } from '../crates/opencowork-shell/static/ui-controls.mjs'
 
 const encoder = new TextEncoder()
 const messages = [
@@ -42,9 +43,13 @@ const projected = []
 appendChatEvent(projected, { type: 'assistant_text_delta', text: '检查' })
 appendChatEvent(projected, { type: 'assistant_text_delta', text: '文件' })
 appendChatEvent(projected, { type: 'tool_call', id: '1', name: 'read_file', input: '{}' })
+assert.deepEqual(processMessageGroups(projected), [{ start: 0, end: 0, count: 2 }])
 appendChatEvent(projected, { type: 'message_stop' })
 appendChatEvent(projected, { type: 'tool_result', tool_use_id: '1', tool_name: 'read_file', output: 'ok', is_error: false })
+const streamedGroups = processMessageGroups(projected)
+assert.deepEqual(streamedGroups, [{ start: 0, end: 1, count: 3 }])
 appendChatEvent(projected, { type: 'assistant_text_delta', text: '完成' })
+assert.deepEqual(processMessageGroups(projected), streamedGroups)
 assert.equal(projected.length, 3)
 assert.equal(projected[0].blocks[0].text, '检查文件')
 assert.equal(projected[0].blocks[1].id, '1')
