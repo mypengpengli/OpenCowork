@@ -4241,7 +4241,7 @@ function rotateDial(sector, live) {
     dialRotation = dialFace.animate([
       { '--dial-angle': start + 'deg' },
       { '--dial-angle': (start + 360) + 'deg' },
-    ], { duration: 11000, iterations: Infinity })
+    ], { duration: 180000, iterations: Infinity })
   } else if (live) {
     const travel = ((target - start) % 360 + 540) % 360 - 180
     const sameTool = Math.abs(travel) < 18
