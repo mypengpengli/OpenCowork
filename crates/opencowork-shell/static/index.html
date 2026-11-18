@@ -309,6 +309,52 @@
               <span class="composer-helper-copy" data-i18n="composer.shortcut">Enter 发送，Ctrl + Enter 换行。</span>
             </div>
           </footer>
+          <aside class="tool-dial-rail" aria-labelledby="tool-dial-toggle">
+            <button id="tool-dial-toggle" type="button" aria-expanded="false" aria-controls="tool-dial">
+              <span class="dial-toggle-glyph" aria-hidden="true"></span>
+              <span class="dial-toggle-label" data-i18n="dial.title">工具仪表</span>
+            </button>
+            <div id="tool-dial" hidden>
+              <div class="dial-instrument">
+                <div class="dial-face">
+                  <div class="dial-wheel"><i class="dial-band" aria-hidden="true"></i></div>
+                  <div class="dial-lock" aria-hidden="true"><i></i><b></b></div>
+                  <div class="dial-counter">
+                    <strong id="dial-count">00</strong>
+                    <span data-i18n="dial.calls">本轮调用</span>
+                  </div>
+                </div>
+                <div class="dial-readout">
+                  <span class="dial-signal" aria-hidden="true"></span>
+                  <span id="dial-status" role="status"></span>
+                  <div class="dial-readout-text">
+                    <strong id="dial-tool-name"></strong>
+                    <span id="dial-target" hidden></span>
+                  </div>
+                </div>
+              </div>
+              <section class="dial-telemetry" aria-labelledby="dial-telemetry-title">
+                <div class="dial-telemetry-header">
+                  <h3 id="dial-telemetry-title" data-i18n="dial.telemetry">本轮统计</h3>
+                  <span data-i18n="dial.trace">最近 24 次</span>
+                </div>
+                <div class="dial-trace" aria-hidden="true"></div>
+                <dl class="dial-metrics">
+                  <div><dt data-i18n="dial.done">成功</dt><dd id="dial-done-count">0</dd></div>
+                  <div><dt data-i18n="dial.pending">待返回</dt><dd id="dial-pending-count">0</dd></div>
+                  <div><dt data-i18n="dial.failed">失败</dt><dd id="dial-error-count">0</dd></div>
+                </dl>
+                <div class="dial-history" hidden>
+                  <h4 data-i18n="dial.history">最近调用</h4>
+                  <ul></ul>
+                </div>
+                <div class="dial-legend">
+                  <h4 data-i18n="dial.scale">工具刻度</h4>
+                  <dl class="dial-breakdown" aria-label="工具分布"></dl>
+                </div>
+              </section>
+            </div>
+          </aside>
         </section>
 
         <section id="history-view" class="page-view is-hidden">

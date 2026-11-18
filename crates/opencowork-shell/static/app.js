@@ -577,6 +577,16 @@ const MESSAGES = {
     'activity.prompt': '提示词预算',
     'activity.compacted': '是否压缩',
     'activity.events': '事件数',
+    'dial.title': '工具仪表',
+    'dial.calls': '本轮调用',
+    'dial.telemetry': '本轮统计',
+    'dial.trace': '最近 24 次',
+    'dial.done': '成功',
+    'dial.pending': '待返回',
+    'dial.failed': '失败',
+    'dial.breakdown': '工具分布',
+    'dial.scale': '工具刻度',
+    'dial.history': '最近调用',
     'activity.empty': '当前还没有活动事件。',
     'composer.placeholder': '描述任务，或输入 / 查看快捷操作…',
     'composer.ready': '就绪。',
@@ -1181,6 +1191,16 @@ const MESSAGES = {
     'activity.prompt': 'Prompt Budget',
     'activity.compacted': 'Compacted',
     'activity.events': 'Events',
+    'dial.title': 'Tool instrument',
+    'dial.calls': 'Calls this turn',
+    'dial.telemetry': 'Turn statistics',
+    'dial.trace': 'Latest 24 calls',
+    'dial.done': 'Succeeded',
+    'dial.pending': 'Pending',
+    'dial.failed': 'Failed',
+    'dial.breakdown': 'Tool breakdown',
+    'dial.scale': 'Tool scale',
+    'dial.history': 'Recent calls',
     'activity.empty': 'No turn activity yet.',
     'composer.placeholder': 'Describe a task, or type / for shortcuts…',
     'composer.ready': 'Ready.',
@@ -4119,8 +4139,220 @@ function renderTurnStats() {
     state.turnStats.compacted === null ? '-' : state.turnStats.compacted ? t('common.yes') : t('common.no')
 }
 
+const dialSectors = [
+  { zh: '读取', en: 'Read', color: '#147e9c', tools: ['read', 'read_file'] },
+  { zh: '搜索', en: 'Find', color: '#997129', tools: ['glob_search', 'grep_search', 'glob', 'grep', 'toolsearch'] },
+  { zh: '编辑', en: 'Edit', color: '#a54c29', tools: ['edit', 'edit_file', 'write', 'write_file', 'apply_patch'] },
+  { zh: '终端', en: 'Shell', color: '#62589a', tools: ['bash', 'shell', 'run_command'] },
+  { zh: '交互', en: 'Control', color: '#2f775b', tools: ['browser', 'computer'] },
+  { zh: '其他', en: 'Other', color: '#63707e', tools: [] },
+]
+const dialPanel = document.querySelector('#tool-dial')
+const dialButton = document.querySelector('#tool-dial-toggle')
+const dialFace = dialPanel.querySelector('.dial-face')
+const dialWheel = dialFace.querySelector('.dial-wheel')
+const dialLock = dialFace.querySelector('.dial-lock')
+const dialLockAngle = 63
+// Each colored arc shares its start and end angles with the engraved tool sector.
+dialWheel.style.setProperty('--sector-band', 'conic-gradient(from -30deg, ' +
+  dialSectors.map((sector, index) => {
+    const start = index * 360 / dialSectors.length
+    const end = (index + 1) * 360 / dialSectors.length
+    return `${sector.color} ${start}deg ${end - 1}deg, transparent ${end - 1}deg ${end}deg`
+  }).join(', ') + ')')
+// The scale moves with the rotor. Engraved values sit inside the outer tick ring.
+for (let degrees = 0; degrees < 360; degrees += 15) {
+  const angle = degrees * Math.PI / 180
+  const mark = document.createElement('span')
+  mark.className = 'dial-degree'
+  mark.setAttribute('aria-hidden', 'true')
+  mark.textContent = String(degrees).padStart(3, '0') + '°'
+  mark.style.left = (50 + 39.8 * Math.sin(angle)) + '%'
+  mark.style.top = (50 - 39.8 * Math.cos(angle)) + '%'
+  dialWheel.append(mark)
+}
+const dialLabels = dialSectors.map((sector, index) => {
+  const angle = index * 2 * Math.PI / dialSectors.length
+  const label = document.createElement('span')
+  label.className = 'dial-sector'
+  label.style.left = (50 + 30 * Math.sin(angle)) + '%'
+  label.style.top = (50 - 30 * Math.cos(angle)) + '%'
+  label.style.setProperty('--sector-color', sector.color)
+  label.append(document.createElement('b'), document.createElement('small'), document.createElement('em'))
+  dialWheel.append(label)
+  return label
+})
+const dialTrace = dialPanel.querySelector('.dial-trace')
+const dialBreakdown = dialPanel.querySelector('.dial-breakdown')
+const dialBreakdownItems = dialSectors.map(sector => {
+  const row = document.createElement('div')
+  row.style.setProperty('--sector-color', sector.color)
+  row.append(document.createElement('dt'), document.createElement('dd'))
+  dialBreakdown.append(row)
+  return row
+})
+const dialHistory = dialPanel.querySelector('.dial-history')
+const dialHistoryList = dialHistory.querySelector('ul')
+const dialPreference = localStorage.getItem('opencowork-tool-dial')
+dialPanel.hidden = dialPreference === null ? !matchMedia('(min-width: 1000px)').matches : dialPreference !== 'open'
+let dialAngle = dialLockAngle
+let dialCallKey = ''
+let dialRenderKey = ''
+let dialFeedback = []
+
+function dialSectorIndex(name) {
+  const index = dialSectors.findIndex(sector => sector.tools.includes(String(name).toLowerCase()))
+  return index >= 0 ? index : dialSectors.length - 1
+}
+
+function dialToolTarget(call) {
+  const input = structuredBlockValue(call?.input)
+  const value = ['path', 'file', 'pattern', 'query', 'action'].map(field => input?.[field])
+    .find(field => typeof field === 'string' && field.trim())
+  return value ? inlineSummaryText(value, 140) : ''
+}
+
+function renderToolDial(messages) {
+  const zh = state.locale === 'zh'
+  dialButton.setAttribute('aria-label', t('dial.title'))
+  dialButton.title = dialPanel.hidden
+    ? (zh ? '展开工具仪表' : 'Show tool instrument')
+    : (zh ? '收起工具仪表' : 'Hide tool instrument')
+  dialButton.setAttribute('aria-expanded', String(!dialPanel.hidden))
+  if (dialPanel.hidden) return
+
+  // Read the current turn from the same transcript used by the work log.
+  const results = new Map()
+  const calls = []
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]
+    if (message.role === 'user' && message.blocks?.some(block => block.type === 'text')) break
+    const blocks = message.blocks || []
+    for (let j = blocks.length - 1; j >= 0; j--) {
+      const block = blocks[j]
+      if (block.type === 'tool_result') results.set(getValue(block, 'tool_use_id', 'toolUseId'), block)
+      if (block.type === 'tool_use') calls.push(block)
+    }
+  }
+  const phaseOf = (call) => {
+    const result = results.get(call.id)
+    if (result) return getValue(result, 'is_error', 'isError') ? 'error' : 'done'
+    return state.pendingTurn ? 'running' : 'unknown'
+  }
+  const call = calls[0]
+  const phaseCounts = { done: 0, running: 0, error: 0, unknown: 0 }
+  for (const item of calls) phaseCounts[phaseOf(item)]++
+  const sector = call ? dialSectorIndex(call.name) : -1
+  const key = call ? JSON.stringify([state.currentSessionId, call.id, call.name]) : ''
+  const phase = call ? phaseOf(call) : 'idle'
+  const visibleCalls = calls.slice(0, 5)
+  const traceCalls = calls.slice(0, 24).reverse()
+  const renderKey = JSON.stringify([state.locale, key, phase, calls.length,
+    traceCalls.map(item => [item.id, phaseOf(item)]), phaseCounts])
+  if (renderKey === dialRenderKey) return
+  dialRenderKey = renderKey
+  const changedCall = key !== dialCallKey
+  const changedResult = phase !== dialPanel.dataset.phase && (phase === 'done' || phase === 'error')
+  if (changedCall) {
+    const slotAngle = Math.max(0, sector) * 360 / dialSectors.length
+    const target = dialLockAngle - slotAngle
+    const difference = (target - dialAngle) % 360
+    const travel = (difference + 540) % 360 - 180
+    dialAngle += travel
+    dialFace.style.setProperty('--dial-angle', dialAngle + 'deg')
+    dialWheel.style.setProperty('--dial-sector-start', (slotAngle - 29.5) + 'deg')
+    dialCallKey = key
+  }
+  // A fast result may arrive in the same render as its call. Show its result once.
+  if (call && state.pendingTurn && (changedCall || changedResult) &&
+      !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    for (const animation of dialFeedback) animation.cancel()
+    const [impactRing, signal] = dialLock.children
+    const impact = phase === 'error' ? 1.65 : phase === 'done' ? 1.18 : .82
+    const signalFrames = phase === 'error'
+      ? [{ translate: '10% 0', opacity: 1 }, { translate: '34% 0' }, { translate: '17% 0', opacity: 0 }]
+      : [{ translate: '0 0', opacity: 1 }, { translate: '660% 0', opacity: 0 }]
+    dialFeedback = [
+      impactRing.animate([
+        { transform: 'scale(.55)', opacity: .9 },
+        { transform: `scale(${impact})`, opacity: .66, offset: .38 },
+        { transform: `scale(${impact + .42})`, opacity: 0 },
+      ], { duration: phase === 'error' ? 420 : 280, easing: 'ease-out' }),
+      signal.animate(signalFrames, { duration: phase === 'error' ? 160 : 240, easing: 'ease-out' }),
+    ]
+  }
+  const sectorCounts = Array(dialSectors.length).fill(0)
+  const latestBySector = []
+  for (const item of calls) {
+    const index = dialSectorIndex(item.name)
+    sectorCounts[index]++
+    latestBySector[index] ??= item
+  }
+  dialBreakdown.setAttribute('aria-label', t(call ? 'dial.breakdown' : 'dial.scale'))
+  dialLabels.forEach((label, i) => {
+    const name = dialSectors[i][state.locale]
+    const count = sectorCounts[i]
+    const breakdownItem = dialBreakdownItems[i]
+    label.firstElementChild.textContent = name
+    label.children[1].textContent = String(count).padStart(2, '0')
+    const detail = dialToolTarget(latestBySector[i])
+    label.lastElementChild.textContent = detail
+    label.lastElementChild.hidden = !detail
+    label.classList.toggle('selected', i === sector)
+    breakdownItem.firstElementChild.textContent = name
+    breakdownItem.lastElementChild.textContent = call ? String(count) : (i * 360 / dialSectors.length) + '°'
+    breakdownItem.style.setProperty('--dial-share', (count * 100 / (calls.length || 1)) + '%')
+  })
+  const status = {
+    idle: zh ? '等待工具调用' : 'Waiting for a tool call',
+    error: zh ? '执行失败' : 'Failed',
+    done: zh ? '已完成' : 'Completed',
+    running: zh ? '等待结果' : 'Awaiting result',
+    unknown: zh ? '未记录结果' : 'No recorded result',
+  }
+  dialPanel.dataset.phase = phase
+  dialPanel.style.setProperty('--dial-ink', dialSectors[sector]?.color || '#63707e')
+  document.querySelector('#dial-count').textContent = String(calls.length).padStart(2, '0')
+  document.querySelector('#dial-done-count').textContent = phaseCounts.done
+  document.querySelector('#dial-pending-count').textContent = phaseCounts.running
+  document.querySelector('#dial-error-count').textContent = phaseCounts.error
+  document.querySelector('#dial-tool-name').textContent = call?.name || (zh ? '待命' : 'Standby')
+  document.querySelector('#dial-status').textContent = status[phase]
+  const target = dialToolTarget(call)
+  const targetLine = document.querySelector('#dial-target')
+  targetLine.textContent = target
+  targetLine.title = targetLine.textContent
+  targetLine.hidden = !targetLine.textContent
+  dialTrace.replaceChildren(...traceCalls.map(item => {
+    const bar = document.createElement('i')
+    bar.style.setProperty('--trace-ink', dialSectors[dialSectorIndex(item.name)].color)
+    bar.dataset.phase = phaseOf(item)
+    return bar
+  }))
+  dialHistory.hidden = !visibleCalls.length
+  dialHistoryList.replaceChildren(...visibleCalls.map(item => {
+    const row = document.createElement('li')
+    row.style.setProperty('--row-ink', dialSectors[dialSectorIndex(item.name)].color)
+    const name = document.createElement('span')
+    name.textContent = item.name
+    name.title = item.name
+    const result = document.createElement('span')
+    result.dataset.phase = phaseOf(item)
+    result.textContent = status[result.dataset.phase]
+    row.append(name, result)
+    return row
+  }))
+}
+dialButton.addEventListener('click', () => {
+  dialPanel.hidden = !dialPanel.hidden
+  if (dialPanel.hidden) for (const animation of dialFeedback) animation.cancel()
+  localStorage.setItem('opencowork-tool-dial', dialPanel.hidden ? 'closed' : 'open')
+  renderToolDial(buildVisibleMessages())
+})
+
 function renderMessages() {
   const messages = buildVisibleMessages()
+  renderToolDial(messages)
   const processIndexes = processMessageIndexes(messages)
   const groups = processMessageGroups(messages, processIndexes)
   const groupStarts = new Map(groups.map(group => [group.start, group]))
