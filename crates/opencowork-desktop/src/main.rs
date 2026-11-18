@@ -144,6 +144,7 @@ fn locate_shell_executable() -> anyhow::Result<PathBuf> {
 
 fn wait_for_shell(shell_url: &str, shell_child: &mut Child) -> anyhow::Result<()> {
     let client = Client::builder()
+        .no_proxy()
         .timeout(Duration::from_secs(2))
         .build()
         .context("failed to build readiness HTTP client")?;
