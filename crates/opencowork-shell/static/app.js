@@ -578,6 +578,9 @@ const MESSAGES = {
     'activity.compacted': '是否压缩',
     'activity.events': '事件数',
     'dial.title': '工具仪表',
+    'dial.motion': '转轮动效',
+    'dial.motion.pause': '暂停转轮动效',
+    'dial.motion.play': '开启转轮动效',
     'dial.calls': '本轮调用',
     'dial.telemetry': '本轮统计',
     'dial.trace': '最近 24 次',
@@ -1192,6 +1195,9 @@ const MESSAGES = {
     'activity.compacted': 'Compacted',
     'activity.events': 'Events',
     'dial.title': 'Tool instrument',
+    'dial.motion': 'Wheel animation',
+    'dial.motion.pause': 'Pause wheel animation',
+    'dial.motion.play': 'Enable wheel animation',
     'dial.calls': 'Calls this turn',
     'dial.telemetry': 'Turn statistics',
     'dial.trace': 'Latest 24 calls',
@@ -4152,7 +4158,10 @@ const dialButton = document.querySelector('#tool-dial-toggle')
 const dialFace = dialPanel.querySelector('.dial-face')
 const dialWheel = dialFace.querySelector('.dial-wheel')
 const dialLock = dialFace.querySelector('.dial-lock')
-const dialLockAngle = 63
+const dialLockAngle = 83
+const dialMotionToggle = document.querySelector('#dial-motion-toggle')
+const dialMotionQuery = matchMedia('(prefers-reduced-motion: reduce)')
+let dialMotionPreference = localStorage.getItem('opencowork-dial-motion')
 // Each colored arc shares its start and end angles with the engraved tool sector.
 dialWheel.style.setProperty('--sector-band', 'conic-gradient(from -30deg, ' +
   dialSectors.map((sector, index) => {
@@ -4167,16 +4176,16 @@ for (let degrees = 0; degrees < 360; degrees += 15) {
   mark.className = 'dial-degree'
   mark.setAttribute('aria-hidden', 'true')
   mark.textContent = String(degrees).padStart(3, '0') + '°'
-  mark.style.left = (50 + 39.8 * Math.sin(angle)) + '%'
-  mark.style.top = (50 - 39.8 * Math.cos(angle)) + '%'
+  mark.style.setProperty('--slot-x', Math.sin(angle).toFixed(6))
+  mark.style.setProperty('--slot-y', (-Math.cos(angle)).toFixed(6))
   dialWheel.append(mark)
 }
 const dialLabels = dialSectors.map((sector, index) => {
   const angle = index * 2 * Math.PI / dialSectors.length
   const label = document.createElement('span')
   label.className = 'dial-sector'
-  label.style.left = (50 + 30 * Math.sin(angle)) + '%'
-  label.style.top = (50 - 30 * Math.cos(angle)) + '%'
+  label.style.setProperty('--slot-x', Math.sin(angle).toFixed(6))
+  label.style.setProperty('--slot-y', (-Math.cos(angle)).toFixed(6))
   label.style.setProperty('--sector-color', sector.color)
   label.append(document.createElement('b'), document.createElement('small'), document.createElement('em'))
   dialWheel.append(label)
@@ -4195,10 +4204,67 @@ const dialHistory = dialPanel.querySelector('.dial-history')
 const dialHistoryList = dialHistory.querySelector('ul')
 const dialPreference = localStorage.getItem('opencowork-tool-dial')
 dialPanel.hidden = dialPreference === null ? !matchMedia('(min-width: 1000px)').matches : dialPreference !== 'open'
-let dialAngle = dialLockAngle
 let dialCallKey = ''
 let dialRenderKey = ''
 let dialFeedback = []
+let dialRotation
+
+function dialMotionEnabled() {
+  return dialMotionPreference === null ? !dialMotionQuery.matches : dialMotionPreference === 'on'
+}
+
+function rotateDial(sector, live) {
+  const angle = parseFloat(getComputedStyle(dialFace).getPropertyValue('--dial-angle'))
+  dialRotation?.cancel()
+  dialRotation = null
+  const start = Number.isFinite(angle) ? angle % 360 : dialLockAngle
+  const slotAngle = Math.max(0, sector) * 360 / dialSectors.length
+  const target = dialLockAngle - slotAngle
+  dialFace.style.setProperty('--dial-angle', target + 'deg')
+  dialWheel.style.setProperty('--dial-sector-start', (slotAngle - 29.5) + 'deg')
+  if (!dialMotionEnabled()) return
+  if (sector < 0) {
+    dialRotation = dialFace.animate([
+      { '--dial-angle': start + 'deg' },
+      { '--dial-angle': (start + 360) + 'deg' },
+    ], { duration: 11000, iterations: Infinity })
+  } else if (live) {
+    let travel = ((target - start) % 360 + 540) % 360 - 180
+    if (Math.abs(travel) < 18) travel += travel > 0 ? -360 : 360
+    const end = start + travel
+    dialRotation = dialFace.animate([
+      { '--dial-angle': start + 'deg', easing: 'cubic-bezier(.26,.12,.16,1)' },
+      { '--dial-angle': (end + Math.sign(travel) * 4) + 'deg', offset: .84, easing: 'ease-out' },
+      { '--dial-angle': end + 'deg' },
+    ], { duration: Math.min(840, 340 + 1.35 * Math.abs(travel)) })
+  }
+}
+
+function syncDialMotion() {
+  const enabled = dialMotionEnabled()
+  const label = t(enabled ? 'dial.motion.pause' : 'dial.motion.play')
+  dialMotionToggle.textContent = enabled ? 'Ⅱ' : '▶'
+  dialMotionToggle.setAttribute('aria-label', t('dial.motion'))
+  dialMotionToggle.setAttribute('aria-pressed', String(enabled))
+  dialMotionToggle.title = label
+}
+
+function resetDialMotion() {
+  dialRotation?.cancel()
+  dialRotation = null
+  for (const animation of dialFeedback) animation.cancel()
+  dialRenderKey = ''
+  renderToolDial(buildVisibleMessages())
+}
+
+dialMotionToggle.addEventListener('click', () => {
+  dialMotionPreference = dialMotionEnabled() ? 'off' : 'on'
+  localStorage.setItem('opencowork-dial-motion', dialMotionPreference)
+  resetDialMotion()
+})
+dialMotionQuery.addEventListener('change', () => {
+  if (dialMotionPreference === null) resetDialMotion()
+})
 
 function dialSectorIndex(name) {
   const index = dialSectors.findIndex(sector => sector.tools.includes(String(name).toLowerCase()))
@@ -4220,6 +4286,7 @@ function renderToolDial(messages) {
     : (zh ? '收起工具仪表' : 'Hide tool instrument')
   dialButton.setAttribute('aria-expanded', String(!dialPanel.hidden))
   if (dialPanel.hidden) return
+  syncDialMotion()
 
   // Read the current turn from the same transcript used by the work log.
   const results = new Map()
@@ -4253,32 +4320,30 @@ function renderToolDial(messages) {
   dialRenderKey = renderKey
   const changedCall = key !== dialCallKey
   const changedResult = phase !== dialPanel.dataset.phase && (phase === 'done' || phase === 'error')
-  if (changedCall) {
-    const slotAngle = Math.max(0, sector) * 360 / dialSectors.length
-    const target = dialLockAngle - slotAngle
-    const difference = (target - dialAngle) % 360
-    const travel = (difference + 540) % 360 - 180
-    dialAngle += travel
-    dialFace.style.setProperty('--dial-angle', dialAngle + 'deg')
-    dialWheel.style.setProperty('--dial-sector-start', (slotAngle - 29.5) + 'deg')
+  const live = Boolean(call && (state.pendingTurn ||
+    state.lastEvents.some(event => event.type === 'tool_call' && event.id === call.id)))
+  if (changedCall || (sector < 0 && !dialRotation)) {
+    rotateDial(sector, live && changedCall)
     dialCallKey = key
   }
   // A fast result may arrive in the same render as its call. Show its result once.
-  if (call && state.pendingTurn && (changedCall || changedResult) &&
-      !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  if (live && (changedCall || changedResult) && dialMotionEnabled()) {
     for (const animation of dialFeedback) animation.cancel()
     const [impactRing, signal] = dialLock.children
     const impact = phase === 'error' ? 1.65 : phase === 'done' ? 1.18 : .82
     const signalFrames = phase === 'error'
       ? [{ translate: '10% 0', opacity: 1 }, { translate: '34% 0' }, { translate: '17% 0', opacity: 0 }]
       : [{ translate: '0 0', opacity: 1 }, { translate: '660% 0', opacity: 0 }]
+    const delay = dialRotation?.playState === 'running'
+      ? Math.max(0, dialRotation.effect.getComputedTiming().endTime - (dialRotation.currentTime ?? 0) - 55)
+      : 0
     dialFeedback = [
       impactRing.animate([
         { transform: 'scale(.55)', opacity: .9 },
         { transform: `scale(${impact})`, opacity: .66, offset: .38 },
         { transform: `scale(${impact + .42})`, opacity: 0 },
-      ], { duration: phase === 'error' ? 420 : 280, easing: 'ease-out' }),
-      signal.animate(signalFrames, { duration: phase === 'error' ? 160 : 240, easing: 'ease-out' }),
+      ], { delay, duration: phase === 'error' ? 420 : 280, easing: 'ease-out' }),
+      signal.animate(signalFrames, { delay, duration: phase === 'error' ? 160 : 240, easing: 'ease-out' }),
     ]
   }
   const sectorCounts = Array(dialSectors.length).fill(0)
@@ -4345,9 +4410,8 @@ function renderToolDial(messages) {
 }
 dialButton.addEventListener('click', () => {
   dialPanel.hidden = !dialPanel.hidden
-  if (dialPanel.hidden) for (const animation of dialFeedback) animation.cancel()
   localStorage.setItem('opencowork-tool-dial', dialPanel.hidden ? 'closed' : 'open')
-  renderToolDial(buildVisibleMessages())
+  resetDialMotion()
 })
 
 function renderMessages() {

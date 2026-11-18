@@ -2745,6 +2745,11 @@ button:disabled {
   content: ''; width: 7px; height: 7px; margin: 0 3px 0 auto;
   border: solid #a3aca6; border-width: 1px 1px 0 0; transform: rotate(45deg);
 }
+@property --dial-angle {
+  syntax: '<angle>';
+  inherits: true;
+  initial-value: 83deg;
+}
 #tool-dial {
   --dial-ink: #40585f;
   --rail-text: #eef1ed;
@@ -2754,8 +2759,8 @@ button:disabled {
   --rail-font: "Segoe UI", "Microsoft YaHei UI", sans-serif;
   color-scheme: dark;
   display: grid;
-  grid-template-rows: minmax(245px, 1.618fr) minmax(244px, 1fr);
-  gap: clamp(12px, 1.2vw, 20px);
+  grid-template-rows: minmax(290px, 4fr) minmax(108px, 1fr);
+  gap: 12px;
   flex: 1;
   min-height: 0;
   overflow: auto;
@@ -2766,8 +2771,7 @@ button:disabled {
   background: linear-gradient(150deg, #252b2a, #1b201f 55%, #191c1b);
 }
 .dial-instrument {
-  display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  position: relative;
   min-height: 0;
   border: 1px solid #505753;
   border-radius: 10px;
@@ -2776,17 +2780,15 @@ button:disabled {
   box-shadow: 0 6px 18px #0003;
 }
 .dial-face {
-  --dial-angle: 63deg;
-  --dial-radius: clamp(65cqw, 78cqh, 116cqw);
-  --dial-contact-x: 64%;
-  --dial-contact-y: 54%;
-  --dial-travel: 385ms cubic-bezier(.16,.76,.28,1.075);
+  --dial-radius: max(106cqw, 84cqh);
+  --dial-contact-x: 69%;
+  --dial-contact-y: 51%;
   container-type: size;
   position: relative;
   isolation: isolate;
   overflow: hidden;
   color-scheme: light;
-  border-bottom: 1px solid #181e1c;
+  height: 100%;
   background:
     radial-gradient(circle, #59645f32 .7px, transparent .95px) 0 0 / 9px 9px,
     linear-gradient(135deg, #e2e4dc 0%, #f7f6ee 46%, #e6e9e2);
@@ -2803,8 +2805,8 @@ button:disabled {
   position: absolute;
   width: calc(2 * var(--dial-radius));
   aspect-ratio: 1;
-  left: calc(var(--dial-contact-x) - (1 + sin(63deg)) * var(--dial-radius));
-  top: calc(var(--dial-contact-y) - (1 - cos(63deg)) * var(--dial-radius));
+  left: calc(var(--dial-contact-x) - (1 + sin(83deg)) * var(--dial-radius));
+  top: calc(var(--dial-contact-y) - (1 - cos(83deg)) * var(--dial-radius));
   border: 1px solid #9ca39b;
   border-radius: 50%;
   background:
@@ -2813,7 +2815,6 @@ button:disabled {
     repeating-radial-gradient(circle, #cad1c8 0 2px, #d6dcd2 2.5px, #d1d6cc 4px);
   box-shadow: 0 0 0 2px #fdfef6, 3px 6px 0 1px #b2b9b050, 7px 13px 24px #3c48352e;
   transform: rotate(var(--dial-angle));
-  transition: transform var(--dial-travel);
 }
 .dial-wheel::before, .dial-wheel::after {
   content: '';
@@ -2840,13 +2841,16 @@ button:disabled {
 }
 #tool-dial[data-phase=idle] .dial-wheel::after { opacity: 0; }
 .dial-sector, .dial-degree {
+  --slot-radius: calc(var(--dial-radius) - var(--slot-inset));
   position: absolute;
+  left: calc(50% + var(--slot-x) * var(--slot-radius));
+  top: calc(50% + var(--slot-y) * var(--slot-radius));
   z-index: 1;
   transform: translate(-50%, -50%) rotate(calc(-1 * var(--dial-angle)));
-  transition: transform var(--dial-travel);
 }
-.dial-degree { color: #56605a; font: 10px/1 var(--rail-mono); }
+.dial-degree { --slot-inset: max(52px, calc(var(--dial-radius) * .17)); color: #56605a; font: 10px/1 var(--rail-mono); }
 .dial-sector {
+  --slot-inset: max(112px, calc(var(--dial-radius) * .17 + 58px));
   display: grid;
   grid-template-columns: auto auto;
   align-items: baseline;
@@ -2885,6 +2889,22 @@ button:disabled {
   letter-spacing: -.075em;
 }
 .dial-counter::before { content: ''; width: 24px; height: 2px; margin-top: 3px; background: #b95a36; }
+.dial-motion-toggle {
+  position: absolute;
+  z-index: 2;
+  left: 12px; top: 12px;
+  display: grid;
+  place-items: center;
+  width: 30px; height: 30px;
+  padding: 0;
+  border: 1px solid #53635978;
+  border-radius: 5px;
+  background: #f7f7edeb;
+  color: #293a32;
+  font: 700 14px/1 var(--rail-font);
+  cursor: pointer;
+}
+.dial-motion-toggle:hover { background: #fff; }
 .dial-lock {
   position: absolute;
   top: var(--dial-contact-y);
@@ -2929,6 +2949,8 @@ button:disabled {
 }
 #tool-dial[data-phase=error] .dial-lock b { width: 30%; background: #ffb395; }
 .dial-readout {
+  position: absolute;
+  bottom: 12px; left: 12px; right: 12px;
   display: grid;
   grid-template-columns: 7px minmax(0, 1fr) auto;
   grid-template-areas: 'signal name phase';
@@ -2936,7 +2958,10 @@ button:disabled {
   gap: 10px;
   min-height: 56px;
   padding: 10px 14px;
-  border-top: 1px solid #ffffff12;
+  border: 1px solid #66736aaa;
+  border-radius: 7px;
+  background: #202624f2;
+  box-shadow: 0 4px 14px #151b1840;
 }
 .dial-signal {
   grid-area: signal; width: 7px; height: 7px; border-radius: 50%;
@@ -2952,13 +2977,16 @@ button:disabled {
 #tool-dial[data-phase=error] #dial-status { color: #ffab9f; }
 #tool-dial[data-phase=done] #dial-status { color: #8fe0c1; }
 .dial-telemetry {
-  container-type: size;
-  display: grid;
-  grid-template-rows: auto 16px auto minmax(0, 1fr) auto;
-  gap: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #50615a transparent;
   padding: 1px 5px 3px;
 }
+.dial-telemetry > * { flex-shrink: 0; }
 .dial-telemetry-header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .dial-telemetry-header h3, .dial-history h4 { margin: 0; color: var(--rail-text); font-size: 13px; }
 .dial-telemetry-header > span { color: var(--rail-muted); font-size: 11px; }
@@ -2966,6 +2994,7 @@ button:disabled {
   display: flex;
   align-items: end;
   gap: 3px;
+  height: 12px;
   background: repeating-linear-gradient(90deg, #63746a50 0 1px, transparent 1px calc(100% / 24));
   border-bottom: 1px solid var(--rail-line);
 }
@@ -2976,14 +3005,14 @@ button:disabled {
 .dial-metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  padding: 4px 0 10px;
+  padding: 2px 0 7px;
   margin: 0;
   border-bottom: 1px solid var(--rail-line);
 }
 .dial-metrics > div { display: flex; flex-direction: column-reverse; gap: 3px; min-width: 0; }
 .dial-metrics > div + div { padding-left: 14px; border-left: 1px solid var(--rail-line); }
 .dial-metrics dt, .dial-breakdown dt { color: var(--rail-muted); font-size: 11px; }
-.dial-metrics dd { margin: 0; font: 550 25px/1 "Bahnschrift", "Segoe UI", sans-serif; font-variant-numeric: tabular-nums; }
+.dial-metrics dd { margin: 0; font: 550 20px/1 "Bahnschrift", "Segoe UI", sans-serif; font-variant-numeric: tabular-nums; }
 #tool-dial[data-phase=idle] .dial-metrics dd { color: #bac2bd; }
 .dial-history { display: flex; flex-direction: column; gap: 5px; min-height: 0; }
 .dial-history h4 { font-size: 12px; }
@@ -3015,17 +3044,9 @@ button:disabled {
 }
 .dial-breakdown dt { overflow: hidden; text-overflow: ellipsis; }
 .dial-breakdown dd { margin: 0; color: var(--rail-text); font: 600 13px/1.25 var(--rail-mono); }
-@container (min-height: 300px) {
-  .dial-breakdown { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px 12px; }
-  .dial-breakdown > div { flex-direction: row; align-items: baseline; justify-content: space-between; padding-block: 6px; }
-}
-@container (max-height: 280px) {
-  .dial-history li { padding-block: 4px; }
-}
-#tool-dial[data-phase=idle] .dial-telemetry { grid-template-rows: auto 16px auto minmax(0, 1fr); }
 #tool-dial[data-phase=idle] .dial-legend {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(74px, 1fr);
   gap: 4px;
 }
 #tool-dial[data-phase=idle] .dial-legend h4 { display: block; }
@@ -3048,7 +3069,4 @@ button:disabled {
   .tool-dial-rail { position: relative; z-index: 7; }
   #tool-dial-toggle .dial-toggle-label, #tool-dial-toggle[aria-expanded=true]::after { display: none; }
   #tool-dial { position: absolute; top: 51px; bottom: 0; right: 0; width: min(335px, calc(100vw - 65px)); box-shadow: -10px 0 30px #0007; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .dial-wheel, .dial-sector, .dial-degree { transition: none; }
 }
