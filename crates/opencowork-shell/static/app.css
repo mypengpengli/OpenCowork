@@ -2781,7 +2781,7 @@ button:disabled {
 }
 .dial-face {
   --dial-radius: max(106cqw, 84cqh);
-  --dial-contact-x: 69%;
+  --dial-contact-x: 84%;
   --dial-contact-y: 51%;
   container-type: size;
   position: relative;
@@ -2811,7 +2811,11 @@ button:disabled {
   border-radius: 50%;
   background:
     repeating-conic-gradient(from 30deg, #56665b60 0 .22deg, transparent .22deg 60deg),
-    radial-gradient(circle, transparent 40%, #f7f6ed 40.3% 41.2%, #9fa79d 41.4%, #dfdfd3 41.7% 42.7%, #f6f4ea 43% 55.8%, #aeb5aa 56%, #f3f3ea 56.4% 64.6%, #afb5ad 65%, #fcfcf4 65.4% 67%, #c3c9c2 67.4%, #f4f5ed 68.2%, #adb5af 70%),
+    radial-gradient(circle closest-side, transparent calc(100% - 82cqw - 5px),
+      #b6b8a9 calc(100% - 82cqw - 4px), #f9f8ef calc(100% - 82cqw - 2px),
+      #efece0 calc(100% - 82cqw), #faf8f0 calc(100% - 82cqw + 1px) calc(100% - 25cqw - 1px),
+      #b5b7a7 calc(100% - 25cqw), #f9f8ef calc(100% - 25cqw + 1px) calc(100% - 4cqw - 1px),
+      #c8c9bf calc(100% - 4cqw), #f3f2e9 calc(100% - 4cqw + 1px), #dedfd5 100%),
     repeating-radial-gradient(circle, #cad1c8 0 2px, #d6dcd2 2.5px, #d1d6cc 4px);
   box-shadow: 0 0 0 2px #fdfef6, 3px 6px 0 1px #b2b9b050, 7px 13px 24px #3c48352e;
   transform: rotate(var(--dial-angle));
@@ -2826,18 +2830,19 @@ button:disabled {
 .dial-band {
   position: absolute; inset: 0; border-radius: 50%;
   background: var(--sector-band);
-  mask-image: radial-gradient(circle, transparent 66.7%, black 66.9% 67.3%, transparent 67.5%);
+  mask-image: radial-gradient(circle closest-side, transparent calc(100% - 3cqw - 1px), black calc(100% - 3cqw) calc(100% - 3cqw + 1px), transparent calc(100% - 3cqw + 2px));
 }
 .dial-wheel::before {
   background:
-    repeating-conic-gradient(from -.3deg, #38453f 0 .6deg, transparent .6deg 15deg),
-    repeating-conic-gradient(from -.12deg, #59645d 0 .24deg, transparent .24deg 1.5deg);
-  mask-image: radial-gradient(circle, transparent 62.5%, black 62.7% 65.8%, transparent 66%);
+    repeating-conic-gradient(from -.1deg, #59645d 0 .22deg, transparent .22deg 15deg),
+    repeating-conic-gradient(from -.05deg, #82897b 0 .1deg, transparent .1deg 1.5deg);
+  mask-image: radial-gradient(circle closest-side, transparent calc(100% - 11cqw - 1px), black calc(100% - 11cqw) calc(100% - 6cqw), transparent calc(100% - 6cqw + 1px));
 }
 .dial-wheel::after {
   background: conic-gradient(from var(--dial-sector-start, -29.5deg),
-    color-mix(in srgb, var(--dial-ink) 18%, transparent) 0 59deg, transparent 59deg);
-  mask-image: radial-gradient(circle, transparent 42.9%, black 43.2% 55.8%, transparent 56%);
+    #f5cd5c55 0 59deg, transparent 59deg);
+  mask-image: radial-gradient(circle closest-side, transparent calc(100% - 82cqw - 1px),
+    black calc(100% - 82cqw) calc(100% - 25cqw), transparent calc(100% - 25cqw + 1px));
 }
 #tool-dial[data-phase=idle] .dial-wheel::after { opacity: 0; }
 .dial-sector, .dial-degree {
@@ -2848,30 +2853,32 @@ button:disabled {
   z-index: 1;
   transform: translate(-50%, -50%) rotate(calc(-1 * var(--dial-angle)));
 }
-.dial-degree { --slot-inset: max(52px, calc(var(--dial-radius) * .17)); color: #56605a; font: 10px/1 var(--rail-mono); }
+.dial-degree { --slot-inset: 17cqw; color: #56605a; font: 10px/1 var(--rail-mono); }
 .dial-sector {
-  --slot-inset: max(112px, calc(var(--dial-radius) * .17 + 58px));
+  --slot-inset: 53cqw;
   display: grid;
-  grid-template-columns: auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: baseline;
   justify-content: start;
   align-content: center;
-  gap: 4px 8px;
-  max-width: 34cqw;
-  padding-left: 9px;
-  border-left: 3px solid var(--sector-color);
+  gap: 5px;
+  width: 52cqw;
+  padding: 5px;
   color: #313b36;
 }
-.dial-sector b { font: 650 clamp(13px, 4.6cqw, 19px)/1.2 var(--rail-font); }
+.dial-sector b { font: 650 clamp(11px, 3.6cqw, 15px)/1.2 var(--rail-mono); overflow: hidden; text-overflow: ellipsis; }
 .dial-sector small { font: 11px/1 var(--rail-mono); color: #555f57; }
-.dial-sector em {
-  grid-column: 1 / -1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font: 11px/1.25 var(--rail-mono);
-}
-.dial-sector.selected { color: color-mix(in srgb, var(--sector-color) 80%, #171d19); }
+.dial-sector.selected b { color: #352d19; }
+.dial-sector time { font: 10px/1 var(--rail-mono); color: #626657; }
+.dial-sector-trend { grid-column: 1 / -1; display: flex; align-items: end; gap: 3px; height: 14px; border-bottom: 1px solid #80887155; }
+.dial-sector-trend:empty, .dial-sector ol:empty { display: none; }
+.dial-sector-trend i { display: block; width: 4px; height: 9px; background: var(--sector-color); }
+.dial-sector-trend i[data-phase=running] { height: 13px; opacity: .55; }
+.dial-sector-trend i[data-phase=error] { height: 13px; background: #ad4436; }
+.dial-sector ol { grid-column: 1 / -1; margin: 2px 0 0; padding: 0; counter-reset: target; color: #414a3c; font: 11px/1.6 var(--rail-mono); }
+.dial-sector li { counter-increment: target; list-style: none; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.dial-sector li::before { content: counter(target, decimal-leading-zero); margin-right: .65em; color: #767865; font-size: 9px; }
+.dial-sector[data-phase=error] b { color: #933c2b; }
 .dial-counter {
   position: absolute;
   right: 7%; top: 7%;

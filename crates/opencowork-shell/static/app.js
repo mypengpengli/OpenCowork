@@ -4182,14 +4182,21 @@ for (let degrees = 0; degrees < 360; degrees += 15) {
 }
 const dialLabels = dialSectors.map((sector, index) => {
   const angle = index * 2 * Math.PI / dialSectors.length
-  const label = document.createElement('span')
+  const label = document.createElement('div')
   label.className = 'dial-sector'
   label.style.setProperty('--slot-x', Math.sin(angle).toFixed(6))
   label.style.setProperty('--slot-y', (-Math.cos(angle)).toFixed(6))
   label.style.setProperty('--sector-color', sector.color)
-  label.append(document.createElement('b'), document.createElement('small'), document.createElement('em'))
+  const name = document.createElement('b')
+  const count = document.createElement('small')
+  const age = document.createElement('time')
+  const trend = document.createElement('div')
+  const targets = document.createElement('ol')
+  trend.className = 'dial-sector-trend'
+  trend.setAttribute('aria-hidden', 'true')
+  label.append(name, count, age, trend, targets)
   dialWheel.append(label)
-  return label
+  return { label, name, count, age, trend, targets }
 })
 const dialTrace = dialPanel.querySelector('.dial-trace')
 const dialBreakdown = dialPanel.querySelector('.dial-breakdown')
@@ -4208,6 +4215,13 @@ let dialCallKey = ''
 let dialRenderKey = ''
 let dialFeedback = []
 let dialRotation
+let dialPlaybackScope = ''
+let dialPlaybackId = ''
+let dialPlaybackTimer
+let dialHoldUntil = 0
+const dialReceived = new Map()
+const dialQueue = []
+const dialTiming = { turn: 480, hold: 780, sameTool: 220 }
 
 function dialMotionEnabled() {
   return dialMotionPreference === null ? !dialMotionQuery.matches : dialMotionPreference === 'on'
@@ -4229,14 +4243,16 @@ function rotateDial(sector, live) {
       { '--dial-angle': (start + 360) + 'deg' },
     ], { duration: 11000, iterations: Infinity })
   } else if (live) {
-    let travel = ((target - start) % 360 + 540) % 360 - 180
-    if (Math.abs(travel) < 18) travel += travel > 0 ? -360 : 360
+    const travel = ((target - start) % 360 + 540) % 360 - 180
+    const sameTool = Math.abs(travel) < 18
     const end = start + travel
+    const contact = end + (sameTool ? -3 : Math.sign(travel) * 1.8)
     dialRotation = dialFace.animate([
-      { '--dial-angle': start + 'deg', easing: 'cubic-bezier(.26,.12,.16,1)' },
-      { '--dial-angle': (end + Math.sign(travel) * 4) + 'deg', offset: .84, easing: 'ease-out' },
+      { '--dial-angle': start + 'deg', easing: 'cubic-bezier(.38,.04,.18,1)' },
+      { '--dial-angle': contact + 'deg', offset: .72 },
+      { '--dial-angle': contact + 'deg', offset: .83, easing: 'ease-out' },
       { '--dial-angle': end + 'deg' },
-    ], { duration: Math.min(840, 340 + 1.35 * Math.abs(travel)) })
+    ], { duration: sameTool ? dialTiming.sameTool : dialTiming.turn })
   }
 }
 
@@ -4250,11 +4266,38 @@ function syncDialMotion() {
 }
 
 function resetDialMotion() {
+  clearTimeout(dialPlaybackTimer)
+  clearTimeout(dialAgeTimer)
   dialRotation?.cancel()
   dialRotation = null
   for (const animation of dialFeedback) animation.cancel()
   dialRenderKey = ''
   renderToolDial(buildVisibleMessages())
+}
+
+let dialAgeTimer
+function updateDialAges() {
+  clearTimeout(dialAgeTimer)
+  if (document.hidden || dialPanel.hidden || !dialPanel.getClientRects().length) return
+  const now = performance.now()
+  let nextTick = Infinity
+  for (const { age } of dialLabels) {
+    if (age.hidden) continue
+    const elapsed = now - Number(age.dataset.received)
+    const seconds = Math.floor(elapsed / 1000)
+    age.textContent = seconds < 60 ? '−' + seconds + 's' : '−' + Math.floor(seconds / 60) + 'm'
+    const period = seconds < 60 ? 1000 : 60000
+    nextTick = Math.min(nextTick, period - elapsed % period)
+  }
+  if (Number.isFinite(nextTick)) dialAgeTimer = setTimeout(updateDialAges, Math.ceil(nextTick))
+}
+
+function clearDialPlayback() {
+  clearTimeout(dialPlaybackTimer)
+  dialQueue.length = 0
+  dialReceived.clear()
+  dialPlaybackId = ''
+  dialHoldUntil = 0
 }
 
 dialMotionToggle.addEventListener('click', () => {
@@ -4273,7 +4316,7 @@ function dialSectorIndex(name) {
 
 function dialToolTarget(call) {
   const input = structuredBlockValue(call?.input)
-  const value = ['path', 'file', 'pattern', 'query', 'action'].map(field => input?.[field])
+  const value = ['path', 'file', 'pattern', 'query', 'command', 'url', 'action'].map(field => input?.[field])
     .find(field => typeof field === 'string' && field.trim())
   return value ? inlineSummaryText(value, 140) : ''
 }
@@ -4285,15 +4328,19 @@ function renderToolDial(messages) {
     ? (zh ? '展开工具仪表' : 'Show tool instrument')
     : (zh ? '收起工具仪表' : 'Hide tool instrument')
   dialButton.setAttribute('aria-expanded', String(!dialPanel.hidden))
-  if (dialPanel.hidden) return
+  if (dialPanel.hidden || document.hidden) return
   syncDialMotion()
 
   // Read the current turn from the same transcript used by the work log.
   const results = new Map()
   const calls = []
+  let turnIndex = -1
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i]
-    if (message.role === 'user' && message.blocks?.some(block => block.type === 'text')) break
+    if (message.role === 'user' && message.blocks?.some(block => block.type === 'text')) {
+      turnIndex = i
+      break
+    }
     const blocks = message.blocks || []
     for (let j = blocks.length - 1; j >= 0; j--) {
       const block = blocks[j]
@@ -4306,7 +4353,35 @@ function renderToolDial(messages) {
     if (result) return getValue(result, 'is_error', 'isError') ? 'error' : 'done'
     return state.pendingTurn ? 'running' : 'unknown'
   }
-  const call = calls[0]
+  const scope = JSON.stringify([state.currentSessionId, turnIndex])
+  if (scope !== dialPlaybackScope) {
+    clearDialPlayback()
+    dialPlaybackScope = scope
+  }
+  const now = performance.now()
+  for (const item of [...calls].reverse()) {
+    if (dialReceived.has(item.id)) continue
+    const live = state.pendingTurn || state.lastEvents.some(event => event.type === 'tool_call' && event.id === item.id)
+    dialReceived.set(item.id, live ? now : null)
+    if (live) dialQueue.push(item.id)
+  }
+  if (!dialMotionEnabled()) {
+    dialQueue.length = 0
+    dialPlaybackId = calls[0]?.id || ''
+  } else if (dialQueue.length && now >= dialHoldUntil) {
+    dialPlaybackId = dialQueue.shift()
+    dialHoldUntil = now + dialTiming.turn + dialTiming.hold
+  }
+  clearTimeout(dialPlaybackTimer)
+  if (dialQueue.length) {
+    dialPlaybackTimer = setTimeout(() => {
+      dialRenderKey = ''
+      renderToolDial(buildVisibleMessages())
+    }, Math.max(0, dialHoldUntil - now))
+  }
+  const call = calls.find(item => item.id === dialPlaybackId) || calls[0]
+  dialPanel.dataset.queued = String(dialQueue.length)
+  dialPanel.dataset.playbackId = call?.id || ''
   const phaseCounts = { done: 0, running: 0, error: 0, unknown: 0 }
   for (const item of calls) phaseCounts[phaseOf(item)]++
   const sector = call ? dialSectorIndex(call.name) : -1
@@ -4335,9 +4410,13 @@ function renderToolDial(messages) {
       ? [{ translate: '10% 0', opacity: 1 }, { translate: '34% 0' }, { translate: '17% 0', opacity: 0 }]
       : [{ translate: '0 0', opacity: 1 }, { translate: '660% 0', opacity: 0 }]
     const delay = dialRotation?.playState === 'running'
-      ? Math.max(0, dialRotation.effect.getComputedTiming().endTime - (dialRotation.currentTime ?? 0) - 55)
+      ? Math.max(0, dialRotation.effect.getComputedTiming().endTime * .72 - (dialRotation.currentTime ?? 0))
       : 0
     dialFeedback = [
+      dialWheel.animate([
+        { translate: '0 0' }, { translate: '2px 0', offset: .18 },
+        { translate: '-1px 0', offset: .52 }, { translate: '0 0' },
+      ], { delay, duration: 135, easing: 'ease-out' }),
       impactRing.animate([
         { transform: 'scale(.55)', opacity: .9 },
         { transform: `scale(${impact})`, opacity: .66, offset: .38 },
@@ -4347,27 +4426,45 @@ function renderToolDial(messages) {
     ]
   }
   const sectorCounts = Array(dialSectors.length).fill(0)
-  const latestBySector = []
-  for (const item of calls) {
+  const playedBySector = dialSectors.map(() => [])
+  const playedIndex = calls.indexOf(call)
+  for (const [position, item] of calls.entries()) {
     const index = dialSectorIndex(item.name)
     sectorCounts[index]++
-    latestBySector[index] ??= item
+    if (position >= playedIndex) playedBySector[index].push(item)
   }
   dialBreakdown.setAttribute('aria-label', t(call ? 'dial.breakdown' : 'dial.scale'))
-  dialLabels.forEach((label, i) => {
+  dialLabels.forEach((slot, i) => {
     const name = dialSectors[i][state.locale]
     const count = sectorCounts[i]
     const breakdownItem = dialBreakdownItems[i]
-    label.firstElementChild.textContent = name
-    label.children[1].textContent = String(count).padStart(2, '0')
-    const detail = dialToolTarget(latestBySector[i])
-    label.lastElementChild.textContent = detail
-    label.lastElementChild.hidden = !detail
-    label.classList.toggle('selected', i === sector)
+    const recent = playedBySector[i]
+    const latest = recent[0]
+    slot.name.textContent = latest?.name || name
+    slot.count.textContent = '×' + recent.length
+    slot.trend.replaceChildren(...recent.slice(0, 12).reverse().map(item => {
+      const bar = document.createElement('i')
+      bar.dataset.phase = phaseOf(item)
+      return bar
+    }))
+    slot.targets.replaceChildren(...recent.slice(0, 4).map(item => {
+      const entry = document.createElement('li')
+      entry.textContent = dialToolTarget(item) || item.name
+      entry.title = entry.textContent
+      return entry
+    }))
+    const received = dialReceived.get(latest?.id)
+    slot.age.hidden = received == null
+    slot.age.dataset.received = received ?? ''
+    slot.age.title = zh ? '距收到调用的时间' : 'Time since the call arrived'
+    slot.label.dataset.phase = latest ? phaseOf(latest) : 'idle'
+    slot.label.title = latest?.name || name
+    slot.label.classList.toggle('selected', i === sector)
     breakdownItem.firstElementChild.textContent = name
     breakdownItem.lastElementChild.textContent = call ? String(count) : (i * 360 / dialSectors.length) + '°'
     breakdownItem.style.setProperty('--dial-share', (count * 100 / (calls.length || 1)) + '%')
   })
+  updateDialAges()
   const status = {
     idle: zh ? '等待工具调用' : 'Waiting for a tool call',
     error: zh ? '执行失败' : 'Failed',
@@ -4412,6 +4509,18 @@ dialButton.addEventListener('click', () => {
   dialPanel.hidden = !dialPanel.hidden
   localStorage.setItem('opencowork-tool-dial', dialPanel.hidden ? 'closed' : 'open')
   resetDialMotion()
+})
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    clearTimeout(dialPlaybackTimer)
+    clearTimeout(dialAgeTimer)
+    dialRotation?.pause()
+    for (const animation of dialFeedback) animation.cancel()
+  } else if (!dialPanel.hidden) {
+    if (dialRotation?.playState === 'paused') dialRotation.play()
+    dialRenderKey = ''
+    renderToolDial(buildVisibleMessages())
+  }
 })
 
 function renderMessages() {
