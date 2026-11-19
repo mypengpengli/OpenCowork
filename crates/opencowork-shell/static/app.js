@@ -4446,7 +4446,9 @@ function renderToolDial(messages) {
       bar.dataset.phase = phaseOf(item)
       return bar
     }))
-    slot.targets.replaceChildren(...recent.slice(0, 4).map(item => {
+    const visibleTargets = recent.slice(0, 4).reverse()
+    slot.targets.start = recent.length - visibleTargets.length + 1
+    slot.targets.replaceChildren(...visibleTargets.map(item => {
       const entry = document.createElement('li')
       entry.textContent = dialToolTarget(item) || item.name
       entry.title = entry.textContent

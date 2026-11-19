@@ -2896,9 +2896,9 @@ button:disabled {
 .dial-sector-trend i { display: block; width: 4px; height: 9px; background: var(--sector-color); }
 .dial-sector-trend i[data-phase=running] { height: 13px; opacity: .55; }
 .dial-sector-trend i[data-phase=error] { height: 13px; background: #ad4436; }
-.dial-sector ol { grid-column: 1 / -1; margin: 2px 0 0; padding: 0; counter-reset: target; color: #414a3c; font: 11px/1.6 var(--rail-mono); }
-.dial-sector li { counter-increment: target; list-style: none; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.dial-sector li::before { content: counter(target, decimal-leading-zero); margin-right: .65em; color: #767865; font-size: 9px; }
+.dial-sector ol { grid-column: 1 / -1; margin: 2px 0 0; padding: 0; color: #414a3c; font: 11px/1.6 var(--rail-mono); }
+.dial-sector li { list-style: none; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.dial-sector li::before { content: counter(list-item, decimal-leading-zero); margin-right: .65em; color: #767865; font-size: 9px; }
 .dial-sector[data-phase=error] b { color: #933c2b; }
 .dial-counter {
   position: absolute;
