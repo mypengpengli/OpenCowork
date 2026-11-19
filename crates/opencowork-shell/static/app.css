@@ -1148,6 +1148,27 @@ button:disabled {
   color: var(--text-soft);
 }
 
+#turn-wait {
+  margin: 0 0 20px;
+  color: var(--text-soft);
+  font-size: 14px;
+}
+
+@media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+  .turn-wait-label {
+    display: inline-block;
+    background: linear-gradient(100deg, var(--text-soft) 38%, #fff 50%, var(--text-soft) 62%) 100% center / 240% 100%;
+    background-clip: text;
+    color: transparent;
+    animation: turn-wait-sweep 2s ease-in-out infinite;
+  }
+}
+
+@keyframes turn-wait-sweep {
+  0% { background-position-x: 100%; }
+  75%, 100% { background-position-x: 0%; }
+}
+
 .message-block--text .message-block-content.is-collapsed {
   padding: 12px;
   border-radius: var(--radius-md);

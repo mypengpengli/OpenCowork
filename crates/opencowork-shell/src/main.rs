@@ -184,6 +184,7 @@ struct ProviderSettingsView {
     base_url_env: Option<String>,
     timeout_ms: u64,
     max_retries: u32,
+    streaming: bool,
     persisted: bool,
 }
 
@@ -201,7 +202,12 @@ struct ProviderProfileView {
     base_url_env: Option<String>,
     timeout_ms: u64,
     max_retries: u32,
+    streaming: bool,
     active: bool,
+}
+
+const fn default_streaming() -> bool {
+    true
 }
 
 const fn default_provider_max_retries() -> u32 {
@@ -223,6 +229,8 @@ struct ProviderProfileRecord {
     timeout_ms: u64,
     #[serde(default = "default_provider_max_retries")]
     max_retries: u32,
+    #[serde(default = "default_streaming")]
+    streaming: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -321,6 +329,7 @@ struct ProviderUpdateRequest {
     base_url_env: Option<String>,
     timeout_ms: Option<u64>,
     max_retries: Option<u32>,
+    streaming: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -337,6 +346,7 @@ struct ProviderProfileUpsertRequest {
     base_url_env: Option<String>,
     timeout_ms: Option<u64>,
     max_retries: Option<u32>,
+    streaming: Option<bool>,
     activate: bool,
 }
 
@@ -1043,6 +1053,12 @@ async fn save_provider(
     if let Some(timeout_ms) = payload.timeout_ms {
         provider.insert("timeoutMs".to_string(), Value::Number(timeout_ms.into()));
     }
+    if let Some(streaming) = payload
+        .streaming
+        .or_else(|| root.get("provider")?.get("streaming")?.as_bool())
+    {
+        provider.insert("streaming".into(), Value::Bool(streaming));
+    }
     if let Some(max_retries) = payload.max_retries {
         provider.insert(
             "maxRetries".to_string(),
@@ -1151,6 +1167,7 @@ async fn save_provider_profile(
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned),
         timeout_ms: payload.timeout_ms.unwrap_or(90_000),
+        streaming: payload.streaming.unwrap_or(true),
         max_retries: payload
             .max_retries
             .unwrap_or(DEFAULT_PROVIDER_MAX_RETRIES)
@@ -1163,6 +1180,7 @@ async fn save_provider_profile(
         } else if record.api_key.trim().is_empty() {
             record.api_key = existing.api_key.clone();
         }
+        record.streaming = payload.streaming.unwrap_or(existing.streaming);
         *existing = record.clone();
     } else {
         if payload.clear_api_key.unwrap_or(false) {
@@ -1653,6 +1671,7 @@ fn provider_view(config: &opencowork_runtime::RuntimeConfig, model: &str) -> Pro
             base_url: provider.base_url().to_string(),
             base_url_env: provider.base_url_env().map(ToOwned::to_owned),
             timeout_ms: provider.timeout_ms(),
+            streaming: provider.streaming(),
             max_retries: provider.max_retries(),
             persisted: true,
         };
@@ -1667,6 +1686,7 @@ fn provider_view(config: &opencowork_runtime::RuntimeConfig, model: &str) -> Pro
         base_url,
         base_url_env: profile.base_url_env,
         timeout_ms: profile.timeout_ms,
+        streaming: profile.streaming,
         max_retries: profile.max_retries,
         persisted: false,
     }
@@ -1722,6 +1742,7 @@ fn default_provider_profile_record(
         base_url: provider.base_url,
         base_url_env: provider.base_url_env,
         timeout_ms: provider.timeout_ms,
+        streaming: provider.streaming,
         max_retries: provider.max_retries,
     }
 }
@@ -1763,6 +1784,7 @@ fn provider_profile_views(
             base_url: fallback.base_url.clone(),
             base_url_env: fallback.base_url_env.clone(),
             timeout_ms: fallback.timeout_ms,
+            streaming: fallback.streaming,
             max_retries: fallback.max_retries,
         });
         active_id = Some("default-provider".to_string());
@@ -1786,6 +1808,7 @@ fn provider_profile_views(
                 base_url: profile.base_url,
                 base_url_env: profile.base_url_env,
                 timeout_ms: profile.timeout_ms,
+                streaming: profile.streaming,
                 max_retries: profile.max_retries,
             })
             .collect(),
@@ -1826,6 +1849,7 @@ fn apply_provider_profile(root: &mut Map<String, Value>, profile: &ProviderProfi
             Value::String(base_url_env.clone()),
         );
     }
+    provider.insert("streaming".into(), Value::Bool(profile.streaming));
     provider.insert(
         "timeoutMs".to_string(),
         Value::Number(profile.timeout_ms.into()),

@@ -23,6 +23,7 @@ pub struct OpenAiCompatProfile {
     pub base_url_env: Option<String>,
     pub base_url: String,
     pub timeout_ms: u64,
+    pub streaming: bool,
     pub max_retries: u32,
     pub reasoning_effort: Option<String>,
 }
@@ -36,6 +37,7 @@ impl OpenAiCompatProfile {
             base_url_env: Some("OPENAI_BASE_URL".to_string()),
             base_url: DEFAULT_OPENAI_BASE_URL.to_string(),
             timeout_ms: 90_000,
+            streaming: true,
             max_retries: DEFAULT_PROVIDER_MAX_RETRIES,
             reasoning_effort: None,
         }
@@ -49,6 +51,7 @@ impl OpenAiCompatProfile {
             base_url_env: Some("XAI_BASE_URL".to_string()),
             base_url: DEFAULT_XAI_BASE_URL.to_string(),
             timeout_ms: 90_000,
+            streaming: true,
             max_retries: DEFAULT_PROVIDER_MAX_RETRIES,
             reasoning_effort: None,
         }
@@ -67,6 +70,7 @@ impl OpenAiCompatProfile {
             base_url_env,
             base_url: base_url.into(),
             timeout_ms: 90_000,
+            streaming: true,
             max_retries: DEFAULT_PROVIDER_MAX_RETRIES,
             reasoning_effort: None,
         }
@@ -75,6 +79,12 @@ impl OpenAiCompatProfile {
     #[must_use]
     pub fn with_timeout_ms(mut self, timeout_ms: u64) -> Self {
         self.timeout_ms = timeout_ms;
+        self
+    }
+
+    #[must_use]
+    pub fn with_streaming(mut self, streaming: bool) -> Self {
+        self.streaming = streaming;
         self
     }
 
@@ -250,6 +260,13 @@ impl ProviderClient for OpenAiCompatClient {
         request: ProviderRequest,
         on_event: &mut dyn FnMut(&ProviderEvent),
     ) -> Result<Vec<ProviderEvent>, String> {
+        if !self.profile.streaming {
+            let events = self.execute(request)?.events;
+            for event in &events {
+                on_event(event);
+            }
+            return Ok(events);
+        }
         let response = self.send(&request, true)?;
         read_stream_events(response, &self.profile, on_event)
     }

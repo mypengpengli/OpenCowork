@@ -183,6 +183,7 @@
               </section>
 
               <div id="message-list" class="message-list"></div>
+              <div id="turn-wait" role="status" hidden><span class="turn-wait-label" data-i18n="message.working">工作中</span></div>
             </div>
 
             <section id="utility-drawer" class="chat-drawer chat-drawer--utility is-collapsed">
@@ -1012,6 +1013,10 @@
             <span data-i18n="provider.maxRetries">临时错误重试次数</span>
             <input id="provider-max-retries" name="maxRetries" type="number" min="0" max="5" step="1" value="2" />
             <small class="field-hint" data-i18n="provider.maxRetriesHint">默认重试 2 次。仅重试连接失败、HTTP 408/409/429 和 5xx；已经开始输出的流不会自动重放。</small>
+          </label>
+          <label class="toggle-chip toggle-chip--inline">
+            <input id="provider-streaming" name="streaming" type="checkbox" checked />
+            <span data-i18n="provider.streaming">流式输出</span>
           </label>
           <label class="toggle-chip toggle-chip--inline">
             <input id="provider-profile-activate" type="checkbox" checked />

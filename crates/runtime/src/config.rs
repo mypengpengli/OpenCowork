@@ -74,6 +74,7 @@ pub struct RuntimeProviderConfig {
     base_url: String,
     base_url_env: Option<String>,
     timeout_ms: u64,
+    streaming: bool,
     max_retries: u32,
 }
 
@@ -521,6 +522,11 @@ impl RuntimeProviderConfig {
     }
 
     #[must_use]
+    pub const fn streaming(&self) -> bool {
+        self.streaming
+    }
+
+    #[must_use]
     pub const fn max_retries(&self) -> u32 {
         self.max_retries
     }
@@ -895,6 +901,9 @@ fn parse_provider(root: &Value) -> Result<Option<RuntimeProviderConfig>, ConfigE
     if let Some(timeout_ms) = object.get("timeoutMs").and_then(Value::as_u64) {
         provider.timeout_ms = timeout_ms;
     }
+    if let Some(streaming) = object.get("streaming").and_then(Value::as_bool) {
+        provider.streaming = streaming;
+    }
     if let Some(max_retries) = object.get("maxRetries").and_then(Value::as_u64) {
         provider.max_retries = u32::try_from(max_retries).unwrap_or(u32::MAX).min(5);
     }
@@ -1182,6 +1191,7 @@ fn provider_from_kind(kind: &str) -> Result<RuntimeProviderConfig, ConfigError> 
             base_url: DEFAULT_OPENAI_BASE_URL.to_string(),
             base_url_env: Some("OPENAI_BASE_URL".to_string()),
             timeout_ms: 90_000,
+            streaming: true,
             max_retries: DEFAULT_PROVIDER_MAX_RETRIES,
         }),
         "xai" => Ok(RuntimeProviderConfig {
@@ -1191,6 +1201,7 @@ fn provider_from_kind(kind: &str) -> Result<RuntimeProviderConfig, ConfigError> 
             base_url: DEFAULT_XAI_BASE_URL.to_string(),
             base_url_env: Some("XAI_BASE_URL".to_string()),
             timeout_ms: 90_000,
+            streaming: true,
             max_retries: DEFAULT_PROVIDER_MAX_RETRIES,
         }),
         other => Err(ConfigError::Invalid(format!(

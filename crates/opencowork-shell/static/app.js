@@ -140,6 +140,7 @@ const els = {
   messageCount: document.querySelector('#message-count'),
   expandAllButton: document.querySelector('#expand-all-button'),
   messageList: document.querySelector('#message-list'),
+  turnWait: document.querySelector('#turn-wait'),
   messageScroll: document.querySelector('#message-list-shell'),
   workspaceCwd: document.querySelector('#workspace-cwd'),
   workspaceSettings: document.querySelector('#workspace-settings'),
@@ -314,6 +315,7 @@ const els = {
   providerBaseUrl: document.querySelector('#provider-base-url'),
   providerBaseUrlEnv: document.querySelector('#provider-base-url-env'),
   providerTimeoutMs: document.querySelector('#provider-timeout-ms'),
+  providerStreaming: document.querySelector('#provider-streaming'),
   providerMaxRetries: document.querySelector('#provider-max-retries'),
   providerProfileActivate: document.querySelector('#provider-profile-activate'),
   resetProviderButton: document.querySelector('#reset-provider-button'),
@@ -509,7 +511,7 @@ const MESSAGES = {
     'composer.waiting': '等待响应…',
     'composer.streaming': '输出中…',
     'message.pendingUser': '刚刚发送',
-    'message.waitingResponse': '等待助手响应…',
+    'message.working': '工作中',
     'app.title': 'OpenCowork',
     'brand.kicker': 'OpenCoWork 智能体',
     'sidebar.newSession': '新建会话',
@@ -688,6 +690,7 @@ const MESSAGES = {
     'provider.baseUrlHint': '填写兼容接口根地址；如果走官方默认地址，可保留默认值。',
     'provider.baseUrlEnvHint': '如果你会在不同环境之间切换地址，可以只在这里保存变量名。',
     'provider.timeoutHint': '请求超时只影响这层壳子的请求等待时间。',
+    'provider.streaming': '流式输出',
     'provider.maxRetries': '临时错误重试次数',
     'provider.maxRetriesHint': '默认重试 2 次。仅重试连接失败、HTTP 408/409/429 和 5xx；已经开始输出的流不会自动重放。',
     'providerProfiles.title': 'Provider 配置档',
@@ -1126,7 +1129,7 @@ const MESSAGES = {
     'composer.waiting': 'Waiting for a response…',
     'composer.streaming': 'Streaming…',
     'message.pendingUser': 'Just sent',
-    'message.waitingResponse': 'Waiting for the assistant response…',
+    'message.working': 'Working',
     'app.title': 'OpenCowork',
     'brand.kicker': 'OpenCoWork Agent',
     'sidebar.newSession': 'New Session',
@@ -1388,6 +1391,7 @@ const MESSAGES = {
     'provider.baseUrlHint': 'Use the compatible API root. Keep the default if you rely on the standard host.',
     'provider.baseUrlEnvHint': 'If you switch endpoints by environment, keep only the variable name here.',
     'provider.timeoutHint': 'Timeout only affects request waiting on this shell layer.',
+    'provider.streaming': 'Stream responses',
     'provider.maxRetries': 'Transient error retries',
     'provider.maxRetriesHint': 'Defaults to 2 retries. Only connection failures and HTTP 408/409/429/5xx are retried; a stream that already started is never replayed.',
     'providerProfiles.title': 'Provider Profiles',
@@ -2472,12 +2476,7 @@ function buildPendingMessages() {
       __pending: true,
       __pendingState: 'user',
     },
-    ...(state.pendingTurn.messages.length ? state.pendingTurn.messages : [{
-      role: 'assistant',
-      blocks: [{ type: 'text', text: t('message.waitingResponse') }],
-      __pending: true,
-      __pendingState: 'waiting',
-    }]),
+    ...state.pendingTurn.messages,
   ]
 }
 
@@ -4538,6 +4537,10 @@ function renderMessages() {
   const previousBottomGap = els.messageScroll.scrollHeight - els.messageScroll.scrollTop - els.messageScroll.clientHeight
   const keepPinned = state.forceMessageScroll || (previousBottomGap < 96 &&
     ![...previousGroups.values()].some(group => group.open))
+  const latest = state.pendingTurn?.messages.at(-1)
+  const lastBlock = latest?.blocks.at(-1)
+  const showingReply = latest?.role === 'assistant' && lastBlock?.type === 'text' && lastBlock.text
+  els.turnWait.hidden = !state.pendingTurn || state.stopping || Boolean(showingReply)
   els.messageList.innerHTML = ''
   els.messageCount.textContent = String(messages.length)
 
@@ -5081,6 +5084,7 @@ function renderProviderProfileEditor() {
   els.providerBaseUrl.value = source.baseUrl || ''
   els.providerBaseUrlEnv.value = source.baseUrlEnv || ''
   els.providerTimeoutMs.value = source.timeoutMs || 90000
+  els.providerStreaming.checked = source.streaming ?? true
   els.providerMaxRetries.value = source.maxRetries ?? 2
   els.providerProfileActivate.checked = profile ? Boolean(profile.active) : true
   if (els.providerClearApiKey) {
@@ -6072,12 +6076,14 @@ async function submitChat(event) {
 async function stopChat() {
   if (!state.activeTurnId || state.stopping) return
   state.stopping = true
+  els.turnWait.hidden = true
   updateComposerState()
   setComposerStatus(t('composer.stopping'))
   try {
     await request(`/api/chat/${encodeURIComponent(state.activeTurnId)}/cancel`, { method: 'POST' })
   } catch (error) {
     state.stopping = false
+    renderMessages()
     updateComposerState()
     setComposerStatus(error.message, true)
   }
@@ -6570,6 +6576,7 @@ async function submitProvider(event) {
         baseUrl: els.providerBaseUrl.value.trim(),
         baseUrlEnv: els.providerBaseUrlEnv.value.trim() || null,
         timeoutMs: Number(els.providerTimeoutMs.value || 90000),
+        streaming: els.providerStreaming.checked,
         maxRetries: Math.max(0, Math.min(5, Math.trunc(Number(els.providerMaxRetries.value || 2)))),
         activate: Boolean(els.providerProfileActivate.checked),
       }),
