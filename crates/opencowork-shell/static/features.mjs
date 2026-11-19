@@ -13,7 +13,7 @@ export function initFeaturePanels({ state, request, composer, status, prepareTas
     toggle(computer, tr('开启电脑控制（默认开启）', 'Enable computer control (on by default)')),
     el('p', tr('允许智能体查看窗口、截图和操作鼠标键盘。关闭时会停止当前任务；也可以随时使用聊天中的停止按钮。', 'Let the agent inspect windows, capture screenshots and use the mouse and keyboard. Disabling stops active turns. The chat Stop button is always available.'), 'settings-card-copy'),
     toggle(memory, tr('完成回复后自动提取项目记忆', 'Extract project memories after successful replies')),
-    el('p', tr('独立后台请求，最多每分钟一次；输入最多 24000 字符，输出最多 768 token。生成的记忆可在记忆设置中查看、编辑和删除。', 'Separate background request, at most once per minute; 24,000 input characters and 768 output tokens. Review, edit or delete notes in Memory settings.'), 'settings-card-copy'),
+    el('p', tr('每个项目最多每分钟提取一次。首次读取该会话已有的用户和助手文本，之后一次读取全部新增文本。每次最多生成 3 条记忆（768 token），可在记忆设置中编辑或删除。', 'At most once per minute per project. The first request reads the session’s existing user and assistant text. Later requests read all new text since the last successful review. Each review can produce up to 3 notes (768 tokens). Edit or delete them in Memory settings.'), 'settings-card-copy'),
     button(tr('保存功能设置', 'Save feature settings'), async () => {
       const result = await request('/api/features', { method: 'POST', body: JSON.stringify({ computerEnabled: computer.checked, backgroundMemoryEnabled: memory.checked }) })
       computer.checked = result.computerEnabled; memory.checked = result.backgroundMemoryEnabled

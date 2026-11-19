@@ -71,9 +71,9 @@ def check(executable):
                 conn.request('POST' if payload is not None else 'GET',path,json.dumps(payload) if payload is not None else None,{'Content-Type':'application/json'})
                 response=conn.getresponse(); data=response.read(); assert response.status in (status if isinstance(status,tuple) else (status,)),(path,response.status,data);conn.close()
                 return json.loads(data) if data else None
-            def chat(prompt,refs=None):
+            def chat(prompt,refs=None,session_id=None):
                 conn=http.client.HTTPConnection('127.0.0.1',port,timeout=45)
-                conn.request('POST','/api/chat',json.dumps({'input':prompt,'references':refs or []}),{'Content-Type':'application/json'})
+                conn.request('POST','/api/chat',json.dumps({'input':prompt,'references':refs or [],'sessionId':session_id}),{'Content-Type':'application/json'})
                 response=conn.getresponse(); assert response.status==200,response.read()
                 messages=[json.loads(line) for line in response if line.strip()];conn.close()
                 final=next(m['response'] for m in messages if m['type']=='complete')
@@ -115,24 +115,29 @@ def check(executable):
                 assert not api('/api/features')['computerEnabled']
                 manifest=api('/api/tool-manifest');assert '"name": "Computer"' not in json.dumps(manifest)
                 api('/api/features',{'computerEnabled':True,'backgroundMemoryEnabled':True})
-                before=time.monotonic();chat('memory-check');elapsed=time.monotonic()-before
+                long_prompt = 'Remember offline mode.\n' + '界' * 36000 + '\nEnd of memory fixture.'
+                before=time.monotonic();memory_session=chat(long_prompt)['sessionId'];elapsed=time.monotonic()-before
                 deadline=time.monotonic()+15
                 while time.monotonic()<deadline:
                     memory_status=api('/api/background-memory')
                     if memory_status['state'] in ('completed','failed'):break
                     time.sleep(.2)
                 assert memory_status['state']=='completed',memory_status
-                assert extraction and list(config.rglob('auto-*.md'))
+                assert len(extraction)==1 and long_prompt in extraction[0]['messages'][-1]['content']
+                assert list(config.rglob('auto-*.md'))
                 assert elapsed<1.5,('Background extraction delayed main response',elapsed)
                 provenance=api('/api/memory-provenance');assert provenance['sources'] and provenance['sources'][0]['sourceSession']
                 note=Path(provenance['sources'][0]['path']);assert 'source_session:' in note.read_text(encoding='utf-8')
                 for p in config.rglob('.background/status.json'):p.unlink()
-                chat('memory-conflict-check');deadline=time.monotonic()+15
+                chat('memory-conflict-check',session_id=memory_session);deadline=time.monotonic()+15
                 while time.monotonic()<deadline:
                     provenance=api('/api/memory-provenance')
                     if provenance['conflicts']:break
                     time.sleep(.2)
                 assert provenance['conflicts'],provenance
+                assert len(extraction)==2
+                incremental = extraction[1]['messages'][-1]['content']
+                assert 'memory-conflict-check' in incremental and 'End of memory fixture.' not in incremental
                 conflict=provenance['conflicts'][0];assert conflict['status']=='needs_review';assert 'Rust 2024' not in note.read_text(encoding='utf-8')
                 # Conflict records can appear before the extraction worker releases its lease.
                 for _ in range(30):
