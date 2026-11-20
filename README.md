@@ -51,16 +51,20 @@ git pull --ff-only
 
 也可以只运行 `.\Build-OpenCowork.bat` 构建。启动器和下文开发命令共用 `%LOCALAPPDATA%\OpenClaw\target`；普通启动不会检查源码是否改变。
 
-### 使用已构建的便携包
+### 安装 Windows 客户端
 
-如果已拿到构建生成的 ZIP，完整解压后双击包内的 `Start-OpenCowork.bat`。将项目文件夹拖到启动器上，可以在该项目中工作。
+从 [Release 下载 Windows 安装程序](https://github.com/mypengpengli/OpenCowork/releases/download/v0.6.0/OpenCowork-0.6.0-Setup-x64.exe)，双击 `OpenCowork-0.6.0-Setup-x64.exe` 完成安装，然后从桌面或开始菜单打开 OpenCowork。Release 只提供这一个安装文件。
 
-- 桌面运行需要 Windows x64 和 WebView2；无需安装 Rust、MSVC 或 Node.js。
+安装到当前用户账户，不需要管理员权限。已有 WebView2 时直接使用；缺少时由安装程序补齐，需要联网。可在 Windows「已安装的应用」中卸载；升级和卸载保留工作区、会话与模型设置。
+
+- 桌面运行需要 Windows 10／11 x64 和 WebView2；无需安装 Rust、MSVC 或 Node.js。
 - 内置浏览器工具还需要本机安装 Chrome 或 Edge；无需浏览器扩展。
 - Git 审阅、暂存和隔离工作区功能需要 Git。自行配置的 MCP 服务可能需要额外运行时。
 - 启动失败会显示错误对话框，日志位于 `%LOCALAPPDATA%\OpenCowork\logs`。
 
-便携包由 [打包脚本](scripts/package-windows.ps1) 生成，包含桌面与网页宿主、启动器、操作说明和文件哈希清单。源码更新不会自动更新此前下载的 ZIP。
+安装包由 [安装打包脚本](scripts/package-installer.ps1) 生成，包含桌面与网页宿主、快捷方式、卸载程序和 WebView2 引导程序。源码更新后需要重新构建安装包。
+
+开发者构建安装包需安装 [NSIS](https://nsis.sourceforge.io/Download)，并下载微软官方 [WebView2 Evergreen Bootstrapper](https://developer.microsoft.com/microsoft-edge/webview2/)。运行 `scripts/package-installer.ps1 -NsisCompiler <makensis.exe路径> -WebViewBootstrapper <引导程序路径>`；脚本检查微软签名、构建优化版并生成 `dist/installers/OpenCowork-0.6.0-Setup-x64.exe`。安装与升级回归可运行 `python scripts/check-installer.py dist/installers/OpenCowork-0.6.0-Setup-x64.exe`。
 
 ## 工作区与会话
 
