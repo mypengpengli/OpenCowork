@@ -1158,7 +1158,7 @@ fn build_runtime_hooks(runtime: &RuntimeHost<'_>) -> HookRunner {
 
 fn resolve_provider_profile(config: &RuntimeConfig, model: &str) -> OpenAiCompatProfile {
     if let Some(provider) = config.provider() {
-        return OpenAiCompatProfile::custom(
+        let mut profile = OpenAiCompatProfile::custom(
             provider.name(),
             provider.api_key_env(),
             provider.base_url(),
@@ -1167,6 +1167,8 @@ fn resolve_provider_profile(config: &RuntimeConfig, model: &str) -> OpenAiCompat
         .with_streaming(provider.streaming())
         .with_timeout_ms(provider.timeout_ms())
         .with_max_retries(provider.max_retries());
+        profile.capabilities = provider.capabilities().clone();
+        return profile;
     }
     default_openai_profile_for_model(model)
 }
@@ -1265,6 +1267,7 @@ fn run_live_turn(
         prepared.prompt.system_prompt.clone(),
         hooks,
     )
+    .with_context_config(context_optimizer_config(host.config, model))
     .with_tool_result_budget(tool_result_budget_config(
         host.config,
         host.config_home.join("tool-results"),
@@ -1344,7 +1347,11 @@ fn prepare_turn_context(
         pending_user_input,
     )?;
     let optimizer = ContextOptimizer::new(context_optimizer_config(config, model));
-    let preparation = optimizer.prepare_session(&hydrated_session);
+    let preparation = opencowork_runtime::SessionPreparation {
+        session: hydrated_session.clone(),
+        summary: None,
+        compacted: false,
+    };
     let selection = optimizer.select(&hydrated_session, &instructions, &preparation);
     let composer = PromptComposer;
     let compact_result =
@@ -1678,9 +1685,15 @@ fn context_optimizer_config(config: &RuntimeConfig, model: &str) -> ContextOptim
     ContextOptimizerConfig {
         model: model.to_string(),
         preserve_recent_messages: config.context().preserve_recent_messages(),
-        context_window_tokens_override: config.context().context_window_tokens_override(),
+        context_window_tokens_override: config
+            .provider()
+            .and_then(|p| p.capabilities().context_window)
+            .or(config.context().context_window_tokens_override()),
         max_instruction_tokens: config.context().max_instruction_tokens(),
-        max_output_tokens: config.context().max_output_tokens(),
+        max_output_tokens: config
+            .provider()
+            .and_then(|p| p.capabilities().max_output_tokens)
+            .unwrap_or(config.context().max_output_tokens()),
         auto_compact_buffer_tokens: config.context().auto_compact_buffer_tokens(),
         message_collapse_chars: config.context().message_collapse_chars(),
         max_tool_result_chars: config.context().max_tool_result_chars(),

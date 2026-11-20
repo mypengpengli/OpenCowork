@@ -5,9 +5,12 @@ mod conversation;
 mod durable;
 mod hooks;
 mod memory;
+mod metrics;
+pub use metrics::{estimate_text_tokens, CompactionMetrics, RequestMetrics};
 mod model_context;
 mod permissions;
 mod process;
+pub mod process_sessions;
 mod prompt;
 mod provider_bridge;
 mod session;
@@ -17,10 +20,10 @@ mod usage;
 
 pub use compact::{
     budget_message_tool_results, budget_session_tool_results, collapse_session_messages,
-    compact_session, compacted_summary_prefix_len, estimate_session_tokens,
-    microcompact_session_messages, should_compact, snip_session_messages, CompactConfig,
-    CompactResult, MessageCollapseConfig, MicrocompactResult, SnipConfig, SnipResult,
-    ToolResultBudgetConfig, MICROCOMPACT_CLEARED_MESSAGE,
+    compact_session, compact_session_with_summary, compacted_summary_prefix_len,
+    estimate_session_tokens, microcompact_session_messages, should_compact, snip_session_messages,
+    CompactConfig, CompactResult, MessageCollapseConfig, MicrocompactResult, SnipConfig,
+    SnipResult, ToolResultBudgetConfig, MICROCOMPACT_CLEARED_MESSAGE,
 };
 pub use config::{
     default_config_home, ConfigEntry, ConfigLoader, ConfigSource, RuntimeConfig,
@@ -30,9 +33,9 @@ pub use config::{
 };
 pub use context::{ContextOptimizer, ContextOptimizerConfig, ContextSelection, SessionPreparation};
 pub use conversation::{
-    ApiClient, ApiRequest, AssistantEvent, ConversationRuntime, RuntimeError, RuntimeObserver,
-    RuntimePromptAugmenter, RuntimePromptUpdate, RuntimeToolDefinition, StaticToolExecutor,
-    ToolError, ToolExecutor, TurnLimits, TurnSummary,
+    is_blocking_wait_result, ApiClient, ApiRequest, AssistantEvent, ConversationRuntime,
+    RuntimeError, RuntimeObserver, RuntimePromptAugmenter, RuntimePromptUpdate,
+    RuntimeToolDefinition, StaticToolExecutor, ToolError, ToolExecutor, TurnLimits, TurnSummary,
 };
 pub use durable::{write_json_atomic, ExclusiveLease};
 pub use hooks::{HookOutcome, HookRunner};

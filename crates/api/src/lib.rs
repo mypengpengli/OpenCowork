@@ -1,4 +1,5 @@
 mod openai_compat;
+mod request_permit;
 
 pub use openai_compat::{
     default_openai_profile_for_model, OpenAiCompatClient, OpenAiCompatProfile,
@@ -8,6 +9,33 @@ pub use openai_compat::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::VecDeque;
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ModelCapabilities {
+    pub max_concurrent_requests: Option<usize>,
+    pub context_window: Option<usize>,
+    pub max_output_tokens: Option<usize>,
+    pub supports_images: Option<bool>,
+    pub requires_reasoning_content: bool,
+}
+
+impl ModelCapabilities {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.max_concurrent_requests == Some(0) {
+            return Err("Provider concurrency must be positive".into());
+        }
+        if self.context_window == Some(0) || self.max_output_tokens == Some(0) {
+            return Err("Model token limits must be positive".into());
+        }
+        if let (Some(window), Some(output)) = (self.context_window, self.max_output_tokens) {
+            if output >= window {
+                return Err("Output token limit must be smaller than the context window".into());
+            }
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolDefinition {
@@ -25,6 +53,8 @@ pub struct InputToolCall {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InputMessage {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub reasoning: std::collections::BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub image_urls: Vec<String>,
     pub role: String,
@@ -66,6 +96,19 @@ pub struct ProviderRequest {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ProviderEvent {
+    ToolCallDelta {
+        index: usize,
+        id: Option<String>,
+        name: Option<String>,
+        arguments_delta: String,
+    },
+    ReasoningDelta {
+        text: String,
+        field: String,
+    },
+    Finish {
+        reason: String,
+    },
     TextDelta(String),
     ToolCall {
         id: String,
@@ -87,6 +130,9 @@ pub struct ProviderResponse {
 }
 
 pub trait ProviderClient {
+    fn identity(&self) -> Option<String> {
+        None
+    }
     fn execute(&mut self, request: ProviderRequest) -> Result<ProviderResponse, String>;
 
     fn stream_execute(&mut self, request: ProviderRequest) -> Result<Vec<ProviderEvent>, String> {
@@ -110,6 +156,9 @@ impl<T> ProviderClient for &mut T
 where
     T: ProviderClient + ?Sized,
 {
+    fn identity(&self) -> Option<String> {
+        (**self).identity()
+    }
     fn execute(&mut self, request: ProviderRequest) -> Result<ProviderResponse, String> {
         (**self).execute(request)
     }

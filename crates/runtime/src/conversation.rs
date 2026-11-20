@@ -30,6 +30,21 @@ pub struct ApiRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AssistantEvent {
+    ToolCallDelta {
+        index: usize,
+        id: Option<String>,
+        name: Option<String>,
+        arguments_delta: String,
+    },
+    ReasoningDelta {
+        text: String,
+        field: String,
+        provider: String,
+        model: String,
+    },
+    Finish {
+        reason: String,
+    },
     TextDelta(String),
     ToolUse {
         id: String,
@@ -42,6 +57,13 @@ pub enum AssistantEvent {
 }
 
 pub trait ApiClient {
+    fn summarize(
+        &mut self,
+        _messages: &[ConversationMessage],
+        _input_tokens: usize,
+    ) -> Result<Option<(String, TokenUsage)>, RuntimeError> {
+        Ok(None)
+    }
     fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError>;
 
     fn stream_with_observer(
@@ -167,9 +189,12 @@ pub struct ConversationRuntime<C, T> {
     prompt_augmenter: Option<Box<dyn RuntimePromptAugmenter>>,
     tool_result_budget: ToolResultBudgetConfig,
     user_context: Option<String>,
+    context_config: Option<crate::ContextOptimizerConfig>,
 }
 
 pub trait RuntimeObserver {
+    fn on_request_metrics(&mut self, _metrics: &crate::RequestMetrics) {}
+    fn on_context_compacted(&mut self, _session: &Session, _before: usize, _after: usize) {}
     fn on_assistant_event(&mut self, _event: &AssistantEvent) {}
 
     fn on_tool_result(&mut self, _message: &ConversationMessage) {}
@@ -205,12 +230,18 @@ where
             prompt_augmenter: None,
             tool_result_budget: ToolResultBudgetConfig::default(),
             user_context: None,
+            context_config: None,
         }
     }
 
     pub fn with_limits(mut self, limits: TurnLimits) -> Self {
         self.max_iterations = limits.max_iterations;
         self.limits = limits;
+        self
+    }
+
+    pub fn with_context_config(mut self, config: crate::ContextOptimizerConfig) -> Self {
+        self.context_config = Some(config);
         self
     }
 
@@ -292,6 +323,7 @@ where
         let mut previous_result = String::new();
         let mut repeats = 0usize;
         let mut consumed = self.session.delivered_user_messages.clone();
+        let mut overflow_retries = 0;
 
         loop {
             if let Ok(path) = std::env::var("OPENCOWORK_STEERING_FILE") {
@@ -333,6 +365,12 @@ where
                 ));
             }
 
+            if let Some((before, after, summary_usage)) = self.prepare_request_context(false)? {
+                if let Some(ref mut observer) = observer {
+                    observer.on_assistant_event(&AssistantEvent::Usage(summary_usage));
+                    observer.on_context_compacted(&self.session, before, after);
+                }
+            }
             let request_messages =
                 budget_session_tool_results(&self.session, self.tool_result_budget.clone())
                     .messages;
@@ -341,15 +379,95 @@ where
                 messages: request_messages,
                 tools: self.tool_executor.definitions(),
             };
-            let events = if let Some(ref mut observer) = observer {
-                self.api_client
-                    .stream_with_observer(request, &mut |event| {
-                        observer.on_assistant_event(event);
-                    })?
-            } else {
-                self.api_client.stream(request)?
+            let request_start = std::time::Instant::now();
+            let mut metrics = crate::RequestMetrics {
+                id: uuid::Uuid::new_v4().to_string(),
+                model: self
+                    .context_config
+                    .as_ref()
+                    .map(|c| c.model.clone())
+                    .unwrap_or_default(),
+                started_at: crate::process_sessions::now_ms(),
+                status: "running".into(),
+                ..Default::default()
             };
-            let (assistant_message, pending, usage) = build_assistant_message(events)?;
+            self.session.request_metrics.push(metrics.clone());
+            if let Some(ref mut sink) = observer {
+                sink.on_request_metrics(&metrics);
+            }
+            let response = self.api_client.stream_with_observer(request, &mut |event| {
+                let prior = (metrics.first_event_ms, metrics.first_text_ms);
+                let elapsed = request_start.elapsed().as_millis() as u64;
+                if matches!(
+                    event,
+                    AssistantEvent::ReasoningDelta { .. }
+                        | AssistantEvent::TextDelta(_)
+                        | AssistantEvent::ToolCallDelta { .. }
+                        | AssistantEvent::ToolUse { .. }
+                ) {
+                    metrics.first_event_ms.get_or_insert(elapsed);
+                }
+                if matches!(event, AssistantEvent::TextDelta(_)) {
+                    metrics.first_text_ms.get_or_insert(elapsed);
+                }
+                if let AssistantEvent::Usage(usage) = event {
+                    metrics.usage = *usage;
+                }
+                if let AssistantEvent::Finish { reason } = event {
+                    if !matches!(reason.as_str(), "stop" | "tool_calls" | "function_call") {
+                        metrics.status = "incomplete".into();
+                    }
+                }
+                if let Some(ref mut observer) = observer {
+                    observer.on_assistant_event(event);
+                    if prior != (metrics.first_event_ms, metrics.first_text_ms) {
+                        observer.on_request_metrics(&metrics);
+                    }
+                }
+            });
+            metrics.elapsed_ms = request_start.elapsed().as_millis() as u64;
+            if response.is_err() {
+                metrics.status = "failed".into();
+            } else if metrics.status == "running" {
+                metrics.status = "completed".into();
+            }
+            if let Some(record) = self
+                .session
+                .request_metrics
+                .iter_mut()
+                .find(|record| record.id == metrics.id)
+            {
+                *record = metrics.clone();
+            }
+            if let Some(ref mut sink) = observer {
+                sink.on_request_metrics(&metrics);
+            }
+            let events = match response {
+                Ok(events) => {
+                    overflow_retries = 0;
+                    events
+                }
+                Err(error)
+                    if error.to_string().contains("provider_context_overflow")
+                        && overflow_retries == 0 =>
+                {
+                    overflow_retries += 1;
+                    if let Some((before, after, summary_usage)) =
+                        self.prepare_request_context(true)?
+                    {
+                        if let Some(ref mut sink) = observer {
+                            sink.on_assistant_event(&AssistantEvent::Usage(summary_usage));
+                            sink.on_context_compacted(&self.session, before, after);
+                        }
+                        continue;
+                    }
+                    return Err(error);
+                }
+                Err(error) => return Err(error),
+            };
+            let (mut assistant_message, pending, usage) = build_assistant_message(events)?;
+            assistant_message.context_generation = self.session.context_collapse_commits.len();
+            assistant_message.request_overhead_tokens = Some(self.request_overhead_tokens());
             if let Some(usage) = usage {
                 self.usage_tracker.record(usage);
             }
@@ -417,7 +535,21 @@ where
                     }) => format!("{}:{}:{}", operation, is_error, output),
                     _ => signature,
                 };
-                if signature == previous_result {
+                let expected_wait = match message.blocks.first() {
+                    Some(ContentBlock::ToolResult {
+                        tool_name,
+                        output,
+                        is_error: false,
+                        ..
+                    }) => operation
+                        .strip_prefix(&format!("{tool_name}:"))
+                        .is_some_and(|input| is_blocking_wait_result(tool_name, input, output)),
+                    _ => false,
+                };
+                if expected_wait {
+                    repeats = 0;
+                    previous_result.clear();
+                } else if signature == previous_result {
                     repeats += 1;
                 } else {
                     previous_result = signature;
@@ -461,7 +593,10 @@ where
 
     #[must_use]
     pub fn estimated_tokens(&self) -> usize {
-        estimate_session_tokens(&self.session)
+        measured_context_tokens(
+            &budget_session_tool_results(&self.session, self.tool_result_budget.clone()),
+            self.request_overhead_tokens(),
+        )
     }
 
     #[must_use]
@@ -472,6 +607,129 @@ where
     #[must_use]
     pub fn usage(&self) -> &UsageTracker {
         &self.usage_tracker
+    }
+
+    fn prepare_request_context(
+        &mut self,
+        force: bool,
+    ) -> Result<Option<(usize, usize, TokenUsage)>, RuntimeError> {
+        let compaction_start = std::time::Instant::now();
+        let Some(config) = self.context_config.clone() else {
+            return Ok(None);
+        };
+        let threshold = crate::get_auto_compact_threshold(
+            &config.model,
+            config.context_window_tokens_override,
+            config.max_output_tokens,
+            config.auto_compact_buffer_tokens,
+        )
+        .max(1);
+        let threshold = if force { threshold / 2 } else { threshold };
+        let overhead = self.request_overhead_tokens();
+        if overhead >= threshold {
+            return Err(RuntimeError::new("context_budget_exceeded: system instructions and tools exceed this model's input budget"));
+        }
+        let projection =
+            budget_session_tool_results(&self.session, self.tool_result_budget.clone());
+        let before = measured_context_tokens(&projection, overhead);
+        if before < threshold {
+            return Ok(None);
+        }
+        let budget = threshold - overhead;
+        let mut preserve = 0;
+        let mut recent = 0;
+        for message in projection.messages.iter().rev() {
+            let size = estimate_session_tokens(&Session::from_messages(vec![message.clone()]));
+            if preserve > 0 && recent + size > budget / 3 {
+                break;
+            }
+            recent += size;
+            preserve += 1;
+        }
+        let compact_config = CompactConfig {
+            preserve_recent_messages: preserve,
+            max_estimated_tokens: 0,
+        };
+        let candidate =
+            crate::compact_session_with_summary(&self.session, compact_config, Some(""));
+        if candidate.removed_message_count == 0 {
+            return Err(RuntimeError::new("context_budget_exceeded: no safe history range can be compacted; reduce the current input"));
+        }
+        let end =
+            crate::compacted_summary_prefix_len(&self.session) + candidate.removed_message_count;
+        let generated = self
+            .api_client
+            .summarize(&self.session.messages[..end], budget / 3)?;
+        let mut summary_usage = TokenUsage::default();
+        let mut next = if let Some((summary, usage)) = generated {
+            summary_usage = usage;
+            self.usage_tracker.record(usage);
+            crate::compact_session_with_summary(&self.session, compact_config, Some(&summary))
+        } else {
+            compact_session(&self.session, compact_config)
+        };
+        let after = measured_context_tokens(
+            &budget_session_tool_results(&next.compacted_session, self.tool_result_budget.clone()),
+            overhead,
+        );
+        if after >= threshold || after >= before {
+            return Err(RuntimeError::new("compaction_failed: checkpoint did not fit the model budget; original history retained"));
+        }
+        if let Some(commit) = next.compacted_session.context_collapse_commits.last_mut() {
+            commit.metrics = Some(crate::CompactionMetrics {
+                elapsed_ms: compaction_start.elapsed().as_millis() as u64,
+                before_tokens: before,
+                after_tokens: after,
+                usage: summary_usage,
+            });
+        }
+        self.session = next.compacted_session;
+        Ok(Some((before, after, summary_usage)))
+    }
+
+    fn request_overhead_tokens(&self) -> usize {
+        let text = self
+            .system_prompt
+            .iter()
+            .map(|s| crate::estimate_text_tokens(s))
+            .sum::<usize>()
+            + self
+                .tool_executor
+                .definitions()
+                .iter()
+                .map(|t| {
+                    crate::estimate_text_tokens(&t.description)
+                        + crate::estimate_text_tokens(&t.input_schema.to_string())
+                })
+                .sum::<usize>();
+        let screenshot = self
+            .session
+            .messages
+            .iter()
+            .rev()
+            .take_while(|m| m.role != crate::MessageRole::User)
+            .flat_map(|m| m.blocks.iter())
+            .find_map(|block| {
+                if let ContentBlock::ToolResult {
+                    tool_name,
+                    output,
+                    is_error,
+                    ..
+                } = block
+                {
+                    if matches!(tool_name.as_str(), "Computer" | "Browser") {
+                        return Some(
+                            !is_error
+                                && serde_json::from_str::<Value>(output)
+                                    .ok()
+                                    .is_some_and(|v| v.get("screenshotPath").is_some()),
+                        );
+                    }
+                }
+                None
+            })
+            .unwrap_or(false);
+        text + if screenshot { 4096 } else { 0 }
     }
 
     fn execute_tool_use(&mut self, pending_tool: PendingToolUse) -> ConversationMessage {
@@ -557,9 +815,53 @@ fn build_assistant_message(
     let mut pending = Vec::new();
     let mut usage = None;
     let mut saw_stop = false;
+    let mut finish_reason = None;
 
     for event in events {
         match event {
+            AssistantEvent::ToolCallDelta {
+                index,
+                id,
+                name,
+                arguments_delta,
+            } => {
+                flush_text(&mut text, &mut blocks);
+                if let Some(ContentBlock::ToolCallDraft { id: previous_id, name: previous_name, input, .. }) = blocks.iter_mut().find(|b| matches!(b, ContentBlock::ToolCallDraft { index: current, .. } if *current == index)) {
+                    if id.is_some() { *previous_id = id; }
+                    if name.is_some() { *previous_name = name; }
+                    input.push_str(&arguments_delta);
+                } else {
+                    blocks.push(ContentBlock::ToolCallDraft { index, id, name, input: arguments_delta });
+                }
+            }
+            AssistantEvent::ReasoningDelta {
+                text: delta,
+                field,
+                provider,
+                model,
+            } => {
+                flush_text(&mut text, &mut blocks);
+                if let Some(ContentBlock::Reasoning {
+                    text,
+                    field: previous,
+                    ..
+                }) = blocks.last_mut()
+                {
+                    if *previous == field {
+                        text.push_str(&delta);
+                        continue;
+                    }
+                }
+                blocks.push(ContentBlock::Reasoning {
+                    text: delta,
+                    field,
+                    provider,
+                    model,
+                });
+            }
+            AssistantEvent::Finish { reason } => {
+                finish_reason = Some(reason);
+            }
             AssistantEvent::TextDelta(delta) => text.push_str(&delta),
             AssistantEvent::ToolUse {
                 id,
@@ -568,11 +870,14 @@ fn build_assistant_message(
                 required_permission,
             } => {
                 flush_text(&mut text, &mut blocks);
-                blocks.push(ContentBlock::ToolUse {
+                let completed = ContentBlock::ToolUse {
                     id: id.clone(),
                     name: name.clone(),
                     input: input.clone(),
-                });
+                };
+                if let Some(draft) = blocks.iter_mut().find(|block| matches!(block, ContentBlock::ToolCallDraft { id: Some(draft_id), .. } if *draft_id == id)) {
+                    *draft = completed;
+                } else { blocks.push(completed); }
                 pending.push(PendingToolUse {
                     id,
                     name,
@@ -594,11 +899,26 @@ fn build_assistant_message(
     if blocks.is_empty() {
         return Err(RuntimeError::new("assistant stream produced no content"));
     }
-    Ok((
-        ConversationMessage::assistant(blocks, usage),
-        pending,
-        usage,
-    ))
+    if blocks
+        .iter()
+        .any(|block| matches!(block, ContentBlock::ToolCallDraft { .. }))
+    {
+        return Err(RuntimeError::new(
+            "provider_output_incomplete: unfinished tool parameters; received output saved",
+        ));
+    }
+    if finish_reason
+        .as_deref()
+        .is_some_and(|reason| !matches!(reason, "stop" | "tool_calls" | "function_call"))
+    {
+        return Err(RuntimeError::new(format!(
+            "provider_output_incomplete: {}; received output saved",
+            finish_reason.as_deref().unwrap_or("unknown")
+        )));
+    }
+    let mut message = ConversationMessage::assistant(blocks, usage);
+    message.finish_reason = finish_reason;
+    Ok((message, pending, usage))
 }
 
 fn flush_text(text: &mut String, blocks: &mut Vec<ContentBlock>) {
@@ -609,11 +929,261 @@ fn flush_text(text: &mut String, blocks: &mut Vec<ContentBlock>) {
     }
 }
 
+#[cfg(test)]
+mod response_context_regressions {
+    use super::*;
+
+    #[test]
+    fn expected_process_waits_preserve_the_guard_against_unproductive_polling() {
+        struct WaitApi {
+            calls: usize,
+            wait_ms: u64,
+        }
+        impl ApiClient for WaitApi {
+            fn stream(&mut self, _: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+                self.calls += 1;
+                Ok(if self.calls <= 4 {
+                    vec![
+                        AssistantEvent::ToolUse {
+                            id: format!("wait-{}", self.calls),
+                            name: "Process".into(),
+                            input: format!(r#"{{"action":"inspect","waitMs":{}}}"#, self.wait_ms),
+                            required_permission: PermissionMode::ReadOnly,
+                        },
+                        AssistantEvent::MessageStop,
+                    ]
+                } else {
+                    vec![
+                        AssistantEvent::TextDelta("completed waiting".into()),
+                        AssistantEvent::MessageStop,
+                    ]
+                })
+            }
+        }
+        for (wait_ms, success) in [(2000, true), (0, false)] {
+            let mut runtime = ConversationRuntime::new(
+                Session::new(),
+                WaitApi { calls: 0, wait_ms },
+                StaticToolExecutor::new()
+                    .register("Process", |_| Ok(r#"{"status":"running"}"#.into())),
+                PermissionPolicy::new(PermissionMode::ReadOnly),
+                vec![],
+                HookRunner::default(),
+            );
+            assert_eq!(
+                runtime.run_turn("Wait for the owned process", None).is_ok(),
+                success
+            );
+        }
+    }
+
+    #[test]
+    fn compaction_invalidates_measured_usage_from_the_previous_projection() {
+        let mut assistant = ConversationMessage::assistant(
+            vec![ContentBlock::Text { text: "ok".into() }],
+            Some(TokenUsage {
+                input_tokens: 10000,
+                ..Default::default()
+            }),
+        );
+        assistant.request_overhead_tokens = Some(20);
+        let session = Session::from_messages(vec![
+            ConversationMessage::user("old constraint"),
+            assistant,
+            ConversationMessage::user("latest"),
+        ]);
+        assert!(measured_context_tokens(&session, 20) >= 10000);
+        let compacted = crate::compact_session_with_summary(
+            &session,
+            CompactConfig {
+                preserve_recent_messages: 2,
+                max_estimated_tokens: 0,
+            },
+            Some("Keep the constraint"),
+        );
+        assert!(measured_context_tokens(&compacted.compacted_session, 20) < 1000);
+    }
+
+    struct LongTask {
+        calls: usize,
+        summaries: usize,
+    }
+    impl ApiClient for LongTask {
+        fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            assert!(estimate_session_tokens(&Session::from_messages(request.messages)) < 2300);
+            self.calls += 1;
+            if self.calls <= 5 {
+                Ok(vec![
+                    AssistantEvent::ToolUse {
+                        id: format!("call-{}", self.calls),
+                        name: "read".into(),
+                        input: self.calls.to_string(),
+                        required_permission: PermissionMode::ReadOnly,
+                    },
+                    AssistantEvent::MessageStop,
+                ])
+            } else {
+                Ok(vec![
+                    AssistantEvent::TextDelta("done".into()),
+                    AssistantEvent::MessageStop,
+                ])
+            }
+        }
+        fn summarize(
+            &mut self,
+            messages: &[ConversationMessage],
+            _: usize,
+        ) -> Result<Option<(String, TokenUsage)>, RuntimeError> {
+            assert!(!messages.is_empty());
+            self.summaries += 1;
+            Ok(Some((
+                "User constraint: keep KEEP_ME. File reads verified; continue remaining work."
+                    .into(),
+                TokenUsage::default(),
+            )))
+        }
+    }
+    struct LargeRead;
+    impl ToolExecutor for LargeRead {
+        fn execute(&mut self, _: &str, _: &str) -> Result<String, ToolError> {
+            Ok("data ".repeat(1000))
+        }
+    }
+
+    #[test]
+    fn compacts_between_tools_and_preserves_archived_sources() {
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            LongTask {
+                calls: 0,
+                summaries: 0,
+            },
+            LargeRead,
+            PermissionPolicy::new(PermissionMode::ReadOnly),
+            vec![],
+            HookRunner::default(),
+        )
+        .with_context_config(crate::ContextOptimizerConfig {
+            context_window_tokens_override: Some(2300),
+            max_output_tokens: 100,
+            auto_compact_buffer_tokens: 50,
+            ..Default::default()
+        });
+        runtime
+            .run_turn("KEEP_ME is a mandatory user constraint", None)
+            .unwrap();
+        assert!(runtime.api_client.summaries >= 3);
+        assert!(runtime
+            .session
+            .context_collapse_archive
+            .iter()
+            .any(|m| m.first_text().is_some_and(|text| text.contains("KEEP_ME"))));
+        assert!(!runtime.session.context_collapse_commits.is_empty());
+    }
+
+    #[test]
+    fn failed_summary_keeps_the_original_session_and_archive() {
+        struct FailedSummary;
+        impl ApiClient for FailedSummary {
+            fn stream(&mut self, _: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+                panic!("Oversized history must be compacted before requesting an answer")
+            }
+            fn summarize(
+                &mut self,
+                _: &[ConversationMessage],
+                _: usize,
+            ) -> Result<Option<(String, TokenUsage)>, RuntimeError> {
+                Err(RuntimeError::new("summary unavailable"))
+            }
+        }
+        let session = Session::from_messages(vec![
+            ConversationMessage::user("KEEP_ME ".repeat(200)),
+            ConversationMessage::assistant(
+                vec![ContentBlock::Text {
+                    text: "old result".repeat(200),
+                }],
+                None,
+            ),
+        ]);
+        let mut runtime = ConversationRuntime::new(
+            session.clone(),
+            FailedSummary,
+            LargeRead,
+            PermissionPolicy::new(PermissionMode::ReadOnly),
+            vec![],
+            HookRunner::default(),
+        )
+        .with_context_config(crate::ContextOptimizerConfig {
+            context_window_tokens_override: Some(800),
+            max_output_tokens: 100,
+            auto_compact_buffer_tokens: 50,
+            ..Default::default()
+        });
+        assert!(runtime
+            .run_turn("latest correction", None)
+            .unwrap_err()
+            .to_string()
+            .contains("summary unavailable"));
+        assert_eq!(
+            &runtime.session.messages[..session.messages.len()],
+            &session.messages
+        );
+        assert!(runtime.session.context_collapse_archive.is_empty());
+        assert!(runtime.session.context_collapse_commits.is_empty());
+    }
+
+    #[test]
+    fn truncated_response_cannot_dispatch_tools() {
+        let events = vec![
+            AssistantEvent::ToolUse {
+                id: "call".into(),
+                name: "write".into(),
+                input: "{}".into(),
+                required_permission: PermissionMode::WorkspaceWrite,
+            },
+            AssistantEvent::Finish {
+                reason: "length".into(),
+            },
+            AssistantEvent::MessageStop,
+        ];
+        assert!(build_assistant_message(events)
+            .unwrap_err()
+            .to_string()
+            .contains("provider_output_incomplete"));
+    }
+}
+
 fn join_hook_feedback(messages: &[String], fallback: &str) -> String {
     if messages.is_empty() {
         return fallback.to_string();
     }
     messages.join("\n")
+}
+
+pub fn is_blocking_wait_result(tool: &str, input: &str, output: &str) -> bool {
+    let (Ok(input), Ok(output)) = (
+        serde_json::from_str::<Value>(input),
+        serde_json::from_str::<Value>(output),
+    ) else {
+        return false;
+    };
+    let active =
+        |status: Option<&str>| matches!(status, Some("queued" | "running" | "waiting" | "ready"));
+    match (tool, input["action"].as_str()) {
+        ("Subagents", Some("wait")) => {
+            input["timeoutMs"].as_u64().unwrap_or(10000) >= 1000
+                && active(output["status"].as_str())
+        }
+        ("Process", Some("inspect")) => {
+            input["waitMs"].as_u64().unwrap_or(0) >= 1000 && active(output["status"].as_str())
+        }
+        ("Process", Some("read")) => {
+            input["waitMs"].as_u64().unwrap_or(0) >= 1000
+                && output["readTimedOut"] == true
+                && output["exited"] == false
+        }
+        _ => false,
+    }
 }
 
 fn merge_feedback(mut output: String, messages: &[String], denied: bool) -> String {
@@ -903,5 +1473,33 @@ mod tests {
             &summary.tool_results[0].blocks[0],
             ContentBlock::ToolResult { is_error: true, output, .. } if output == "rejected"
         ));
+    }
+}
+
+fn measured_context_tokens(session: &Session, overhead: usize) -> usize {
+    let estimate = estimate_session_tokens(session).saturating_add(overhead);
+    let generation = session.context_collapse_commits.len();
+    let previous = session
+        .messages
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, message)| {
+            message.usage.is_some()
+                && message.context_generation == generation
+                && message.request_overhead_tokens.is_some()
+        });
+    if let Some((index, message)) = previous {
+        let measured = message.usage.unwrap().total_tokens() as usize;
+        let trailing = estimate_session_tokens(&Session::from_messages(
+            session.messages[index + 1..].to_vec(),
+        ));
+        estimate.max(
+            measured.saturating_add(trailing).saturating_add(
+                overhead.saturating_sub(message.request_overhead_tokens.unwrap_or(0)),
+            ),
+        )
+    } else {
+        estimate
     }
 }

@@ -6,6 +6,8 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+notify = "8.2"
+opencowork-agents = { path = "../agents" }
 opencowork-tools = { path = "../tools" }
 walkdir.workspace = true
 anyhow.workspace = true

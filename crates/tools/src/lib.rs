@@ -16,6 +16,8 @@ pub fn computer_capture_worker() -> Result<(), String> {
     }
 }
 mod process;
+mod process_sessions;
+mod subagents;
 mod task_plan;
 mod team_memory;
 mod team_memory_sync;
@@ -305,6 +307,18 @@ impl GlobalToolRegistry {
     }
 
     pub fn execute(&mut self, name: &str, input: &Value) -> Result<String, ToolError> {
+        let mutates = self
+            .definitions()
+            .iter()
+            .any(|(tool, _, permission, _)| tool == name && *permission > PermissionMode::ReadOnly);
+        let _effects = if mutates
+            && std::env::var("OPENCOWORK_EFFECTS_LEASE_HELD").as_deref() != Ok("1")
+        {
+            Some(opencowork_runtime::ExclusiveLease::acquire(&opencowork_runtime::default_config_home().join("subagent-effects.lock"))
+                .map_err(|_| ToolError::new("workspace_busy: a writable child owns the mutation lease; wait for it before changing files or controlling the desktop"))?)
+        } else {
+            None
+        };
         if builtin_specs().iter().any(|spec| spec.name == name) {
             return execute_builtin(self, name, input);
         }
@@ -538,6 +552,8 @@ pub fn lsp_servers_from_runtime(
 #[must_use]
 pub fn builtin_specs() -> Vec<ToolSpec> {
     vec![
+        process_sessions::spec(),
+        subagents::spec(),
         computer::spec(),
         browser::spec(),
         task_plan::spec(),
@@ -873,6 +889,8 @@ fn execute_builtin(
     input: &Value,
 ) -> Result<String, ToolError> {
     match name {
+        "Process" => process_sessions::execute(input),
+        "Subagents" => subagents::execute(input),
         "Computer" => computer::execute(&mut registry.computer, input),
         "Browser" => browser::execute(&mut registry.browser, input),
         "UpdatePlan" => task_plan::execute(input),

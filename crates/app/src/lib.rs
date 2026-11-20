@@ -34,6 +34,29 @@ struct McpRuntimeBundle {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AppEvent {
+    RequestMetrics {
+        metrics: opencowork_runtime::RequestMetrics,
+    },
+    ContextCompacted {
+        session: Session,
+        before_tokens: usize,
+        after_tokens: usize,
+    },
+    ToolCallDelta {
+        index: usize,
+        id: Option<String>,
+        name: Option<String>,
+        arguments_delta: String,
+    },
+    AssistantReasoningDelta {
+        text: String,
+        field: String,
+        provider: String,
+        model: String,
+    },
+    AssistantFinish {
+        reason: String,
+    },
     UserMessage {
         id: String,
         text: String,
@@ -95,6 +118,10 @@ struct EventObserver<'a> {
 }
 
 impl AppRuntime {
+    pub fn with_permission_mode(mut self, mode: PermissionMode) -> Self {
+        self.permission_mode = mode;
+        self
+    }
     pub fn load(cwd: impl Into<PathBuf>) -> Result<Self, Box<dyn std::error::Error>> {
         let cwd = cwd.into();
         let config = ConfigLoader::default_for(&cwd).load()?;
@@ -232,9 +259,8 @@ impl AppRuntime {
             prepared.prompt.system_prompt.clone(),
             hooks,
         )
-        .with_limits(opencowork_runtime::TurnLimits::from_settings(
-            self.config.merged(),
-        ))
+        .with_context_config(context_optimizer_config(&self.config, model))
+        .with_limits(execution_limits(&self.config))
         .with_user_context(user_context)
         .with_tool_result_budget(tool_result_budget_config(
             &self.config,
@@ -254,6 +280,8 @@ impl AppRuntime {
         };
 
         let mut updated_session = conversation.session().clone();
+        prepared.prompt.estimated_tokens = conversation.estimated_tokens();
+        prepared.prompt.compacted |= !updated_session.context_collapse_commits.is_empty();
         let _ = schedule_provider_backed_session_memory_refresh(
             &self.config,
             model,
@@ -308,7 +336,11 @@ impl AppRuntime {
             pending_user_input,
         )?;
         let optimizer = ContextOptimizer::new(context_optimizer_config(&self.config, model));
-        let preparation = optimizer.prepare_session(&hydrated_session);
+        let preparation = opencowork_runtime::SessionPreparation {
+            session: hydrated_session.clone(),
+            summary: None,
+            compacted: false,
+        };
         let selection = optimizer.select(&hydrated_session, &instructions, &preparation);
         let composer = PromptComposer;
         let compact_result =
@@ -428,8 +460,45 @@ impl RuntimePromptAugmenter for ConditionalPromptAugmenter {
 }
 
 impl RuntimeObserver for EventObserver<'_> {
+    fn on_request_metrics(&mut self, metrics: &opencowork_runtime::RequestMetrics) {
+        (self.sink)(AppEvent::RequestMetrics {
+            metrics: metrics.clone(),
+        });
+    }
+    fn on_context_compacted(&mut self, session: &Session, before: usize, after: usize) {
+        (self.sink)(AppEvent::ContextCompacted {
+            session: session.clone(),
+            before_tokens: before,
+            after_tokens: after,
+        });
+    }
     fn on_assistant_event(&mut self, event: &AssistantEvent) {
         let event = match event {
+            AssistantEvent::ToolCallDelta {
+                index,
+                id,
+                name,
+                arguments_delta,
+            } => AppEvent::ToolCallDelta {
+                index: *index,
+                id: id.clone(),
+                name: name.clone(),
+                arguments_delta: arguments_delta.clone(),
+            },
+            AssistantEvent::ReasoningDelta {
+                text,
+                field,
+                provider,
+                model,
+            } => AppEvent::AssistantReasoningDelta {
+                text: text.clone(),
+                field: field.clone(),
+                provider: provider.clone(),
+                model: model.clone(),
+            },
+            AssistantEvent::Finish { reason } => AppEvent::AssistantFinish {
+                reason: reason.clone(),
+            },
             AssistantEvent::TextDelta(text) => AppEvent::AssistantTextDelta { text: text.clone() },
             AssistantEvent::ToolUse {
                 id,
@@ -488,12 +557,19 @@ fn resolve_provider_profile(config: &RuntimeConfig, model: &str) -> OpenAiCompat
     } else {
         default_openai_profile_for_model(model)
     };
-    profile.reasoning_effort = config
-        .merged()
-        .pointer("/execution/reasoningEffort")
-        .and_then(serde_json::Value::as_str)
-        .filter(|s| ["none", "minimal", "low", "medium", "high"].contains(s))
-        .map(str::to_owned);
+    if let Some(provider) = config.provider() {
+        profile.capabilities = provider.capabilities().clone();
+    }
+    profile.reasoning_effort = std::env::var("OPENCOWORK_REASONING_EFFORT")
+        .ok()
+        .or_else(|| {
+            config
+                .merged()
+                .pointer("/execution/reasoningEffort")
+                .and_then(serde_json::Value::as_str)
+                .filter(|s| ["none", "minimal", "low", "medium", "high"].contains(s))
+                .map(str::to_owned)
+        });
     profile
 }
 
@@ -861,9 +937,15 @@ fn context_optimizer_config(config: &RuntimeConfig, model: &str) -> ContextOptim
     ContextOptimizerConfig {
         model: model.to_string(),
         preserve_recent_messages: config.context().preserve_recent_messages(),
-        context_window_tokens_override: config.context().context_window_tokens_override(),
+        context_window_tokens_override: config
+            .provider()
+            .and_then(|p| p.capabilities().context_window)
+            .or(config.context().context_window_tokens_override()),
         max_instruction_tokens: config.context().max_instruction_tokens(),
-        max_output_tokens: config.context().max_output_tokens(),
+        max_output_tokens: config
+            .provider()
+            .and_then(|p| p.capabilities().max_output_tokens)
+            .unwrap_or(config.context().max_output_tokens()),
         auto_compact_buffer_tokens: config.context().auto_compact_buffer_tokens(),
         message_collapse_chars: config.context().message_collapse_chars(),
         max_tool_result_chars: config.context().max_tool_result_chars(),
@@ -946,4 +1028,23 @@ mod tests {
             AppEvent::ToolResult { tool_name, .. } if tool_name == "read_file"
         ));
     }
+}
+
+fn execution_limits(config: &RuntimeConfig) -> opencowork_runtime::TurnLimits {
+    let mut limits = opencowork_runtime::TurnLimits::from_settings(config.merged());
+    if let Ok(value) = std::env::var("OPENCOWORK_TASK_TOKEN_LIMIT") {
+        if let Ok(tokens) = value.parse::<u32>() {
+            limits.max_tokens = limits.max_tokens.min(tokens);
+        }
+    }
+    if let Ok(value) = std::env::var("OPENCOWORK_TASK_DEADLINE") {
+        if let Ok(deadline) = value.parse::<u64>() {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            limits.max_seconds = limits.max_seconds.min(deadline.saturating_sub(now) / 1000);
+        }
+    }
+    limits
 }

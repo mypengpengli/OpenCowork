@@ -1154,6 +1154,10 @@ button:disabled {
   font-size: 14px;
 }
 
+.message-reasoning { color: var(--text-soft); font-size: 13px; margin-bottom: 10px; }
+.message-reasoning summary { cursor: pointer; padding-block: 6px; }
+.message-reasoning-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; border-left: 2px solid var(--line); padding: 8px 12px; line-height: 1.65; }
+
 @media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
   .turn-wait-label {
     display: inline-block;

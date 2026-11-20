@@ -13,7 +13,7 @@ export function initSetup({ state, request, status, openSettings }) {
     try {
       const value = await request('/api/provider-probe', { method: 'POST', body: '{}' })
       validated = value.checks.every(c => c.status === 'verified')
-      results.textContent = `${value.model} · ${value.protocol}\n` + value.checks.map(c => `${c.kind}: ${c.status} · ${c.elapsedMs} ms · ${c.tokens ?? '?'} tokens ${c.error || ''}`).join('\n')
+      results.textContent = `${value.model} · ${value.protocol}\n${tr('检测来源','Source')}: ${value.source||'live-provider-probe'} · ${value.checkedAt?new Date(value.checkedAt).toLocaleString():''}\n` + value.checks.map(c => `${c.kind}: ${c.status} · ${c.elapsedMs} ms · ${c.tokens ?? '?'} tokens ${c.error || ''}`).join('\n')
       paint()
     } catch (e) { validated = false; results.textContent = e.message; throw e }
   })

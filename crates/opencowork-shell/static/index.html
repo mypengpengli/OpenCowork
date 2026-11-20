@@ -1018,6 +1018,11 @@
             <input id="provider-streaming" name="streaming" type="checkbox" checked />
             <span data-i18n="provider.streaming">流式输出</span>
           </label>
+          <label><span data-i18n="provider.contextWindow">上下文窗口（tokens）</span><input id="provider-context-window" type="number" min="1" step="1" placeholder="200000" /><small class="field-hint" data-i18n="provider.contextWindowHint">填写服务商公布的模型容量。留空使用项目设置。</small></label>
+          <label><span data-i18n="provider.requestConcurrency">服务商共享并发请求上限</span><input id="provider-request-concurrency" type="number" min="1" max="4096" step="1" value="64" /></label>
+          <label><span data-i18n="provider.outputLimit">最大输出（tokens）</span><input id="provider-output-limit" type="number" min="1" step="1" placeholder="8192" /></label>
+          <label><span data-i18n="provider.images">图片输入</span><select id="provider-images"><option value="" data-i18n="provider.imagesAuto">未指定</option><option value="true" data-i18n="provider.imagesYes">支持</option><option value="false" data-i18n="provider.imagesNo">不支持</option></select></label>
+          <label class="toggle-chip toggle-chip--inline"><input id="provider-reasoning-replay" type="checkbox" /><span data-i18n="provider.reasoningReplay">接口要求回传 reasoning_content（含空值）</span></label>
           <label class="toggle-chip toggle-chip--inline">
             <input id="provider-profile-activate" type="checkbox" checked />
             <span data-i18n="providerProfiles.activate">保存后设为当前启用</span>

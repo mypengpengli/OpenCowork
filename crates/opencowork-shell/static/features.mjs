@@ -1,5 +1,6 @@
 import { initWorkflows } from '/workflows.mjs'
 import { createUi } from '/ui-controls.mjs'
+import { initSubagents } from '/subagents.mjs'
 export function initFeaturePanels({ state, request, composer, status, prepareTask, openSession }) {
   const ui = createUi(state, status), { tr, el, button, bind } = ui
   let references = [], files = [], changes = [], selected = '', previewToken = 0, contextToken = 0, currentId, refreshTimer
@@ -25,6 +26,7 @@ export function initFeaturePanels({ state, request, composer, status, prepareTas
   request('/api/features').then(data => { computer.checked = data.computerEnabled; memory.checked = data.backgroundMemoryEnabled; computer.disabled = !data.computerSupported; if (!data.computerSupported) feedback.textContent = tr('电脑控制目前支持 Windows。', 'Computer control currently supports Windows.') }).catch(e => { feedback.textContent = e.message })
 
   const tools = el('section', '', 'workspace-tools')
+  const childTasks = initSubagents({ ui, request, state, tools })
   const browser = document.createElement('details'); browser.className = 'feature-disclosure'
   browser.append(el('summary', tr('工作区文件与更改', 'Workspace files and changes')))
   const toolbar = el('div', '', 'feature-toolbar')
@@ -118,6 +120,8 @@ export function initFeaturePanels({ state, request, composer, status, prepareTas
     }
     diagBody.replaceChildren()
     if (context) {
+      for(const metric of (context.requests||[]).slice(-6))diagBody.append(el('p',tr(`请求 ${metric.status} · 首事件 ${metric.firstEventMs??'—'}ms · 首正文 ${metric.firstTextMs??'—'}ms · 总计 ${metric.elapsedMs}ms`,`Request ${metric.status} · first event ${metric.firstEventMs??'—'}ms · first text ${metric.firstTextMs??'—'}ms · total ${metric.elapsedMs}ms`)))
+      for(const metric of context.compactions||[])diagBody.append(el('p',tr(`压缩 ${metric.beforeTokens} → ${metric.afterTokens} tokens · ${metric.elapsedMs}ms · 摘要用量 ${Object.values(metric.usage).reduce((a,b)=>a+b,0)}`,`Compaction ${metric.beforeTokens} → ${metric.afterTokens} tokens · ${metric.elapsedMs}ms · summary usage ${Object.values(metric.usage).reduce((a,b)=>a+b,0)}`)))
       diagBody.append(el('p', tr(`估算提示词 ${context.estimatedPromptTokens} tokens · 窗口 ${context.contextWindowTokens} · 指令预算 ${context.instructionTokenBudget} · ${context.compacted ? '已压缩历史' : '未压缩历史'}`, `Estimated prompt ${context.estimatedPromptTokens} tokens · window ${context.contextWindowTokens} · instruction budget ${context.instructionTokenBudget} · compacted: ${context.compacted}`)))
       for (const layer of context.layers || []) diagBody.append(el('p', `${layer.name} · ~${layer.estimatedTokens} tokens · ${layer.reason || ""}${layer.truncated ? tr(" · 已截断", " · truncated") : ""}`))
       for (const ref of context.attachments?.references || []) diagBody.append(el('p', `${ref.kind}: ${ref.path} · ~${ref.estimatedTokens} tokens${ref.truncated ? tr(' · 已截断',' · truncated') : ''}`))
@@ -139,7 +143,7 @@ export function initFeaturePanels({ state, request, composer, status, prepareTas
   const close = button(tr('收起', 'Close'), () => { closeMenu(); add.focus() })
   const header = el('div', '', 'tool-dock-header'); header.append(back, panelTitle, close); panel.append(header, panelBody)
   const { goalPanel, review, search: historySearch, memories, learning, scheduler, trees } = workflows.panels
-  const panels = [browser, task, goalPanel, review, trees, diagnostics, historySearch, memories, learning, scheduler]
+  const panels = [childTasks, browser, task, goalPanel, review, trees, diagnostics, historySearch, memories, learning, scheduler]
   const parking = el('div'); parking.hidden = true; parking.append(...panels)
   function closePanel() { for (const item of panels) { item.open = false; parking.append(item) } panel.hidden = true }
   function closeMenu() { menu.hidden = true; closePanel(); add.setAttribute('aria-expanded', 'false') }
@@ -151,7 +155,7 @@ export function initFeaturePanels({ state, request, composer, status, prepareTas
   }
   for (const [title, entries] of [
     [tr('附件', 'Attachments'), [[tr('添加文件', 'Add files'), browser, search], [tr('引用历史会话', 'Reference a previous session'), browser, sessions]]],
-    [tr('任务与文件', 'Tasks and files'), [[tr('任务步骤', 'Task steps'), task], [tr('目标、补充要求与消息队列'), goalPanel], [tr('审阅更改与恢复'), review], [tr('隔离工作区'), trees], [tr('定时任务与结果收件箱'), scheduler]]],
+    [tr('任务与文件', 'Tasks and files'), [[tr('任务步骤', 'Task steps'), task], [tr('子智能体任务', 'Subagent tasks'), childTasks], [tr('目标、补充要求与消息队列'), goalPanel], [tr('审阅更改与恢复'), review], [tr('隔离工作区'), trees], [tr('定时任务与结果收件箱'), scheduler]]],
     [tr('上下文与经验', 'Context and knowledge'), [[tr('本次上下文来源与用量'), diagnostics], [tr('历史全文搜索'), historySearch], [tr('记忆来源与冲突'), memories], [tr('可复用技能候选'), learning]]],
   ]) {
     menu.append(el('small', title, 'composer-menu-heading'))

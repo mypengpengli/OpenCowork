@@ -31,6 +31,9 @@ pub(super) fn profile(
         default_openai_profile_for_model(&model)
     }
     .with_timeout_ms(20000);
+    if let Some(provider) = c.provider() {
+        profile.capabilities = provider.capabilities().clone();
+    }
     profile.reasoning_effort = c
         .merged()
         .pointer("/execution/reasoningEffort")
@@ -54,6 +57,7 @@ pub(super) fn worker() -> Result<(), String> {
             max_output_tokens: Some(256),
             system_prompt: vec![],
             messages: vec![InputMessage {
+                reasoning: Default::default(),
                 role: "user".into(),
                 content: Some(prompt.into()),
                 image_urls: vec![],
@@ -124,7 +128,7 @@ pub(super) fn worker() -> Result<(), String> {
     }
     println!(
         "{}",
-        serde_json::json!({"model":model,"protocol":"chat-completions","reasoning":"Configured effort is sent when selected; hidden reasoning quality cannot be inferred from connectivity.","checks":checks})
+        serde_json::json!({"model":model,"protocol":"chat-completions","source":"live-provider-probe","checkedAt":opencowork_runtime::process_sessions::now_ms(),"reasoning":"Configured effort is sent when selected; hidden reasoning quality cannot be inferred from connectivity.","checks":checks})
     );
     Ok(())
 }

@@ -188,6 +188,33 @@ pub(super) async fn stream_turn(
     }
     session.workspace = Some(state.cwd.to_string_lossy().into_owned());
     payload.session_id = Some(session_id.clone());
+    let config = super::load_config(&state)?;
+    let limits = opencowork_runtime::TurnLimits::from_settings(config.merged());
+    opencowork_agents::jobs::TaskStore::new(&state.config_home)
+        .create_group(&opencowork_agents::jobs::TaskGroup {
+            detached: false,
+            id: turn_id.clone(),
+            session: session_id.clone(),
+            cwd: state.cwd.clone(),
+            host: std::process::id(),
+            concurrency: config
+                .merged()
+                .pointer("/subagents/maxConcurrent")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(6)
+                .max(1) as usize,
+            max_depth: config
+                .merged()
+                .pointer("/subagents/maxDepth")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(1)
+                .clamp(1, 16) as usize,
+            max_tokens: limits.max_tokens as u64,
+            root_tokens: 0,
+            deadline: opencowork_agents::jobs::now_ms() + limits.max_seconds.saturating_mul(1000),
+            cancelled: false,
+        })
+        .map_err(ApiError::internal)?;
     if let Some(goal) = payload.goal.as_deref().filter(|g| !g.trim().is_empty()) {
         super::workflows::set_goal(&state.config_home, &session_id, goal)
             .map_err(ApiError::bad_request)?;
@@ -404,6 +431,7 @@ async fn execute_worker(
         .current_dir(&state.cwd)
         .env("OPENCOWORK_CONFIG_HOME", &state.config_home)
         .env("OPENCOWORK_SESSION_ID", session_id)
+        .env("OPENCOWORK_ROOT_TURN_ID", turn_id)
         .env("OPENCOWORK_CHECKPOINT_ACK", &ack_path)
         .env(
             "OPENCOWORK_STEERING_FILE",
@@ -467,6 +495,10 @@ async fn execute_worker(
                     Message::Complete { response } => break Ok(response),
                     Message::Error { message } => break Err(message),
                     Message::Event { ref event, seq } => {
+                        if let AppEvent::Usage { usage } = event {
+                            opencowork_agents::jobs::TaskStore::new(&state.config_home)
+                                .update_group(turn_id, |g| g.root_tokens = g.root_tokens.saturating_add(usage.total_tokens() as u64))?;
+                        }
                         // Goal/queued continuations announce their next user
                         // input before starting another model call. Stop at the
                         // task-wide cap while leaving that input pending.
@@ -485,7 +517,7 @@ async fn execute_worker(
                         {
                             break Err("turn_budget_reached: task iteration limit; a pending tool outcome may be unknown; progress saved".into());
                         }
-                        if !matches!(event,AppEvent::AssistantTextDelta{..}) || last_checkpoint.elapsed()>=Duration::from_millis(250) {
+                        if !matches!(event, AppEvent::AssistantTextDelta{..} | AppEvent::AssistantReasoningDelta{..} | AppEvent::ToolCallDelta{..}) || last_checkpoint.elapsed()>=Duration::from_millis(250) {
                             if let Err(e)=checkpoint(&journal,progress) {break Err(e);}
                             if let Err(e)=opencowork_runtime::write_json_atomic(&ack_path,&seq) {break Err(e.to_string());}
                             last_checkpoint=std::time::Instant::now();
@@ -649,10 +681,11 @@ pub(super) fn worker_main() -> Result<(), String> {
 }
 
 #[derive(Clone)]
-struct PartialTurn {
+pub(super) struct PartialTurn {
     session: Session,
     pending: Vec<ContentBlock>,
     usage: Option<opencowork_runtime::TokenUsage>,
+    finish_reason: Option<String>,
     events: Vec<AppEvent>,
     iterations: usize,
     unresolved: BTreeMap<String, String>,
@@ -662,12 +695,13 @@ struct PartialTurn {
 }
 
 impl PartialTurn {
-    fn new(mut session: Session, input: &str) -> Self {
+    pub(super) fn new(mut session: Session, input: &str) -> Self {
         session.messages.push(ConversationMessage::user(input));
         Self {
             session,
             pending: vec![],
             usage: None,
+            finish_reason: None,
             events: vec![],
             iterations: 0,
             unresolved: BTreeMap::new(),
@@ -679,15 +713,46 @@ impl PartialTurn {
 
     fn flush(&mut self) {
         if !self.pending.is_empty() {
-            self.session.messages.push(ConversationMessage::assistant(
+            let mut message = ConversationMessage::assistant(
                 std::mem::take(&mut self.pending),
                 self.usage.take(),
-            ));
+            );
+            message.finish_reason = self.finish_reason.take();
+            message.context_generation = self.session.context_collapse_commits.len();
+            self.session.messages.push(message);
         }
     }
 
-    fn apply(&mut self, event: AppEvent) {
+    pub(super) fn apply(&mut self, event: AppEvent) {
         match &event {
+            AppEvent::RequestMetrics { metrics } => {if let Some(record)=self.session.request_metrics.iter_mut().find(|record|record.id==metrics.id){*record=metrics.clone();}else{self.session.request_metrics.push(metrics.clone());}},
+            AppEvent::ContextCompacted { session, .. } => {
+                self.session = session.clone();
+                self.pending.clear();
+                self.usage = None;
+                self.finish_reason = None;
+                self.unresolved.clear();
+                self.tool_inputs.clear();
+            }
+            AppEvent::ToolCallDelta { index, id, name, arguments_delta } => {
+                if let Some(ContentBlock::ToolCallDraft { id: previous_id, name: previous_name, input, .. }) = self.pending.iter_mut().find(|block| matches!(block, ContentBlock::ToolCallDraft { index: current, .. } if current == index)) {
+                    if id.is_some() { *previous_id = id.clone(); }
+                    if name.is_some() { *previous_name = name.clone(); }
+                    input.push_str(arguments_delta);
+                } else {
+                    self.pending.push(ContentBlock::ToolCallDraft { index: *index, id: id.clone(), name: name.clone(), input: arguments_delta.clone() });
+                }
+            }
+            AppEvent::AssistantReasoningDelta { text, field, provider, model } => {
+                if let Some(ContentBlock::Reasoning { text: previous, field: previous_field, .. }) = self.pending.last_mut() {
+                    if previous_field == field { previous.push_str(text); } else {
+                        self.pending.push(ContentBlock::Reasoning { text: text.clone(), field: field.clone(), provider: provider.clone(), model: model.clone() });
+                    }
+                } else {
+                    self.pending.push(ContentBlock::Reasoning { text: text.clone(), field: field.clone(), provider: provider.clone(), model: model.clone() });
+                }
+            }
+            AppEvent::AssistantFinish { reason } => self.finish_reason = Some(reason.clone()),
             AppEvent::UserMessage { id, text } => {
                 // New queued work can legitimately repeat an earlier action.
                 // Internal budget continuations use append_internal_user and
@@ -710,11 +775,14 @@ impl PartialTurn {
             } => {
                 self.unresolved.insert(id.clone(), name.clone());
                 self.tool_inputs.insert(id.clone(), input.clone());
-                self.pending.push(ContentBlock::ToolUse {
+                let completed = ContentBlock::ToolUse {
                     id: id.clone(),
                     name: name.clone(),
                     input: input.clone(),
-                });
+                };
+                if let Some(draft) = self.pending.iter_mut().find(|block| matches!(block, ContentBlock::ToolCallDraft { id: Some(draft_id), .. } if draft_id == id)) {
+                    *draft = completed;
+                } else { self.pending.push(completed); }
             }
             AppEvent::ToolResult {
                 tool_use_id,
@@ -727,7 +795,9 @@ impl PartialTurn {
                 if let Some(input) = self.tool_inputs.remove(tool_use_id) {
                     // Internal boundary results do not represent executed
                     // actions and must not reset the cross-segment loop guard.
-                    if !(*is_error && output.starts_with("automatic_continuation:")) {
+                    if !is_error && opencowork_runtime::is_blocking_wait_result(tool_name,&input,output) {
+                        self.previous_tool_result=None;self.repeated_tool_results=0;
+                    } else if !(*is_error && output.starts_with("automatic_continuation:")) {
                         let signature = format!("{tool_name}:{input}:{is_error}:{output}");
                         if self.previous_tool_result.as_ref() == Some(&signature) {
                             self.repeated_tool_results += 1;
@@ -756,6 +826,12 @@ impl PartialTurn {
     fn append_internal_user(&mut self, text: &str) {
         self.flush();
         self.session.messages.push(ConversationMessage::user(text));
+    }
+
+    pub(super) fn snapshot(&self) -> Session {
+        let mut copy = self.clone();
+        copy.flush();
+        copy.session
     }
 
     fn successful_tool_results(&self) -> usize {
@@ -797,6 +873,20 @@ impl PartialTurn {
 
     fn finish(&mut self, reason: &str) {
         self.flush();
+        for record in &mut self.session.request_metrics {
+            if record.status == "running" {
+                record.status = if reason.contains("Host interrupted") {
+                    "interrupted"
+                } else if reason.to_ascii_lowercase().contains("stopped") {
+                    "cancelled"
+                } else {
+                    "failed"
+                }
+                .into();
+                record.elapsed_ms = opencowork_runtime::process_sessions::now_ms()
+                    .saturating_sub(record.started_at);
+            }
+        }
         for (id, name) in std::mem::take(&mut self.unresolved) {
             self.session
                 .messages
@@ -959,7 +1049,10 @@ fn write_worker_event(event: AppEvent) -> Result<(), String> {
     let seq = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let critical = matches!(
         event,
-        AppEvent::ToolCall { .. } | AppEvent::ToolResult { .. } | AppEvent::UserMessage { .. }
+        AppEvent::ContextCompacted { .. }
+            | AppEvent::ToolCall { .. }
+            | AppEvent::ToolResult { .. }
+            | AppEvent::UserMessage { .. }
     );
     let mut output = std::io::stdout().lock();
     output

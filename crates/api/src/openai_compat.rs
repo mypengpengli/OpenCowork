@@ -18,6 +18,7 @@ const MAX_BACKOFF_MILLIS: u64 = 8_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenAiCompatProfile {
+    pub capabilities: crate::ModelCapabilities,
     pub provider_name: String,
     pub api_key_env: String,
     pub base_url_env: Option<String>,
@@ -37,6 +38,7 @@ impl OpenAiCompatProfile {
             base_url_env: Some("OPENAI_BASE_URL".to_string()),
             base_url: DEFAULT_OPENAI_BASE_URL.to_string(),
             timeout_ms: 90_000,
+            capabilities: Default::default(),
             streaming: true,
             max_retries: DEFAULT_PROVIDER_MAX_RETRIES,
             reasoning_effort: None,
@@ -51,6 +53,7 @@ impl OpenAiCompatProfile {
             base_url_env: Some("XAI_BASE_URL".to_string()),
             base_url: DEFAULT_XAI_BASE_URL.to_string(),
             timeout_ms: 90_000,
+            capabilities: Default::default(),
             streaming: true,
             max_retries: DEFAULT_PROVIDER_MAX_RETRIES,
             reasoning_effort: None,
@@ -70,6 +73,7 @@ impl OpenAiCompatProfile {
             base_url_env,
             base_url: base_url.into(),
             timeout_ms: 90_000,
+            capabilities: Default::default(),
             streaming: true,
             max_retries: DEFAULT_PROVIDER_MAX_RETRIES,
             reasoning_effort: None,
@@ -123,6 +127,7 @@ pub struct OpenAiCompatClient {
 
 impl OpenAiCompatClient {
     pub fn from_profile(profile: OpenAiCompatProfile) -> Result<Self, String> {
+        profile.capabilities.validate()?;
         let api_key =
             std::env::var(&profile.api_key_env).map_err(|_| missing_api_key_message(&profile))?;
         if api_key.trim().is_empty() {
@@ -141,6 +146,30 @@ impl OpenAiCompatClient {
 
     fn send(&self, request: &ProviderRequest, stream: bool) -> Result<Response, String> {
         let mut body = build_chat_completion_request(request, stream);
+        if self.profile.capabilities.supports_images == Some(false)
+            && request.messages.iter().any(|m| !m.image_urls.is_empty())
+        {
+            return Err(
+                "model_capability_error: this model is configured without image input".into(),
+            );
+        }
+        if let Some(limit) = self
+            .profile
+            .capabilities
+            .max_output_tokens
+            .filter(|limit| *limit > 0)
+        {
+            body["max_tokens"] = json!(request.max_output_tokens.unwrap_or(limit).min(limit));
+        }
+        if self.profile.capabilities.requires_reasoning_content {
+            if let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) {
+                for message in messages.iter_mut().filter(|m| m["role"] == "assistant") {
+                    if let Some(object) = message.as_object_mut() {
+                        object.entry("reasoning_content").or_insert(json!(""));
+                    }
+                }
+            }
+        }
         if let Some(effort) = &self.profile.reasoning_effort {
             body["reasoning_effort"] = effort.clone().into();
         }
@@ -161,7 +190,7 @@ impl OpenAiCompatClient {
                 Ok(response) if should_retry_response(&response) => {
                     return Err(format!(
                         "{}; automatic retries exhausted after {attempts} attempts",
-                        http_response_error(&response, &self.profile)
+                        http_response_error(response, &self.profile)
                     ));
                 }
                 Ok(response) => return Ok(response),
@@ -245,7 +274,22 @@ fn retry_delay_without_response(attempt: u32) -> Duration {
 }
 
 impl ProviderClient for OpenAiCompatClient {
+    fn identity(&self) -> Option<String> {
+        Some(format!(
+            "{}@{}",
+            self.profile.provider_name,
+            self.profile.resolved_base_url()
+        ))
+    }
     fn execute(&mut self, request: ProviderRequest) -> Result<ProviderResponse, String> {
+        let _permit = crate::request_permit::RequestPermit::acquire(
+            &self.profile.resolved_base_url(),
+            self.profile
+                .capabilities
+                .max_concurrent_requests
+                .unwrap_or(64),
+            self.profile.timeout_ms,
+        )?;
         let response = self.send(&request, false)?;
         let payload = read_success_payload(response, &self.profile)?;
         normalize_chat_completion_payload(&payload)
@@ -267,6 +311,14 @@ impl ProviderClient for OpenAiCompatClient {
             }
             return Ok(events);
         }
+        let _permit = crate::request_permit::RequestPermit::acquire(
+            &self.profile.resolved_base_url(),
+            self.profile
+                .capabilities
+                .max_concurrent_requests
+                .unwrap_or(64),
+            self.profile.timeout_ms,
+        )?;
         let response = self.send(&request, true)?;
         read_stream_events(response, &self.profile, on_event)
     }
@@ -303,7 +355,7 @@ fn read_success_payload(
 ) -> Result<Value, String> {
     let status = response.status();
     if !status.is_success() {
-        return Err(http_response_error(&response, profile));
+        return Err(http_response_error(response, profile));
     }
     response.json::<Value>().map_err(|error| error.to_string())
 }
@@ -356,6 +408,15 @@ fn build_chat_completion_request(request: &ProviderRequest, stream: bool) -> Val
 
 fn build_chat_completion_message(message: &InputMessage) -> Value {
     let mut object = Map::new();
+    for (field, text) in &message.reasoning {
+        if matches!(
+            field.as_str(),
+            "reasoning_content" | "reasoning" | "reasoning_text"
+        ) && message.role == "assistant"
+        {
+            object.insert(field.clone(), Value::String(text.clone()));
+        }
+    }
     object.insert("role".to_string(), Value::String(message.role.clone()));
     object.insert(
         "content".to_string(),
@@ -423,6 +484,9 @@ fn normalize_chat_completion_payload(payload: &Value) -> Result<ProviderResponse
     };
 
     let mut events = Vec::new();
+    if let Some((field, text)) = reasoning_fragment(message) {
+        events.push(ProviderEvent::ReasoningDelta { text, field });
+    }
     for fragment in extract_text_fragments(message.get("content")) {
         events.push(ProviderEvent::TextDelta(fragment));
     }
@@ -461,12 +525,22 @@ fn normalize_chat_completion_payload(payload: &Value) -> Result<ProviderResponse
         events.push(normalize_usage(usage));
     }
 
+    if let Some(reason) = payload
+        .pointer("/choices/0/finish_reason")
+        .and_then(Value::as_str)
+    {
+        events.push(ProviderEvent::Finish {
+            reason: reason.into(),
+        });
+    }
     events.push(ProviderEvent::MessageStop);
     Ok(ProviderResponse { events })
 }
 
 #[derive(Debug, Default)]
 struct StreamState {
+    done: bool,
+    finish_reason: Option<String>,
     events: Vec<ProviderEvent>,
     tool_calls: BTreeMap<usize, StreamToolCallState>,
     usage: Option<ProviderEvent>,
@@ -486,7 +560,7 @@ fn read_stream_events(
 ) -> Result<Vec<ProviderEvent>, String> {
     let status = response.status();
     if !status.is_success() {
-        return Err(http_response_error(&response, profile));
+        return Err(http_response_error(response, profile));
     }
 
     let mut state = StreamState::default();
@@ -504,6 +578,9 @@ fn parse_sse_stream(
         let line = line.map_err(|error| error.to_string())?;
         if line.is_empty() {
             flush_sse_event(&mut event_lines, state, on_event)?;
+            if state.done {
+                return Ok(());
+            }
             continue;
         }
         event_lines.push(line);
@@ -528,7 +605,11 @@ fn flush_sse_event(
         .join("\n");
     lines.clear();
 
-    if payload.is_empty() || payload == "[DONE]" {
+    if payload == "[DONE]" {
+        state.done = true;
+        return Ok(());
+    }
+    if payload.is_empty() {
         return Ok(());
     }
 
@@ -543,6 +624,9 @@ impl StreamState {
         chunk: &Value,
         on_event: &mut dyn FnMut(&ProviderEvent),
     ) -> Result<(), String> {
+        if let Some(error) = chunk.get("error") {
+            return Err(format!("provider_stream_error: {error}"));
+        }
         if let Some(usage) = chunk.get("usage").and_then(Value::as_object) {
             self.usage = Some(normalize_usage(usage));
         }
@@ -552,10 +636,21 @@ impl StreamState {
         };
 
         for choice in choices {
+            if choice.get("index").and_then(Value::as_u64).unwrap_or(0) != 0 {
+                continue;
+            }
+            if let Some(reason) = choice.get("finish_reason").and_then(Value::as_str) {
+                self.finish_reason = Some(reason.into());
+            }
             let Some(delta) = choice.get("delta").and_then(Value::as_object) else {
                 continue;
             };
 
+            if let Some((field, text)) = reasoning_fragment(&Value::Object(delta.clone())) {
+                let event = ProviderEvent::ReasoningDelta { text, field };
+                on_event(&event);
+                self.events.push(event);
+            }
             if let Some(content) = delta.get("content") {
                 for fragment in extract_text_fragments(Some(content)) {
                     let event = ProviderEvent::TextDelta(fragment);
@@ -572,6 +667,23 @@ impl StreamState {
                         .and_then(|value| usize::try_from(value).ok())
                         .unwrap_or(0);
                     let state = self.tool_calls.entry(index).or_default();
+                    let function = tool_call.get("function");
+                    on_event(&ProviderEvent::ToolCallDelta {
+                        index,
+                        id: tool_call
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                        name: function
+                            .and_then(|f| f.get("name"))
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                        arguments_delta: function
+                            .and_then(|f| f.get("arguments"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .into(),
+                    });
                     if let Some(id) = tool_call.get("id").and_then(Value::as_str) {
                         state.id = Some(id.to_string());
                     }
@@ -594,6 +706,9 @@ impl StreamState {
         mut self,
         on_event: &mut dyn FnMut(&ProviderEvent),
     ) -> Result<Vec<ProviderEvent>, String> {
+        if !self.done && self.finish_reason.is_none() {
+            return Err("provider_stream_interrupted: stream ended before a completion marker; received output was preserved".into());
+        }
         for (_index, tool_call) in self.tool_calls {
             let id = tool_call
                 .id
@@ -610,10 +725,85 @@ impl StreamState {
             on_event(&usage);
             self.events.push(usage);
         }
+        if let Some(reason) = self.finish_reason {
+            let event = ProviderEvent::Finish { reason };
+            on_event(&event);
+            self.events.push(event);
+        }
         let stop = ProviderEvent::MessageStop;
         on_event(&stop);
         self.events.push(stop);
         Ok(self.events)
+    }
+}
+
+fn reasoning_fragment(value: &Value) -> Option<(String, String)> {
+    let fields = ["reasoning_content", "reasoning", "reasoning_text"];
+    fields
+        .iter()
+        .find_map(|field| {
+            value
+                .get(*field)
+                .and_then(Value::as_str)
+                .filter(|text| !text.is_empty())
+                .map(|text| (field.to_string(), text.to_string()))
+        })
+        .or_else(|| {
+            fields
+                .iter()
+                .find(|field| value.get(**field).is_some_and(Value::is_string))
+                .map(|field| (field.to_string(), String::new()))
+        })
+}
+
+#[cfg(test)]
+mod response_regressions {
+    use super::*;
+
+    #[test]
+    fn eof_without_completion_is_interrupted() {
+        let mut state = StreamState::default();
+        parse_sse_stream(
+            std::io::Cursor::new("data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n"),
+            &mut state,
+            &mut |_| {},
+        )
+        .unwrap();
+        assert!(state
+            .finish(&mut |_| {})
+            .unwrap_err()
+            .contains("provider_stream_interrupted"));
+    }
+
+    #[test]
+    fn reasoning_precedes_answer_and_aliases_are_not_duplicated() {
+        let mut state = StreamState::default();
+        state.apply_chunk(&json!({"choices":[{"delta":{"reasoning_content":"think","reasoning":"think","content":"answer"},"finish_reason":"stop"}]}), &mut |_| {}).unwrap();
+        let events = state.finish(&mut |_| {}).unwrap();
+        assert!(
+            matches!(&events[0], ProviderEvent::ReasoningDelta { text, .. } if text == "think")
+        );
+        assert!(matches!(&events[1], ProviderEvent::TextDelta(text) if text == "answer"));
+        assert!(matches!(&events[2], ProviderEvent::Finish { reason } if reason == "stop"));
+    }
+
+    #[test]
+    fn stream_errors_and_output_limits_are_distinct() {
+        let mut state = StreamState::default();
+        assert!(state
+            .apply_chunk(&json!({"error":{"message":"overloaded"}}), &mut |_| {})
+            .is_err());
+        state
+            .apply_chunk(
+                &json!({"choices":[{"delta":{"content":"short"},"finish_reason":"length"}]}),
+                &mut |_| {},
+            )
+            .unwrap();
+        assert!(state
+            .finish(&mut |_| {})
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, ProviderEvent::Finish { reason } if reason == "length")));
     }
 }
 
@@ -690,6 +880,7 @@ mod tests {
             max_output_tokens: Some(16),
             system_prompt: Vec::new(),
             messages: vec![InputMessage {
+                reasoning: Default::default(),
                 role: "user".to_string(),
                 content: Some("hello".to_string()),
                 image_urls: Vec::new(),
@@ -772,6 +963,7 @@ mod tests {
                 system_prompt: vec!["system".to_string()],
                 messages: vec![
                     InputMessage {
+                        reasoning: Default::default(),
                         image_urls: Vec::new(),
                         role: "assistant".to_string(),
                         content: Some("Planning".to_string()),
@@ -783,6 +975,7 @@ mod tests {
                         tool_call_id: None,
                     },
                     InputMessage {
+                        reasoning: Default::default(),
                         image_urls: Vec::new(),
                         role: "tool".to_string(),
                         content: Some("{\"content\":\"ok\"}".to_string()),
@@ -951,7 +1144,7 @@ fn http_error(status: u16, profile: &OpenAiCompatProfile) -> String {
     )
 }
 
-fn http_response_error(response: &Response, profile: &OpenAiCompatProfile) -> String {
+fn http_response_error(response: Response, profile: &OpenAiCompatProfile) -> String {
     let mut message = http_error(response.status().as_u16(), profile);
     if let Some(request_id) = response
         .headers()
@@ -962,6 +1155,27 @@ fn http_response_error(response: &Response, profile: &OpenAiCompatProfile) -> St
     {
         message.push_str("; request id ");
         message.push_str(request_id);
+    }
+    if matches!(response.status().as_u16(), 400 | 413 | 422) {
+        use std::io::Read;
+        let mut body = String::new();
+        let _ = response.take(8192).read_to_string(&mut body);
+        let lower = body.to_ascii_lowercase();
+        if [
+            "context_length_exceeded",
+            "context_window_exceeded",
+            "maximum context length",
+            "prompt too long",
+            "model_context_window_exceeded",
+        ]
+        .iter()
+        .any(|s| lower.contains(s))
+        {
+            return format!(
+                "provider_context_overflow: {} input exceeded the model context window",
+                profile.provider_name
+            );
+        }
     }
     message
 }

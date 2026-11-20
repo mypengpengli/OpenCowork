@@ -242,6 +242,7 @@ pub(super) fn model_json(
         max_output_tokens: Some(768),
         system_prompt: vec![instruction.into()],
         messages: vec![InputMessage {
+            reasoning: Default::default(),
             role: "user".into(),
             content: Some(value.to_string()),
             image_urls: vec![],

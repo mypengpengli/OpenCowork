@@ -1,10 +1,8 @@
 use crate::{
-    budget_session_tool_results, collapse_session_messages, compact_session,
-    compacted_summary_prefix_len, estimate_session_tokens, get_auto_compact_threshold,
-    microcompact_session_messages, snip_session_messages, CompactConfig, ConversationMessage,
-    InstructionSource, MessageCollapseConfig, Session, SnipConfig, ToolResultBudgetConfig,
-    AUTOCOMPACT_BUFFER_TOKENS, DEFAULT_MAX_TOOL_RESULTS_PER_MESSAGE_CHARS,
-    DEFAULT_MAX_TOOL_RESULT_CHARS, DEFAULT_TOOL_RESULT_PREVIEW_CHARS, MAX_OUTPUT_TOKENS_DEFAULT,
+    compact_session, compacted_summary_prefix_len, get_auto_compact_threshold, CompactConfig,
+    ConversationMessage, InstructionSource, Session, AUTOCOMPACT_BUFFER_TOKENS,
+    DEFAULT_MAX_TOOL_RESULTS_PER_MESSAGE_CHARS, DEFAULT_MAX_TOOL_RESULT_CHARS,
+    MAX_OUTPUT_TOKENS_DEFAULT,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,15 +62,6 @@ impl ContextOptimizer {
 
     #[must_use]
     pub fn prepare_session(&self, session: &Session) -> SessionPreparation {
-        let budgeted = budget_session_tool_results(
-            session,
-            ToolResultBudgetConfig {
-                max_result_chars: self.config.max_tool_result_chars,
-                max_message_chars: self.config.max_tool_results_per_message_chars,
-                preview_chars: DEFAULT_TOOL_RESULT_PREVIEW_CHARS,
-                storage_root: None,
-            },
-        );
         let compact_trigger_tokens = get_auto_compact_threshold(
             &self.config.model,
             self.config.context_window_tokens_override,
@@ -80,28 +69,8 @@ impl ContextOptimizer {
             self.config.auto_compact_buffer_tokens,
         )
         .max(1);
-        let snipped = snip_session_messages(
-            &budgeted,
-            SnipConfig {
-                preserve_recent_messages: self.config.preserve_recent_messages,
-                max_estimated_tokens: compact_trigger_tokens,
-            },
-        );
-        let microcompacted =
-            if estimate_session_tokens(&snipped.snipped_session) > compact_trigger_tokens {
-                microcompact_session_messages(&snipped.snipped_session).microcompacted_session
-            } else {
-                snipped.snipped_session
-            };
-        let collapsed = collapse_session_messages(
-            &microcompacted,
-            MessageCollapseConfig {
-                preserve_recent_messages: self.config.preserve_recent_messages,
-                max_chars: self.config.message_collapse_chars,
-            },
-        );
         let result = compact_session(
-            &collapsed,
+            session,
             CompactConfig {
                 preserve_recent_messages: self.config.preserve_recent_messages,
                 max_estimated_tokens: compact_trigger_tokens,
@@ -128,7 +97,7 @@ impl ContextOptimizer {
         sorted.sort_by(|left, right| right.priority.cmp(&left.priority));
 
         for instruction in sorted {
-            let estimate = instruction.content.len() / 4 + 1;
+            let estimate = crate::estimate_text_tokens(&instruction.content) + 1;
             if used_instruction_tokens + estimate > self.config.max_instruction_tokens {
                 continue;
             }
@@ -154,7 +123,11 @@ impl ContextOptimizer {
 
         let estimated_tokens = recent_messages
             .iter()
-            .map(|message| message.first_text().map_or(0, |text| text.len() / 4 + 1))
+            .map(|message| {
+                message
+                    .first_text()
+                    .map_or(0, |text| crate::estimate_text_tokens(text) + 1)
+            })
             .sum::<usize>()
             + used_instruction_tokens;
 
@@ -213,7 +186,7 @@ mod tests {
     }
 
     #[test]
-    fn snips_before_compaction_when_old_history_is_too_large() {
+    fn archives_original_history_before_compaction_when_it_is_too_large() {
         let optimizer = ContextOptimizer::new(ContextOptimizerConfig {
             model: "gpt-5.4-mini".to_string(),
             preserve_recent_messages: 2,
@@ -243,11 +216,13 @@ mod tests {
         ]);
 
         let prep = optimizer.prepare_session(&session);
-        assert_eq!(prep.session.messages.len(), 2);
+        assert_eq!(prep.session.messages.len(), 3);
+        assert_eq!(prep.session.context_collapse_archive.len(), 2);
+        assert!(prep.summary.is_some());
         assert!(matches!(
-            &prep.session.messages[0].blocks[0],
+            &prep.session.messages[1].blocks[0],
             crate::ContentBlock::Text { text } if text == "recent-user"
         ));
-        assert!(!prep.compacted);
+        assert!(prep.compacted);
     }
 }

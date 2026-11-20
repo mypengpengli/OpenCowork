@@ -112,6 +112,8 @@ REMEMBER: Use the Edit tool and stop. Do not continue after the edits. Do not ad
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct PersistedSessionMemoryState {
+    #[serde(default)]
+    context_generation: usize,
     initialized: bool,
     last_triggered_message_count: usize,
     last_summarized_message_count: usize,
@@ -255,6 +257,17 @@ pub fn load_current_session_memory_source(
     if max_instruction_tokens == 0 {
         return Ok(None);
     }
+    let generation = session.context_collapse_commits.len();
+    let persisted = read_persisted_session_memory_state(&project_session_memory_state_path(
+        config_home,
+        cwd,
+        session,
+    ))?;
+    if session.session_memory_state.context_generation != generation
+        || persisted.as_ref().map_or(0, |s| s.context_generation) != generation
+    {
+        return Ok(None);
+    }
     let content = match session.current_session_memory.as_deref() {
         Some(content) if !content.trim().is_empty() => Some(content.to_string()),
         _ => read_optional_text(&project_session_memory_path(config_home, cwd, session))?,
@@ -285,14 +298,27 @@ pub fn hydrate_current_session_memory(
 ) -> Result<Session, std::io::Error> {
     let mut hydrated = session.clone();
     let memory_path = project_session_memory_path(config_home, cwd, session);
+    let persisted_state = read_persisted_session_memory_state(&project_session_memory_state_path(
+        config_home,
+        cwd,
+        session,
+    ))?;
+    let generation = session.context_collapse_commits.len();
+    if persisted_state.as_ref().map_or(0, |s| s.context_generation) != generation {
+        hydrated.current_session_memory = None;
+        hydrated.session_memory_state = crate::SessionMemoryState {
+            context_generation: generation,
+            ..Default::default()
+        };
+        return Ok(hydrated);
+    }
     if let Some(content) =
         read_optional_text(&memory_path)?.filter(|value| !value.trim().is_empty())
     {
         hydrated.current_session_memory = Some(content);
     }
-    if let Some(persisted_state) = read_persisted_session_memory_state(
-        &project_session_memory_state_path(config_home, cwd, session),
-    )? {
+    if let Some(persisted_state) = persisted_state {
+        hydrated.session_memory_state.context_generation = generation;
         hydrated.session_memory_state.initialized = persisted_state.initialized;
         hydrated.session_memory_state.last_triggered_message_count =
             persisted_state.last_triggered_message_count;
@@ -395,12 +421,26 @@ fn ensure_session_memory_file(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
+    let stale = read_persisted_session_memory_state(&project_session_memory_state_path(
+        config_home,
+        cwd,
+        session,
+    ))?
+    .as_ref()
+    .map_or(0, |s| s.context_generation)
+        != session.context_collapse_commits.len();
     let content = session
         .current_session_memory
         .clone()
-        .or_else(|| read_optional_text(&path).ok().flatten())
+        .or_else(|| {
+            if stale {
+                None
+            } else {
+                read_optional_text(&path).ok().flatten()
+            }
+        })
         .unwrap_or_else(|| load_session_memory_template(cwd));
-    if read_optional_text(&path)?.is_none() {
+    if stale || read_optional_text(&path)?.is_none() {
         fs::write(&path, &content)?;
     }
     Ok(content)
@@ -412,6 +452,7 @@ fn persist_session_memory_state(
     config_home: &Path,
 ) -> Result<(), std::io::Error> {
     session.session_memory_state.initialized = true;
+    session.session_memory_state.context_generation = session.context_collapse_commits.len();
     session.session_memory_state.tokens_at_last_extraction = estimate_session_tokens(session);
     if !has_tool_calls_in_last_assistant_turn(session) {
         session.session_memory_state.last_summarized_message_count = session.messages.len();
@@ -422,6 +463,7 @@ fn persist_session_memory_state(
         fs::create_dir_all(parent)?;
     }
     let persisted = PersistedSessionMemoryState {
+        context_generation: session.context_collapse_commits.len(),
         initialized: session.session_memory_state.initialized,
         last_triggered_message_count: session.session_memory_state.last_triggered_message_count,
         last_summarized_message_count: session.session_memory_state.last_summarized_message_count,
@@ -723,7 +765,9 @@ pub fn touched_paths_from_message(cwd: &Path, message: &ConversationMessage) -> 
                     touched.push(path);
                 }
             }
-            ContentBlock::Text { .. } => {}
+            ContentBlock::Text { .. }
+            | ContentBlock::Reasoning { .. }
+            | ContentBlock::ToolCallDraft { .. } => {}
         }
     }
     touched
@@ -1000,6 +1044,7 @@ fn select_memory_candidates_with_provider<P: ProviderClient>(
         model: model.to_string(),
         system_prompt: vec![MEMORY_SELECTOR_SYSTEM_PROMPT.to_string()],
         messages: vec![InputMessage {
+            reasoning: Default::default(),
             image_urls: Vec::new(),
             role: "user".to_string(),
             content: Some(format!(
@@ -1634,6 +1679,40 @@ mod tests {
             .expect("time")
             .as_nanos();
         std::env::temp_dir().join(format!("opencowork-{prefix}-{stamp}"))
+    }
+
+    #[test]
+    fn ignores_background_memory_from_an_older_context_generation() {
+        let cwd = temp_dir("memory-generation");
+        let config_home = temp_dir("memory-generation-config");
+        let mut session = Session::from_messages(vec![
+            ConversationMessage::user("Old instruction"),
+            ConversationMessage::user("Latest correction"),
+        ])
+        .with_id("generation-test");
+        refresh_current_session_memory(&mut session, &cwd, &config_home).unwrap();
+        let compacted = crate::compact_session_with_summary(
+            &session,
+            crate::CompactConfig {
+                preserve_recent_messages: 1,
+                max_estimated_tokens: 0,
+            },
+            Some("Latest correction is authoritative"),
+        )
+        .compacted_session;
+        let hydrated = hydrate_current_session_memory(&compacted, &cwd, &config_home).unwrap();
+        assert!(hydrated.current_session_memory.is_none());
+        assert_eq!(hydrated.session_memory_state.context_generation, 1);
+        assert!(
+            load_current_session_memory_source(&hydrated, &cwd, &config_home, 2000)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            hydrated.active_context_summary(),
+            Some("Latest correction is authoritative")
+        );
+        let _ = fs::remove_dir_all(config_home);
     }
 
     #[test]

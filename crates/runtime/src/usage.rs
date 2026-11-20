@@ -42,9 +42,18 @@ impl UsageTracker {
     #[must_use]
     pub fn from_session(session: &Session) -> Self {
         let mut tracker = Self::default();
-        for message in &session.messages {
+        for message in session
+            .context_collapse_archive
+            .iter()
+            .chain(session.messages.iter())
+        {
             if let Some(usage) = message.usage {
                 tracker.record(usage);
+            }
+        }
+        for commit in &session.context_collapse_commits {
+            if let Some(metrics) = &commit.metrics {
+                tracker.record(metrics.usage);
             }
         }
         tracker

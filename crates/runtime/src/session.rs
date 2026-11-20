@@ -17,6 +17,18 @@ pub enum MessageRole {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentBlock {
+    ToolCallDraft {
+        index: usize,
+        id: Option<String>,
+        name: Option<String>,
+        input: String,
+    },
+    Reasoning {
+        text: String,
+        field: String,
+        provider: String,
+        model: String,
+    },
     Text {
         text: String,
     },
@@ -35,6 +47,12 @@ pub enum ContentBlock {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConversationMessage {
+    #[serde(default)]
+    pub context_generation: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_overhead_tokens: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finish_reason: Option<String>,
     pub role: MessageRole,
     pub blocks: Vec<ContentBlock>,
     pub usage: Option<TokenUsage>,
@@ -42,6 +60,8 @@ pub struct ConversationMessage {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextCollapseCommit {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<crate::CompactionMetrics>,
     pub summary: String,
     pub removed_message_count: usize,
     pub estimated_tokens: usize,
@@ -57,6 +77,8 @@ pub struct ContextCollapseSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct SessionMemoryState {
+    #[serde(default)]
+    pub context_generation: usize,
     #[serde(default)]
     pub initialized: bool,
     #[serde(default)]
@@ -84,6 +106,8 @@ fn deserialize_timestamp<'de, D: serde::Deserializer<'de>>(
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Session {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub request_metrics: Vec<crate::RequestMetrics>,
     pub version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
@@ -118,6 +142,7 @@ impl Session {
     #[must_use]
     pub fn new() -> Self {
         Self {
+            request_metrics: vec![],
             version: 1,
             id: None,
             workspace: None,
@@ -135,6 +160,7 @@ impl Session {
     #[must_use]
     pub fn from_messages(messages: Vec<ConversationMessage>) -> Self {
         Self {
+            request_metrics: vec![],
             version: 1,
             id: None,
             workspace: None,
@@ -152,6 +178,7 @@ impl Session {
     #[must_use]
     pub fn with_messages(&self, messages: Vec<ConversationMessage>) -> Self {
         Self {
+            request_metrics: self.request_metrics.clone(),
             version: self.version,
             id: self.id.clone(),
             workspace: self.workspace.clone(),
@@ -186,22 +213,7 @@ impl Session {
     }
 
     pub fn save_to_path(&self, path: impl AsRef<Path>) -> Result<(), SessionError> {
-        let path = path.as_ref();
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let temporary = path.with_extension(format!("pending-{}-{stamp}", std::process::id()));
-        let result = (|| {
-            fs::write(&temporary, serde_json::to_string_pretty(self)?)?;
-            fs::rename(&temporary, path)?;
-            Ok::<_, SessionError>(())
-        })();
-        if result.is_err() {
-            let _ = fs::remove_file(&temporary);
-        }
-        result?;
-        Ok(())
+        crate::write_json_atomic(path.as_ref(), self).map_err(SessionError::Io)
     }
 
     pub fn load_from_path(path: impl AsRef<Path>) -> Result<Self, SessionError> {
@@ -226,6 +238,9 @@ impl ConversationMessage {
     #[must_use]
     pub fn system(text: impl Into<String>) -> Self {
         Self {
+            context_generation: 0,
+            request_overhead_tokens: None,
+            finish_reason: None,
             role: MessageRole::System,
             blocks: vec![ContentBlock::Text { text: text.into() }],
             usage: None,
@@ -235,6 +250,9 @@ impl ConversationMessage {
     #[must_use]
     pub fn user(text: impl Into<String>) -> Self {
         Self {
+            context_generation: 0,
+            request_overhead_tokens: None,
+            finish_reason: None,
             role: MessageRole::User,
             blocks: vec![ContentBlock::Text { text: text.into() }],
             usage: None,
@@ -244,6 +262,9 @@ impl ConversationMessage {
     #[must_use]
     pub fn assistant(blocks: Vec<ContentBlock>, usage: Option<TokenUsage>) -> Self {
         Self {
+            context_generation: 0,
+            request_overhead_tokens: None,
+            finish_reason: None,
             role: MessageRole::Assistant,
             blocks,
             usage,
@@ -258,6 +279,9 @@ impl ConversationMessage {
         is_error: bool,
     ) -> Self {
         Self {
+            context_generation: 0,
+            request_overhead_tokens: None,
+            finish_reason: None,
             role: MessageRole::Tool,
             blocks: vec![ContentBlock::ToolResult {
                 tool_use_id: tool_use_id.into(),

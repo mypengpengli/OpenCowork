@@ -167,7 +167,7 @@ def check_chat(executable):
                 assert "reference.txt" in json.loads(listing.read())["files"]
                 connection.close()
                 connection, response, session = begin("cancel", "cancel-test", [{"kind": "file", "path": "reference.txt"}])
-                until(response, lambda m: m["type"] == "event")
+                until(response, lambda m: m["type"] == "event" and m.get("event", {}).get("type") == "assistant_text_delta")
                 start = time.monotonic()
                 stop("cancel-test")
                 completed, _ = until(response, lambda m: m["type"] == "complete")

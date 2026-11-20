@@ -185,6 +185,14 @@ pub fn get_compact_continuation_message(
 
 #[must_use]
 pub fn compact_session(session: &Session, config: CompactConfig) -> CompactResult {
+    compact_session_with_summary(session, config, None)
+}
+
+pub fn compact_session_with_summary(
+    session: &Session,
+    config: CompactConfig,
+    generated: Option<&str>,
+) -> CompactResult {
     if !should_compact(session, config) {
         return CompactResult {
             summary: session
@@ -200,8 +208,16 @@ pub fn compact_session(session: &Session, config: CompactConfig) -> CompactResul
         };
     }
 
-    if let Some(result) =
-        compact_session_with_session_memory(session, config, SessionMemoryCompactConfig::default())
+    if let Some(result) = generated
+        .is_none()
+        .then(|| {
+            compact_session_with_session_memory(
+                session,
+                config,
+                SessionMemoryCompactConfig::default(),
+            )
+        })
+        .flatten()
     {
         // The memory strategy can retain the entire transcript to meet its
         // minimum context budget. Fall back to ordinary compaction in that case.
@@ -254,8 +270,14 @@ pub fn compact_session(session: &Session, config: CompactConfig) -> CompactResul
     }
     let removed = &session.messages[compacted_prefix_len..keep_from];
     let preserved = session.messages[keep_from..].to_vec();
-    let new_commit_summary = summarize_messages(removed);
-    let summary = merge_compact_summaries(existing_summary.as_deref(), &new_commit_summary);
+    let new_commit_summary = generated
+        .map(str::to_owned)
+        .unwrap_or_else(|| summarize_messages(removed));
+    let summary = if generated.is_some() {
+        new_commit_summary.clone()
+    } else {
+        merge_compact_summaries(existing_summary.as_deref(), &new_commit_summary)
+    };
     let formatted_summary = format_compact_summary(&summary);
     let continuation = get_compact_continuation_message(&summary, true, !preserved.is_empty());
     let removed_estimated_tokens = removed.iter().map(estimate_message_tokens).sum();
@@ -263,6 +285,7 @@ pub fn compact_session(session: &Session, config: CompactConfig) -> CompactResul
     context_collapse_archive.extend_from_slice(removed);
     let mut context_collapse_commits = session.context_collapse_commits.clone();
     context_collapse_commits.push(ContextCollapseCommit {
+        metrics: None,
         summary: new_commit_summary,
         removed_message_count: removed.len(),
         estimated_tokens: removed_estimated_tokens,
@@ -287,14 +310,26 @@ pub fn compact_session(session: &Session, config: CompactConfig) -> CompactResul
         summary,
         formatted_summary,
         compacted_session: Session {
+            request_metrics: session.request_metrics.clone(),
             version: session.version,
             id: session.id.clone(),
             workspace: session.workspace.clone(),
             title: session.title.clone(),
             delivered_user_messages: session.delivered_user_messages.clone(),
             messages: compacted_messages,
-            current_session_memory: session.current_session_memory.clone(),
-            session_memory_state: session.session_memory_state.clone(),
+            current_session_memory: if generated.is_some() {
+                None
+            } else {
+                session.current_session_memory.clone()
+            },
+            session_memory_state: if generated.is_some() {
+                crate::SessionMemoryState {
+                    context_generation: context_collapse_commits.len(),
+                    ..Default::default()
+                }
+            } else {
+                session.session_memory_state.clone()
+            },
             context_collapse_archive,
             context_collapse_commits,
             context_collapse_snapshot,
@@ -366,6 +401,7 @@ fn compact_session_with_session_memory(
 
     let mut context_collapse_commits = session.context_collapse_commits.clone();
     context_collapse_commits.push(ContextCollapseCommit {
+        metrics: None,
         summary: summary.clone(),
         removed_message_count: removed.len(),
         estimated_tokens: removed_estimated_tokens,
@@ -391,6 +427,7 @@ fn compact_session_with_session_memory(
         summary,
         formatted_summary,
         compacted_session: Session {
+            request_metrics: session.request_metrics.clone(),
             version: session.version,
             id: session.id.clone(),
             workspace: session.workspace.clone(),
@@ -462,6 +499,9 @@ pub fn microcompact_session_messages(session: &Session) -> MicrocompactResult {
                 .collect::<Vec<_>>();
             if touched {
                 ConversationMessage {
+                    context_generation: 0,
+                    request_overhead_tokens: None,
+                    finish_reason: None,
                     role: message.role,
                     blocks,
                     usage: message.usage,
@@ -860,6 +900,9 @@ pub fn budget_message_tool_results(
     enforce_message_tool_result_budget(&mut blocks, config);
 
     ConversationMessage {
+        context_generation: 0,
+        request_overhead_tokens: None,
+        finish_reason: None,
         role: message.role,
         blocks,
         usage: message.usage,
@@ -890,6 +933,9 @@ fn collapse_message_text(message: &ConversationMessage, max_chars: usize) -> Con
         .collect();
 
     ConversationMessage {
+        context_generation: 0,
+        request_overhead_tokens: None,
+        finish_reason: None,
         role: message.role,
         blocks,
         usage: message.usage,
@@ -1086,7 +1132,9 @@ fn summarize_messages(messages: &[ConversationMessage]) -> String {
         .filter_map(|block| match block {
             ContentBlock::ToolUse { name, .. } => Some(name.as_str()),
             ContentBlock::ToolResult { tool_name, .. } => Some(tool_name.as_str()),
-            ContentBlock::Text { .. } => None,
+            ContentBlock::Text { .. }
+            | ContentBlock::Reasoning { .. }
+            | ContentBlock::ToolCallDraft { .. } => None,
         })
         .collect::<Vec<_>>();
     tool_names.sort_unstable();
@@ -1190,6 +1238,9 @@ fn merge_compact_summaries(existing_summary: Option<&str>, new_summary: &str) ->
 
 fn summarize_block(block: &ContentBlock) -> String {
     let raw = match block {
+        ContentBlock::Reasoning { .. } | ContentBlock::ToolCallDraft { .. } => {
+            "[Reasoning retained in archive]".into()
+        }
         ContentBlock::Text { text } => text.clone(),
         ContentBlock::ToolUse { name, input, .. } => format!("tool_use {name}({input})"),
         ContentBlock::ToolResult {
@@ -1249,6 +1300,7 @@ fn collect_key_files(messages: &[ConversationMessage]) -> Vec<String> {
         .iter()
         .flat_map(|message| message.blocks.iter())
         .map(|block| match block {
+            ContentBlock::Reasoning { .. } | ContentBlock::ToolCallDraft { .. } => "",
             ContentBlock::Text { text } => text.as_str(),
             ContentBlock::ToolUse { input, .. } => input.as_str(),
             ContentBlock::ToolResult { output, .. } => output.as_str(),
@@ -1308,11 +1360,15 @@ fn estimate_message_tokens(message: &ConversationMessage) -> usize {
         .blocks
         .iter()
         .map(|block| match block {
-            ContentBlock::Text { text } => text.len() / 4 + 1,
-            ContentBlock::ToolUse { name, input, .. } => (name.len() + input.len()) / 4 + 1,
+            ContentBlock::ToolCallDraft { input: text, .. }
+            | ContentBlock::Text { text }
+            | ContentBlock::Reasoning { text, .. } => crate::estimate_text_tokens(text) + 1,
+            ContentBlock::ToolUse { name, input, .. } => {
+                crate::estimate_text_tokens(name) + crate::estimate_text_tokens(input) + 1
+            }
             ContentBlock::ToolResult {
                 tool_name, output, ..
-            } => (tool_name.len() + output.len()) / 4 + 1,
+            } => crate::estimate_text_tokens(tool_name) + crate::estimate_text_tokens(output) + 1,
         })
         .sum()
 }
@@ -1535,6 +1591,9 @@ mod tests {
             ),
             ConversationMessage::tool_result("1", "bash", "ok ".repeat(200), false),
             ConversationMessage {
+                context_generation: 0,
+                request_overhead_tokens: None,
+                finish_reason: None,
                 role: MessageRole::Assistant,
                 blocks: vec![ContentBlock::Text {
                     text: "recent".to_string(),
@@ -2043,6 +2102,9 @@ mod tests {
     #[test]
     fn enforces_message_level_tool_result_budget() {
         let message = ConversationMessage {
+            context_generation: 0,
+            request_overhead_tokens: None,
+            finish_reason: None,
             role: MessageRole::User,
             blocks: vec![
                 ContentBlock::ToolResult {

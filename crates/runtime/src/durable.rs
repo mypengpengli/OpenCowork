@@ -51,7 +51,20 @@ pub fn write_json_atomic(path: &Path, value: &impl serde::Serialize) -> io::Resu
         file.write_all(&serde_json::to_vec(value)?)?;
         file.sync_all()?;
         drop(file);
-        std::fs::rename(&temp, path)
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            match std::fs::rename(&temp, path) {
+                Ok(()) => break Ok(()),
+                Err(error)
+                    if cfg!(windows)
+                        && matches!(error.raw_os_error(), Some(5 | 32 | 33))
+                        && std::time::Instant::now() < deadline =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(10))
+                }
+                Err(error) => break Err(error),
+            }
+        }
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&temp);

@@ -316,6 +316,11 @@ const els = {
   providerBaseUrlEnv: document.querySelector('#provider-base-url-env'),
   providerTimeoutMs: document.querySelector('#provider-timeout-ms'),
   providerStreaming: document.querySelector('#provider-streaming'),
+  providerContextWindow: document.querySelector('#provider-context-window'),
+  providerRequestConcurrency: document.querySelector('#provider-request-concurrency'),
+  providerOutputLimit: document.querySelector('#provider-output-limit'),
+  providerImages: document.querySelector('#provider-images'),
+  providerReasoningReplay: document.querySelector('#provider-reasoning-replay'),
   providerMaxRetries: document.querySelector('#provider-max-retries'),
   providerProfileActivate: document.querySelector('#provider-profile-activate'),
   resetProviderButton: document.querySelector('#reset-provider-button'),
@@ -691,6 +696,15 @@ const MESSAGES = {
     'provider.baseUrlEnvHint': '如果你会在不同环境之间切换地址，可以只在这里保存变量名。',
     'provider.timeoutHint': '请求超时只影响这层壳子的请求等待时间。',
     'provider.streaming': '流式输出',
+    'provider.contextWindow': '上下文窗口（tokens）',
+    'provider.contextWindowHint': '填写服务商公布的模型容量。留空使用项目设置。',
+    'provider.outputLimit': '最大输出（tokens）',
+    'provider.requestConcurrency':'服务商共享并发请求上限',
+    'provider.images': '图片输入',
+    'provider.imagesAuto': '未指定',
+    'provider.imagesYes': '支持',
+    'provider.imagesNo': '不支持',
+    'provider.reasoningReplay': '接口要求回传 reasoning_content（含空值）',
     'provider.maxRetries': '临时错误重试次数',
     'provider.maxRetriesHint': '默认重试 2 次。仅重试连接失败、HTTP 408/409/429 和 5xx；已经开始输出的流不会自动重放。',
     'providerProfiles.title': 'Provider 配置档',
@@ -1392,6 +1406,15 @@ const MESSAGES = {
     'provider.baseUrlEnvHint': 'If you switch endpoints by environment, keep only the variable name here.',
     'provider.timeoutHint': 'Timeout only affects request waiting on this shell layer.',
     'provider.streaming': 'Stream responses',
+    'provider.contextWindow': 'Context window (tokens)',
+    'provider.contextWindowHint': 'Use the model capacity published by your provider. Leave blank to use project settings.',
+    'provider.outputLimit': 'Maximum output (tokens)',
+    'provider.requestConcurrency':'Shared provider request limit',
+    'provider.images': 'Image input',
+    'provider.imagesAuto': 'Unspecified',
+    'provider.imagesYes': 'Supported',
+    'provider.imagesNo': 'Unsupported',
+    'provider.reasoningReplay': 'API requires reasoning_content replay, including empty values',
     'provider.maxRetries': 'Transient error retries',
     'provider.maxRetriesHint': 'Defaults to 2 retries. Only connection failures and HTTP 408/409/429/5xx are retried; a stream that already started is never replayed.',
     'providerProfiles.title': 'Provider Profiles',
@@ -2470,12 +2493,12 @@ function visibleSessionCount() {
 function buildPendingMessages() {
   if (!state.pendingTurn) return []
   return [
-    {
+    ...(!state.pendingTurn.userAlreadySaved ? [{
       role: 'user',
       blocks: [{ type: 'text', text: state.pendingTurn.userInput }],
       __pending: true,
       __pendingState: 'user',
-    },
+    }] : []),
     ...state.pendingTurn.messages,
   ]
 }
@@ -4683,6 +4706,26 @@ function renderMessages() {
     body.className = 'message-body'
 
     ;(message.blocks || []).forEach((block, blockIndex) => {
+      if (block.type === 'reasoning' || block.type === 'tool_call_draft') {
+        const reasoning = document.createElement('details')
+        reasoning.className = 'message-reasoning'
+        reasoning.dataset.blockIndex = String(blockIndex)
+        const key = `reasoning:${messageIndex}:${blockIndex}`
+        reasoning.open = state.expandedBlocks.has(key)
+        const title = document.createElement('summary')
+        title.textContent = block.type === 'reasoning' ? (state.locale === 'zh' ? '思考过程' : 'Reasoning')
+          : (state.locale === 'zh' ? '准备工具 · ' : 'Preparing tool · ') + (block.name || '…')
+        const text = document.createElement('div')
+        text.className = 'message-reasoning-text'
+        text.textContent = block.type === 'reasoning' ? block.text : block.input
+        reasoning.append(title, text)
+        reasoning.addEventListener('toggle', () => {
+          if (reasoning.open) state.expandedBlocks.add(key)
+          else state.expandedBlocks.delete(key)
+        })
+        body.appendChild(reasoning)
+        return
+      }
       const content = blockContent(block)
       const label = blockLabel(block)
       const isTextBlock = block.type === 'text'
@@ -4867,6 +4910,37 @@ function renderMessages() {
     els.messageScroll.scrollTop = previousScrollTop
   }
   state.forceMessageScroll = false
+}
+
+function renderStreamingTail() {
+  const messages = buildVisibleMessages()
+  const index = messages.length - 1
+  const message = messages[index]
+  if (message?.role !== 'assistant') return false
+  const row = els.messageList.querySelector(`[data-message-index="${index}"]`)
+  if (!row || !message.blocks.length) return false
+  const pinned = els.messageScroll.scrollHeight - els.messageScroll.scrollTop - els.messageScroll.clientHeight < 96
+  for (const [blockIndex, block] of message.blocks.entries()) {
+    if (block.type === 'reasoning' || block.type === 'tool_call_draft') {
+      const text = row.querySelector(`.message-reasoning[data-block-index="${blockIndex}"] .message-reasoning-text`)
+      if (!text) return false
+      const next = block.type === 'reasoning' ? block.text : block.input
+      if (text.textContent !== next) text.textContent = next
+      if (block.type === 'tool_call_draft') {
+        const title = text.closest('details').querySelector('summary')
+        title.textContent = (state.locale === 'zh' ? '准备工具 · ' : 'Preparing tool · ') + (block.name || '…')
+      }
+    } else if (block.type === 'text') {
+      const content = document.getElementById(`message-block-${index}-${blockIndex}`)
+      if (!content) return false
+      if (content.__streamText === block.text) continue
+      const markdown = renderMarkdown(block.text, { onFile: openFileReference, onError: error => setComposerStatus(error.message, true), locale: state.locale })
+      content.replaceChildren(...markdown.childNodes)
+      content.__streamText = block.text
+    } else return false
+  }
+  if (pinned) els.messageScroll.scrollTop = els.messageScroll.scrollHeight
+  return true
 }
 
 function renderEvents() {
@@ -5076,6 +5150,7 @@ function renderProviderProfileEditor() {
     baseUrlEnv: runtimeProvider.baseUrlEnv || '',
     timeoutMs: runtimeProvider.timeoutMs || 90000,
     maxRetries: runtimeProvider.maxRetries ?? 2,
+    modelCapabilities: runtimeProvider.modelCapabilities || {},
     active: true,
   }
 
@@ -5087,6 +5162,12 @@ function renderProviderProfileEditor() {
   els.providerBaseUrlEnv.value = source.baseUrlEnv || ''
   els.providerTimeoutMs.value = source.timeoutMs || 90000
   els.providerStreaming.checked = source.streaming ?? true
+  const capabilities = source.modelCapabilities || {}
+  els.providerContextWindow.value = capabilities.contextWindow ?? ''
+  els.providerRequestConcurrency.value=capabilities.maxConcurrentRequests ?? 64
+  els.providerOutputLimit.value = capabilities.maxOutputTokens ?? ''
+  els.providerImages.value = capabilities.supportsImages == null ? '' : String(capabilities.supportsImages)
+  els.providerReasoningReplay.checked = Boolean(capabilities.requiresReasoningContent)
   els.providerMaxRetries.value = source.maxRetries ?? 2
   els.providerProfileActivate.checked = profile ? Boolean(profile.active) : true
   if (els.providerClearApiKey) {
@@ -6023,17 +6104,32 @@ async function submitChat(event) {
         state.currentSessionId = message.session_id
         updateComposerState()
       } else if (message.type === 'event' && state.pendingTurn) {
-        state.pendingTurn.phase = 'streaming'
+        if (message.event.type === 'context_compacted') {
+          state.currentSession = message.event.session
+          state.pendingTurn.messages = []
+          state.pendingTurn.userAlreadySaved = true
+          setComposerStatus(state.locale === 'zh' ? `上下文已整理：${message.event.before_tokens} → ${message.event.after_tokens} tokens` : `Context compacted: ${message.event.before_tokens} → ${message.event.after_tokens} tokens`)
+        }
+        if (message.event.type === 'assistant_reasoning_delta') state.pendingTurn.phase = 'reasoning'
+        if (message.event.type === 'assistant_text_delta') state.pendingTurn.phase = 'streaming'
+        if (message.event.type === 'tool_call') state.pendingTurn.phase = 'tool'
+        if (message.event.type === 'tool_call_delta') state.pendingTurn.phase = 'preparing'
         state.lastEvents.push(message.event)
         appendChatEvent(state.pendingTurn.messages, message.event)
         if (!renderScheduled) {
           renderScheduled = true
-          requestAnimationFrame(() => {
+          setTimeout(() => {
             renderScheduled = false
-            renderConversationSurface()
-          })
+            if (!renderStreamingTail()) renderConversationSurface()
+          }, 50)
         }
-        if (!state.stopping) setComposerStatus(t('composer.streaming'))
+        if (!state.stopping) {
+          const phase = state.pendingTurn.phase
+          setComposerStatus(phase === 'reasoning' ? (state.locale === 'zh' ? '思考中…' : 'Reasoning…')
+            : phase === 'preparing' ? (state.locale === 'zh' ? '准备工具中…' : 'Preparing tool…')
+            : phase === 'tool' ? (state.locale === 'zh' ? '执行工具中…' : 'Running tools…')
+              : t(phase === 'streaming' ? 'composer.streaming' : 'composer.waiting'))
+        }
       }
     })
 
@@ -6579,6 +6675,13 @@ async function submitProvider(event) {
         baseUrlEnv: els.providerBaseUrlEnv.value.trim() || null,
         timeoutMs: Number(els.providerTimeoutMs.value || 90000),
         streaming: els.providerStreaming.checked,
+        modelCapabilities: {
+          contextWindow: els.providerContextWindow.value ? Number(els.providerContextWindow.value) : null,
+          maxConcurrentRequests:Number(els.providerRequestConcurrency.value||64),
+          maxOutputTokens: els.providerOutputLimit.value ? Number(els.providerOutputLimit.value) : null,
+          supportsImages: els.providerImages.value ? els.providerImages.value === 'true' : null,
+          requiresReasoningContent: els.providerReasoningReplay.checked,
+        },
         maxRetries: Math.max(0, Math.min(5, Math.trunc(Number(els.providerMaxRetries.value || 2)))),
         activate: Boolean(els.providerProfileActivate.checked),
       }),

@@ -75,6 +75,7 @@ pub struct RuntimeProviderConfig {
     base_url_env: Option<String>,
     timeout_ms: u64,
     streaming: bool,
+    capabilities: opencowork_api::ModelCapabilities,
     max_retries: u32,
 }
 
@@ -522,6 +523,11 @@ impl RuntimeProviderConfig {
     }
 
     #[must_use]
+    pub fn capabilities(&self) -> &opencowork_api::ModelCapabilities {
+        &self.capabilities
+    }
+
+    #[must_use]
     pub const fn streaming(&self) -> bool {
         self.streaming
     }
@@ -901,6 +907,10 @@ fn parse_provider(root: &Value) -> Result<Option<RuntimeProviderConfig>, ConfigE
     if let Some(timeout_ms) = object.get("timeoutMs").and_then(Value::as_u64) {
         provider.timeout_ms = timeout_ms;
     }
+    if let Some(value) = object.get("modelCapabilities") {
+        provider.capabilities = serde_json::from_value(value.clone())
+            .map_err(|error| ConfigError::Invalid(error.to_string()))?;
+    }
     if let Some(streaming) = object.get("streaming").and_then(Value::as_bool) {
         provider.streaming = streaming;
     }
@@ -1192,6 +1202,7 @@ fn provider_from_kind(kind: &str) -> Result<RuntimeProviderConfig, ConfigError> 
             base_url_env: Some("OPENAI_BASE_URL".to_string()),
             timeout_ms: 90_000,
             streaming: true,
+            capabilities: Default::default(),
             max_retries: DEFAULT_PROVIDER_MAX_RETRIES,
         }),
         "xai" => Ok(RuntimeProviderConfig {
@@ -1202,6 +1213,7 @@ fn provider_from_kind(kind: &str) -> Result<RuntimeProviderConfig, ConfigError> 
             base_url_env: Some("XAI_BASE_URL".to_string()),
             timeout_ms: 90_000,
             streaming: true,
+            capabilities: Default::default(),
             max_retries: DEFAULT_PROVIDER_MAX_RETRIES,
         }),
         other => Err(ConfigError::Invalid(format!(

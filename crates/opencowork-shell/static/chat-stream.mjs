@@ -45,6 +45,28 @@ export function appendChatEvent(messages, event) {
     return message
   }
   switch (event.type) {
+    case 'tool_call_delta': {
+      const message = assistant()
+      let draft = message.blocks.find(block => block.type === 'tool_call_draft' && block.index === event.index)
+      if (!draft) {
+        draft = { type: 'tool_call_draft', index: event.index, input: '' }
+        message.blocks.push(draft)
+      }
+      if (event.id) draft.id = event.id
+      if (event.name) draft.name = event.name
+      draft.input += event.arguments_delta || ''
+      break
+    }
+    case 'assistant_reasoning_delta': {
+      const message = assistant()
+      const last = message.blocks.at(-1)
+      if (last?.type === 'reasoning' && last.field === event.field) last.text += event.text
+      else message.blocks.push({ type: 'reasoning', text: event.text, field: event.field, provider: event.provider, model: event.model })
+      break
+    }
+    case 'assistant_finish':
+      assistant().finish_reason = event.reason
+      break
     case 'user_message':
       messages.push({role:'user',blocks:[{type:'text',text:event.text}]}); break
     case 'assistant_text_delta': {
@@ -54,9 +76,14 @@ export function appendChatEvent(messages, event) {
       else message.blocks.push({ type: 'text', text: event.text })
       break
     }
-    case 'tool_call':
-      assistant().blocks.push({ type: 'tool_use', id: event.id, name: event.name, input: event.input })
+    case 'tool_call': {
+      const message = assistant()
+      const index = message.blocks.findIndex(block => block.type === 'tool_call_draft' && block.id === event.id)
+      const completed = { type: 'tool_use', id: event.id, name: event.name, input: event.input }
+      if (index < 0) message.blocks.push(completed)
+      else message.blocks[index] = completed
       break
+    }
     case 'tool_result':
       messages.push({ role: 'tool', blocks: [{ ...event, type: 'tool_result' }] })
       break

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+pub mod jobs;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};

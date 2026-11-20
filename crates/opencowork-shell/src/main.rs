@@ -8,6 +8,7 @@ mod review;
 mod schedules;
 mod session_actions;
 mod setup;
+mod subagents;
 mod team_sync;
 mod workflows;
 mod workspace;
@@ -185,6 +186,8 @@ struct ProviderSettingsView {
     timeout_ms: u64,
     max_retries: u32,
     streaming: bool,
+    #[serde(default)]
+    model_capabilities: opencowork_api::ModelCapabilities,
     persisted: bool,
 }
 
@@ -203,6 +206,8 @@ struct ProviderProfileView {
     timeout_ms: u64,
     max_retries: u32,
     streaming: bool,
+    #[serde(default)]
+    model_capabilities: opencowork_api::ModelCapabilities,
     active: bool,
 }
 
@@ -231,6 +236,8 @@ struct ProviderProfileRecord {
     max_retries: u32,
     #[serde(default = "default_streaming")]
     streaming: bool,
+    #[serde(default)]
+    model_capabilities: opencowork_api::ModelCapabilities,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -330,6 +337,7 @@ struct ProviderUpdateRequest {
     timeout_ms: Option<u64>,
     max_retries: Option<u32>,
     streaming: Option<bool>,
+    model_capabilities: Option<opencowork_api::ModelCapabilities>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -347,6 +355,7 @@ struct ProviderProfileUpsertRequest {
     timeout_ms: Option<u64>,
     max_retries: Option<u32>,
     streaming: Option<bool>,
+    model_capabilities: Option<opencowork_api::ModelCapabilities>,
     activate: bool,
 }
 
@@ -438,6 +447,11 @@ impl IntoResponse for ApiError {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    if env::args().nth(1).as_deref() == Some("--subagent-worker") {
+        return tokio::task::spawn_blocking(subagents::worker)
+            .await?
+            .map_err(anyhow::Error::msg);
+    }
     if env::args().nth(1).as_deref() == Some("--provider-probe") {
         return tokio::task::spawn_blocking(provider_diagnostics::worker)
             .await?
@@ -481,6 +495,8 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let scheduler_state = state.clone();
+    opencowork_runtime::process_sessions::start_service(state.config_home.clone());
+    subagents::start(state.clone());
     let manager = workspace_manager::WorkspaceManager::new(state)
         .map_err(|error| anyhow::anyhow!(error.message))?;
     let app = Router::new()
@@ -561,6 +577,29 @@ async fn main() -> anyhow::Result<()> {
             get(background_memory::provenance).post(background_memory::resolve_conflict),
         )
         .route("/api/health", get(|| async { StatusCode::NO_CONTENT }))
+        .route(
+            "/api/subagents",
+            get(subagents::overview).post(subagents::configure),
+        )
+        .route("/api/subagents/:id/cancel", post(subagents::cancel))
+        .route("/api/subagent-tasks", post(subagents::create))
+        .route("/api/subagents/:id/resume", post(subagents::resume))
+        .route("/api/subagents/:id/message", post(subagents::message))
+        .route("/api/process-sessions", get(subagents::processes))
+        .route("/api/process-sessions/:id", get(subagents::process_output))
+        .route(
+            "/api/process-sessions/:id/cancel",
+            post(subagents::cancel_process),
+        )
+        .route(
+            "/subagents.mjs",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+                    include_str!("../static/subagents.mjs"),
+                )
+            }),
+        )
         .route("/api/bootstrap", get(get_bootstrap))
         .route("/api/team-memory-sync", get(get_team_memory_sync))
         .route(
@@ -997,6 +1036,9 @@ async fn save_provider(
     State(state): State<ShellState>,
     Json(payload): Json<ProviderUpdateRequest>,
 ) -> Result<Json<ProviderSettingsView>, ApiError> {
+    if let Some(capabilities) = &payload.model_capabilities {
+        capabilities.validate().map_err(ApiError::bad_request)?;
+    }
     if payload.name.trim().is_empty() {
         return Err(ApiError::bad_request("provider name must not be empty"));
     }
@@ -1059,6 +1101,16 @@ async fn save_provider(
     {
         provider.insert("streaming".into(), Value::Bool(streaming));
     }
+    if let Some(capabilities) = payload.model_capabilities.or_else(|| {
+        root.get("provider")
+            .and_then(|p| p.get("modelCapabilities"))
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+    }) {
+        provider.insert(
+            "modelCapabilities".into(),
+            serde_json::to_value(capabilities).map_err(internal_error)?,
+        );
+    }
     if let Some(max_retries) = payload.max_retries {
         provider.insert(
             "maxRetries".to_string(),
@@ -1108,6 +1160,9 @@ async fn save_provider_profile(
     State(state): State<ShellState>,
     Json(payload): Json<ProviderProfileUpsertRequest>,
 ) -> Result<Json<Vec<ProviderProfileView>>, ApiError> {
+    if let Some(capabilities) = &payload.model_capabilities {
+        capabilities.validate().map_err(ApiError::bad_request)?;
+    }
     if payload.label.trim().is_empty() {
         return Err(ApiError::bad_request(
             "provider profile label must not be empty",
@@ -1147,6 +1202,21 @@ async fn save_provider_profile(
         .map(ToOwned::to_owned);
     let next_id =
         requested_id.unwrap_or_else(|| unique_provider_profile_id(&profiles, &payload.label));
+    let api_key_env = if payload.api_key_env.is_none() && payload.id.is_some() {
+        profiles
+            .iter()
+            .find(|profile| profile.id == next_id)
+            .map(|profile| profile.api_key_env.clone())
+            .or_else(|| {
+                settings
+                    .pointer("/provider/apiKeyEnv")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .unwrap_or(api_key_env)
+    } else {
+        api_key_env
+    };
     let mut record = ProviderProfileRecord {
         id: next_id.clone(),
         label: payload.label.trim().to_string(),
@@ -1167,6 +1237,7 @@ async fn save_provider_profile(
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned),
         timeout_ms: payload.timeout_ms.unwrap_or(90_000),
+        model_capabilities: payload.model_capabilities.clone().unwrap_or_default(),
         streaming: payload.streaming.unwrap_or(true),
         max_retries: payload
             .max_retries
@@ -1181,6 +1252,9 @@ async fn save_provider_profile(
             record.api_key = existing.api_key.clone();
         }
         record.streaming = payload.streaming.unwrap_or(existing.streaming);
+        record.model_capabilities = payload
+            .model_capabilities
+            .unwrap_or_else(|| existing.model_capabilities.clone());
         *existing = record.clone();
     } else {
         if payload.clear_api_key.unwrap_or(false) {
@@ -1441,9 +1515,11 @@ fn run_chat_blocking(
     let diagnostics = serde_json::json!({
         "attachments": reference_diagnostics,
         "estimatedPromptTokens": execution.prompt.estimated_tokens,
-        "contextWindowTokens": app.config().context().context_window_tokens_override().unwrap_or(opencowork_runtime::get_context_window_for_model(&model, None)),
+        "contextWindowTokens": app.config().provider().and_then(|p|p.capabilities().context_window).or(app.config().context().context_window_tokens_override()).unwrap_or(opencowork_runtime::get_context_window_for_model(&model, None)),
         "instructionTokenBudget": app.config().context().max_instruction_tokens(),
         "compacted": execution.prompt.compacted,
+        "requests":execution.session.request_metrics,
+        "compactions":execution.session.context_collapse_commits.iter().filter_map(|c|c.metrics.clone()).collect::<Vec<_>>(),
         "layers": execution.prompt.layers.iter().map(|layer| serde_json::json!({"name":layer.name,"characters":layer.content.chars().count(),"estimatedTokens":(layer.content.len()+3)/4,"truncated":layer.content.contains("[truncated]"),"reason":workspace::context_reason(&layer.name)})).collect::<Vec<_>>()
     });
     if let Some(id) = &payload.session_id {
@@ -1671,6 +1747,7 @@ fn provider_view(config: &opencowork_runtime::RuntimeConfig, model: &str) -> Pro
             base_url: provider.base_url().to_string(),
             base_url_env: provider.base_url_env().map(ToOwned::to_owned),
             timeout_ms: provider.timeout_ms(),
+            model_capabilities: provider.capabilities().clone(),
             streaming: provider.streaming(),
             max_retries: provider.max_retries(),
             persisted: true,
@@ -1686,6 +1763,7 @@ fn provider_view(config: &opencowork_runtime::RuntimeConfig, model: &str) -> Pro
         base_url,
         base_url_env: profile.base_url_env,
         timeout_ms: profile.timeout_ms,
+        model_capabilities: profile.capabilities.clone(),
         streaming: profile.streaming,
         max_retries: profile.max_retries,
         persisted: false,
@@ -1742,6 +1820,7 @@ fn default_provider_profile_record(
         base_url: provider.base_url,
         base_url_env: provider.base_url_env,
         timeout_ms: provider.timeout_ms,
+        model_capabilities: provider.model_capabilities.clone(),
         streaming: provider.streaming,
         max_retries: provider.max_retries,
     }
@@ -1784,6 +1863,7 @@ fn provider_profile_views(
             base_url: fallback.base_url.clone(),
             base_url_env: fallback.base_url_env.clone(),
             timeout_ms: fallback.timeout_ms,
+            model_capabilities: fallback.model_capabilities.clone(),
             streaming: fallback.streaming,
             max_retries: fallback.max_retries,
         });
@@ -1808,6 +1888,7 @@ fn provider_profile_views(
                 base_url: profile.base_url,
                 base_url_env: profile.base_url_env,
                 timeout_ms: profile.timeout_ms,
+                model_capabilities: profile.model_capabilities.clone(),
                 streaming: profile.streaming,
                 max_retries: profile.max_retries,
             })
@@ -1849,6 +1930,10 @@ fn apply_provider_profile(root: &mut Map<String, Value>, profile: &ProviderProfi
             Value::String(base_url_env.clone()),
         );
     }
+    provider.insert(
+        "modelCapabilities".into(),
+        serde_json::to_value(&profile.model_capabilities).expect("serializable capabilities"),
+    );
     provider.insert("streaming".into(), Value::Bool(profile.streaming));
     provider.insert(
         "timeoutMs".to_string(),
@@ -2582,8 +2667,7 @@ fn write_settings(cwd: &Path, value: &Value) -> Result<(), ApiError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(internal_error)?;
     }
-    let content = serde_json::to_string_pretty(value).map_err(internal_error)?;
-    fs::write(path, content).map_err(internal_error)
+    opencowork_runtime::write_json_atomic(&path, value).map_err(internal_error)
 }
 
 fn object_mut(value: &mut Value) -> &mut Map<String, Value> {

@@ -119,6 +119,11 @@ impl<'a> CliTurnRenderer<'a> {
 
     pub fn on_app_event(&mut self, event: &AppEvent) {
         match event {
+            AppEvent::RequestMetrics { .. }
+            | AppEvent::ContextCompacted { .. }
+            | AppEvent::ToolCallDelta { .. }
+            | AppEvent::AssistantReasoningDelta { .. }
+            | AppEvent::AssistantFinish { .. } => {}
             AppEvent::UserMessage { text, .. } => {
                 self.flush_markdown();
                 self.write_all(format!("\n[user] {text}\n").as_bytes());
@@ -171,6 +176,9 @@ impl<'a> CliTurnRenderer<'a> {
 impl RuntimeObserver for CliTurnRenderer<'_> {
     fn on_assistant_event(&mut self, event: &AssistantEvent) {
         match event {
+            AssistantEvent::ToolCallDelta { .. }
+            | AssistantEvent::ReasoningDelta { .. }
+            | AssistantEvent::Finish { .. } => {}
             AssistantEvent::TextDelta(text) => {
                 if let Some(rendered) = self.markdown_stream.push(&self.renderer, text) {
                     self.write_all(rendered.as_bytes());

@@ -47,9 +47,11 @@ Startup errors appear in a dialog. Logs: %LOCALAPPDATA%\OpenCowork\logs.
 The workspace holds project settings; session history and extracted memories use the normal OpenCowork config home.
 
 Full usage guide and known limitations:
-https://github.com/mypengpengli/OpenCowork/blob/ui-shell-session-naming-slash-polish/README.md
+https://github.com/mypengpengli/OpenCowork/blob/main/README.md
 '@ | Set-Content -LiteralPath (Join-Path $package 'README.md') -Encoding UTF8
     Copy-Item -LiteralPath (Join-Path $projectRoot 'third-party\windows-capture-LICENSE.txt') -Destination $package
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'third-party\portable-pty-LICENSE.txt') -Destination $package
+    [ordered]@{version=$version;baseCommit=(& git rev-parse HEAD);localChanges=[bool](& git status --porcelain);builtAt=(Get-Date).ToUniversalTime().ToString('o');target='windows-x64';profile=$Profile} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $package 'build-info.json') -Encoding UTF8
     $manifest = Get-ChildItem -LiteralPath $package -File | ForEach-Object { [ordered]@{name=$_.Name;bytes=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash} }
     $manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $package 'manifest.json') -Encoding UTF8
     $archive = "$package.zip"
