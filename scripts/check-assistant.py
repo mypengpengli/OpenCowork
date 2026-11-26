@@ -45,13 +45,20 @@ class Models(http.server.BaseHTTPRequestHandler):
                 assert url.startswith("data:image/png;base64,")
                 assert base64.b64decode(url.split(",", 1)[1]).startswith(b"\x89PNG")
                 content = next(part["text"] for part in content if part["type"] == "text")
-            self.generated.append(json.loads(content))
-            response = {
-                "choices": [{"index": 0, "message": {"role": "assistant", "content": json.dumps({
+            inputs = json.loads(content)
+            self.generated.append(inputs)
+            if "criteria" in inputs:
+                if payload["model"] == "other-vendor-decision":
+                    assert self.headers.get("Authorization") == "Bearer decision-test-key"
+                prediction = {"choice": "wait", "confidence": 0.91}
+            else:
+                prediction = {
                     "task": "项目权限核对", "evidence": "可见页面显示已有权限",
                     "missing": ["工号"], "choices": {"verify_existing": "查看已有权限", "wait": "等工号"},
                     "choice": "wait",
-                }, ensure_ascii=False)}, "finish_reason": "stop"}],
+                }
+            response = {
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": json.dumps(prediction, ensure_ascii=False)}, "finish_reason": "stop"}],
                 "usage": {"prompt_tokens": 101, "completion_tokens": 37},
             }
         else:
@@ -98,6 +105,10 @@ def run(shell, window):
         }), encoding="utf-8")
         store = local / "as-desktop"
         store.mkdir()
+        (store / "decision.json").write_text(json.dumps({
+            "endpoint": fake_url + "/v1beta/decisions", "model": "gemini-decision-1",
+            "apiKeyEnv": "", "auth": "bearer", "useForAnalysis": True,
+        }), encoding="utf-8")
         old_id, new_id = str(uuid.uuid4()), str(uuid.uuid4())
         now = int(time.time() * 1000)
         expired_id = str(uuid.uuid4())
@@ -144,6 +155,13 @@ def run(shell, window):
                 overview = api("/api/assistant")
                 assert not overview["enabled"]
                 assert overview["available"] == window
+                assert overview["decision"]["decisionProvider"]
+                assert "endpoint" not in overview["decision"]
+                migrated = json.loads((store / "decision.json").read_text(encoding="utf-8"))
+                assert "endpoint" not in migrated
+                native = next(p for p in api("/api/provider-profiles") if p["id"] == migrated["decisionProvider"])
+                assert native["apiFormat"] == "decisions" and not native["active"]
+                api("/api/provider-profiles/" + native["id"] + "/activate", {}, code=400)
                 assert all(item["id"] != expired_id for item in overview["observations"])
                 api("/api/assistant", headers={"Sec-Fetch-Site": "cross-site"}, code=403)
                 api("/api/assistant", headers={"Host": "not-local.test"}, code=403)
@@ -163,16 +181,35 @@ def run(shell, window):
                 result = api("/api/assistant/decision/test", method="POST")
                 assert result["choice"] == "wait" and result["inputTokens"] == 82
                 prediction = api("/api/assistant/observations/" + new_id + "/analyze", method="POST")
-                assert prediction["selector"] == "geminiDecisions" and prediction["choice"] == "verify_existing", prediction
+                assert prediction["selector"] == "decisionModel" and prediction["choice"] == "verify_existing", prediction
                 assert Models.generated[-1]["user_confirmed_outcomes"][0]["lesson"] == "重复申请先查已有权限"
                 assert "observe" in Models.decisions[-1] and "verify_existing" in Models.decisions[-1]
                 api("/api/assistant/decision", {**decision, "endpoint": fake_url + "/missing"})
                 assert "native Decisions" in api("/api/assistant/decision/test", method="POST", code=400)["error"]
                 prediction = api("/api/assistant/observations/" + new_id + "/analyze", method="POST")
                 assert prediction["selector"] == "chatFallback" and prediction["choice"] == "wait"
+                providers = api("/api/provider-profiles", {
+                    "label": "Other vendor decision", "name": "Other vendor",
+                    "model": "other-vendor-decision", "apiKey": "decision-test-key",
+                    "baseUrl": fake_url + "/v1", "apiFormat": "chatCompletions", "activate": False,
+                })
+                chosen = next(p for p in providers if p["model"] == "other-vendor-decision")
+                assert chosen["apiKey"] == "" and chosen["hasApiKey"] and not chosen["active"]
+                selection = {"decisionProvider": chosen["id"], "useForAnalysis": True}
+                api("/api/assistant/decision", selection)
+                result = api("/api/assistant/decision/test", method="POST")
+                assert result["choice"] == "wait" and result["confidence"] == 0.91
+                api("/api/provider-profiles/" + chosen["id"], method="DELETE")
+                api("/api/assistant/decision/test", method="POST", code=400)
+                prediction = api("/api/assistant/observations/" + new_id + "/analyze", method="POST")
+                assert prediction["selector"] == "chatFallback"
+                api("/api/assistant/decision", {"useForAnalysis": False})
+                before = len(Models.generated)
+                prediction = api("/api/assistant/observations/" + new_id + "/analyze", method="POST")
+                assert prediction["selector"] == "chat" and len(Models.generated) == before + 1
                 api("/api/assistant/observations/" + new_id, method="DELETE", code=204)
                 assert not api("/api/assistant")["predictions"]
-                print("PASS: native and relayed Decisions JSON, changing options, recalled lessons, fallback, deletion and local API access")
+                print("PASS: legacy migration, saved decision Providers, other-vendor chat decisions, optional main-model decisions, fallback, deletion and local API access")
                 if window:
                     api("/api/assistant/decision", {**decision, "useImages": True, "analyzeAutomatically": True})
                     capture_desktop(api)

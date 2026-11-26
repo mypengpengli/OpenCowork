@@ -8,7 +8,7 @@
 - 已接入静默预测、动态候选、跨会话事项归并、事后结果与经验纠正。可以修正归属、合并待办、标记等回复或办完，并反馈判断有误、临时例外或不必提示。办完后自动整理 Skill 草稿，采纳后写入工作区，后续预测可以参考。
 - 已接入托盘通知和授权执行。支持本次、5 分钟、长期同方案和显式开启全局自动执行。助手核对当前窗口、网站、控件、输入状态和结果。用户切窗、操作、撤销或暂停时停止后续操作。中断或结果未知的步骤保留记录，处理同一请求时先核对结果。
 - 三局通代发在已打开的会话中核对标题、空白输入区域和「发送」按钮，填入批准的正文并复读后点击发送，看到正文出现在聊天记录且输入框清空才报成功。代发使用独立事项和授权，全局自动代发有单独开关。当前支持纯文字和单行消息。
-- 图片使用内存预览，最多保留 30 秒。支持按应用设置允许、只传文字、仅本地记录或前台时跳过；启用限制时，只有可隔离的前台内容和来源明确且允许的衍生记录可上传。文字、视觉和 Skill 整理可以分别选已保存的 Provider。后台预测至少间隔 20 秒，滚动 24 小时上限默认 100 次，可调整。手动诊断、手动分析及 Skill 整理有独立入口。
+- 图片使用内存预览，最多保留 30 秒。支持按应用设置允许、只传文字、仅本地记录或前台时跳过；启用限制时，只有可隔离的前台内容和来源明确且允许的衍生记录可上传。文字、视觉、决策和 Skill 整理均从 Provider 管理中选择已保存的配置。后台预测至少间隔 20 秒，滚动 24 小时上限默认 100 次，可调整。
 - AS 显示近 24 小时保留样本的识别时延、分析时延、证据到预测时延、图片数、模型上报用量和用户反馈。事项显示办理历时和助手执行耗时，填写人工基准后可计算节省的时间。
 - 2026-11-26 用同一中转站复测 `deepseek-v4.1-flash`，文字、合成图片、关闭思考的结构化 JSON 请求均返回 HTTP 200，分别约 2.1、2.3 和 3.7 秒。AS 读取可用的 Windows 系统代理。测试密钥只注入临时进程。
 - `gemini-decision-1` 通过 Google 原生 [Decisions API](https://aistudio.google.com/api-reference/decisions/create-decision) 接入。2026-11-26 中转站升级到 `v1.0.0-rc.51` 并配置高级自定义路由后，使用 `POST https://apichat.jiazhuangai.com/v1/responses` 透传 Decisions JSON，得到 HTTP 200。缺少账号的样例返回 `wait`，置信度约 99.47%，客户端耗时约 1.16 秒。普通聊天模型可以独立生成并选择候选。
@@ -83,12 +83,14 @@
 4. **异步与中断。** 模拟网站已受理但响应丢失、执行中用户接管、主机重启。验证能找回执行记录、先查现状、报告已确认和未确认的步骤。
 5. **观察成本。** 用同一段可重复播放的屏幕操作分别测试两种采样频率，覆盖静止阅读、长滚动、中文小字及切换窗口。记录关键步骤漏读、端到端延迟 P50/P95、空闲 CPU、内存、每小时请求和用量。只在提示确实改善或漏读减少时承担更高的调用成本。
 
-### Gemini Decisions 接入
+### 决策模型配置
 
-可在「自主助手 → 预测与决策模型」直接填写 Google 原生接口。完整接口填 `https://generativelanguage.googleapis.com/v1beta/decisions`，模型填 `gemini-decision-1`，认证选 `x-goog-api-key`，密钥环境变量填 `GEMINI_API_KEY`。让桌面进程读取有该模型权限的 Google API Key 后，点「用模拟请求测试」。[Google Decisions 接口](https://aistudio.google.com/api-reference/decisions/create-decision)
+在「Provider 管理」中新建或编辑模型，统一保存模型名称、API Key 或密钥环境变量、接口地址和接口格式。普通模型使用「OpenAI 兼容，可用于对话或决策」，Base URL 填兼容接口根地址。选项式模型使用「Decisions 原生选项接口」，Base URL 填完整请求地址，并选择 Bearer、x-goog-api-key 或 x-api-key 认证。原生选项接口的 Provider 在自主助手中选择。
 
-当前中转配置已通过真实请求。AS 完整接口填写 `https://apichat.jiazhuangai.com/v1/responses`，模型填写 `gemini-decision-1`，认证选择 Bearer。密钥环境变量可以留空，以复用同一站点当前聊天 Provider 的密钥，也可以填写单独存放中转令牌的环境变量名。
+在「自主助手 → 预测与决策模型」勾选「使用独立决策模型选择当次候选」，然后选择已保存的 Provider。可以选择普通聊天模型，也可以选择原生决策模型。关闭时，由理解屏幕的主模型直接生成并选择候选。独立决策调用失败时使用主模型已有的建议。旧版在自主助手里保存的接口配置会自动迁入 Provider 管理。
 
-已通过 AS 程序自身的「用模拟请求测试」入口复测这条配置，返回 `wait`，置信度约 99.81%，客户端耗时约 1.04 秒，上报输入用量 134 tokens。隔离回归覆盖 Google 原生路径和中转路径的 Decisions JSON，检查模型、候选及请求字段得到保留。
+当前中转站已通过真实请求。新建 Provider 时，模型填写 `gemini-decision-1`，接口格式选择「Decisions 原生选项接口」，Base URL 填 `https://apichat.jiazhuangai.com/v1/responses`，认证选 Bearer，API Key 填中转令牌。直接连接 Google 时，完整地址为 `https://generativelanguage.googleapis.com/v1beta/decisions`，使用 x-goog-api-key 认证和 Google 密钥。[Google Decisions 接口](https://aistudio.google.com/api-reference/decisions/create-decision)
+
+已通过「Provider 管理保存 → 自主助手选择 → 用模拟请求测试」入口复测这条配置，返回 `wait`，置信度约 99.81%，客户端耗时约 1.14 秒，上报输入用量 134 tokens。隔离回归覆盖旧配置迁移、原生决策 Provider、其他厂商的 OpenAI 兼容模型、关闭独立决策后的主模型判断、失败回退和 Provider 删除。浏览器检查覆盖新建、编辑、选择和关闭独立决策模型。
 
 New API 高级自定义渠道的入口设置为 `/v1/responses`，上游为 `https://generativelanguage.googleapis.com/v1beta/decisions`，转换器为原生转发，开启渠道级请求体透传。路由认证设置为请求头 `x-goog-api-key`，值为 `{api_key}`，引用渠道内保存的 Google 密钥。AS 发往中转站的请求体仍然使用 Decisions 的 `model`、`input`、`questions`，Google 返回原生 `answers`。此前测试 `/v1/embeddings` 时，向量请求处理器丢掉了 `questions`，因此更换为支持完整请求体透传的 Responses 入口。 [New API Responses 请求处理](https://github.com/QuantumNous/new-api/blob/main/relay/responses_request.go) [高级自定义认证](https://github.com/QuantumNous/new-api/blob/main/relay/channel/advancedcustom/adaptor.go)

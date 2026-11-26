@@ -278,10 +278,12 @@ fn model_json_request(
             .as_deref()
             .and_then(|id| profiles.iter().find(|profile| profile.id == id))
             .or_else(|| profiles.first());
-        let saved = profiles
-            .iter()
-            .find(|profile| profile.id == provider_id)
-            .ok_or("The selected assistant Provider was removed. Choose another in settings.")?;
+        let saved = super::saved_provider_profile(cwd, provider_id)?;
+        if saved.api_format == super::assistant::decision::Protocol::Decisions {
+            return Err(
+                "Choose a chat-compatible Provider for text, vision, or Skill generation".into(),
+            );
+        }
         let mut profile = OpenAiCompatProfile::custom(
             saved.name.clone(),
             saved.api_key_env.clone(),

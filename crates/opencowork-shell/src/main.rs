@@ -210,6 +210,8 @@ struct ProviderProfileView {
     #[serde(default)]
     model_capabilities: opencowork_api::ModelCapabilities,
     active: bool,
+    api_format: assistant::decision::Protocol,
+    decision_auth: assistant::decision::Auth,
 }
 
 const fn default_streaming() -> bool {
@@ -239,6 +241,10 @@ struct ProviderProfileRecord {
     streaming: bool,
     #[serde(default)]
     model_capabilities: opencowork_api::ModelCapabilities,
+    #[serde(default)]
+    api_format: assistant::decision::Protocol,
+    #[serde(default)]
+    decision_auth: assistant::decision::Auth,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -358,6 +364,8 @@ struct ProviderProfileUpsertRequest {
     streaming: Option<bool>,
     model_capabilities: Option<opencowork_api::ModelCapabilities>,
     activate: bool,
+    api_format: Option<assistant::decision::Protocol>,
+    decision_auth: Option<assistant::decision::Auth>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1273,7 +1281,12 @@ async fn save_provider_profile(
         .unwrap_or_else(|| default_openai_profile_for_model(payload.model.trim()).api_key_env);
 
     let mut settings = read_settings(&state.cwd)?;
-    let (mut profiles, active_id) = read_provider_profiles(&settings);
+    let (mut profiles, mut active_id) = read_provider_profiles(&settings);
+    if profiles.is_empty() && payload.api_format == Some(assistant::decision::Protocol::Decisions) {
+        let primary = default_provider_profile_record(&load_config(&state)?);
+        active_id = Some(primary.id.clone());
+        profiles.push(primary);
+    }
     let requested_id = payload
         .id
         .as_deref()
@@ -1323,6 +1336,8 @@ async fn save_provider_profile(
             .max_retries
             .unwrap_or(DEFAULT_PROVIDER_MAX_RETRIES)
             .min(5),
+        api_format: payload.api_format.unwrap_or_default(),
+        decision_auth: payload.decision_auth.unwrap_or_default(),
     };
 
     if let Some(existing) = profiles.iter_mut().find(|profile| profile.id == next_id) {
@@ -1332,18 +1347,35 @@ async fn save_provider_profile(
             record.api_key = existing.api_key.clone();
         }
         record.streaming = payload.streaming.unwrap_or(existing.streaming);
+        record.api_format = payload.api_format.unwrap_or(existing.api_format);
+        record.decision_auth = payload.decision_auth.unwrap_or(existing.decision_auth);
+        if record.api_format == assistant::decision::Protocol::Decisions {
+            assistant::decision::validate_endpoint(&record.base_url)
+                .map_err(ApiError::bad_request)?;
+        }
         record.model_capabilities = payload
             .model_capabilities
             .unwrap_or_else(|| existing.model_capabilities.clone());
         *existing = record.clone();
     } else {
+        if record.api_format == assistant::decision::Protocol::Decisions {
+            assistant::decision::validate_endpoint(&record.base_url)
+                .map_err(ApiError::bad_request)?;
+        }
         if payload.clear_api_key.unwrap_or(false) {
             record.api_key.clear();
         }
         profiles.push(record.clone());
     }
 
-    let next_active = if payload.activate || profiles.len() == 1 {
+    if record.api_format == assistant::decision::Protocol::Decisions
+        && (payload.activate || active_id.as_deref() == Some(&next_id))
+    {
+        return Err(ApiError::bad_request("Select a chat Provider as active before configuring this profile as a native decision model"));
+    }
+    let next_active = if record.api_format == assistant::decision::Protocol::ChatCompletions
+        && (payload.activate || profiles.len() == 1)
+    {
         Some(next_id.clone())
     } else {
         active_id
@@ -1362,7 +1394,14 @@ async fn activate_provider_profile(
 ) -> Result<Json<Vec<ProviderProfileView>>, ApiError> {
     let mut settings = read_settings(&state.cwd)?;
     let (profiles, _) = read_provider_profiles(&settings);
-    if !profiles.iter().any(|profile| profile.id == id) {
+    let profile = profiles.iter().find(|profile| profile.id == id);
+    if profile.is_some_and(|profile| profile.api_format == assistant::decision::Protocol::Decisions)
+    {
+        return Err(ApiError::bad_request(
+            "A native decision Provider is selected in autonomous assistant settings",
+        ));
+    }
+    if profile.is_none() {
         return Err(ApiError::not_found(format!(
             "provider profile `{id}` was not found"
         )));
@@ -1388,7 +1427,10 @@ async fn delete_provider_profile(
         )));
     }
     let next_active = if active_id.as_deref() == Some(id.as_str()) {
-        profiles.first().map(|profile| profile.id.as_str())
+        profiles
+            .iter()
+            .find(|profile| profile.api_format == assistant::decision::Protocol::ChatCompletions)
+            .map(|profile| profile.id.as_str())
     } else {
         active_id.as_deref()
     };
@@ -1626,7 +1668,11 @@ fn apply_shell_api_key_override(cwd: &Path) -> Result<(), String> {
     let active_profile = active_id
         .as_deref()
         .and_then(|id| profiles.iter().find(|profile| profile.id == id))
-        .or_else(|| profiles.first());
+        .or_else(|| {
+            profiles.iter().find(|profile| {
+                profile.api_format == assistant::decision::Protocol::ChatCompletions
+            })
+        });
 
     if let Some(profile) = active_profile {
         // SAFETY: this local shell config bridges a stored API key into the env-var based runtime.
@@ -1903,6 +1949,8 @@ fn default_provider_profile_record(
         model_capabilities: provider.model_capabilities.clone(),
         streaming: provider.streaming,
         max_retries: provider.max_retries,
+        api_format: Default::default(),
+        decision_auth: Default::default(),
     }
 }
 
@@ -1927,6 +1975,21 @@ fn read_provider_profiles(settings: &Value) -> (Vec<ProviderProfileRecord>, Opti
     (profiles, active_id)
 }
 
+fn saved_provider_profile(cwd: &Path, id: &str) -> Result<ProviderProfileRecord, String> {
+    let settings = read_settings(cwd).map_err(|error| error.message)?;
+    let (profiles, _) = read_provider_profiles(&settings);
+    if profiles.is_empty() && id == "default-provider" {
+        let config = ConfigLoader::default_for(cwd)
+            .load()
+            .map_err(|error| error.to_string())?;
+        return Ok(default_provider_profile_record(&config));
+    }
+    profiles
+        .into_iter()
+        .find(|profile| profile.id == id)
+        .ok_or_else(|| "The selected Provider was removed. Choose another in settings.".into())
+}
+
 fn provider_profile_views(
     settings: &Value,
     fallback: &ProviderSettingsView,
@@ -1946,11 +2009,16 @@ fn provider_profile_views(
             model_capabilities: fallback.model_capabilities.clone(),
             streaming: fallback.streaming,
             max_retries: fallback.max_retries,
+            api_format: Default::default(),
+            decision_auth: Default::default(),
         });
         active_id = Some("default-provider".to_string());
     }
     if active_id.is_none() {
-        active_id = profiles.first().map(|profile| profile.id.clone());
+        active_id = profiles
+            .iter()
+            .find(|profile| profile.api_format == assistant::decision::Protocol::ChatCompletions)
+            .map(|profile| profile.id.clone());
     }
     let active_ref = active_id.as_deref();
     (
@@ -1971,6 +2039,8 @@ fn provider_profile_views(
                 model_capabilities: profile.model_capabilities.clone(),
                 streaming: profile.streaming,
                 max_retries: profile.max_retries,
+                api_format: profile.api_format,
+                decision_auth: profile.decision_auth,
             })
             .collect(),
         active_id,
@@ -2789,7 +2859,10 @@ fn ensure_shell_defaults(cwd: &Path) -> Result<(), ApiError> {
         active_id = Some(default_profile.id.clone());
         changed = true;
     } else if active_id.is_none() {
-        active_id = profiles.first().map(|profile| profile.id.clone());
+        active_id = profiles
+            .iter()
+            .find(|profile| profile.api_format == assistant::decision::Protocol::ChatCompletions)
+            .map(|profile| profile.id.clone());
         changed = true;
     }
 

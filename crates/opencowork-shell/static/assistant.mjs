@@ -22,16 +22,18 @@ export function initAssistant({ request, t }) {
   let rendered = ''
   let renderedLessons = ''
   const tr = (zh, en) => document.documentElement.lang.startsWith('en') ? en : zh
-  const providerFields = ['textProvider', 'visionProvider', 'skillProvider']
+  const providerFields = ['textProvider', 'visionProvider', 'skillProvider', 'decisionProvider']
 
   async function loadProviderOptions(settings) {
     const profiles = await request('/api/provider-profiles')
     for (const key of providerFields) {
       const select = form.elements.namedItem(key)
       const current = settings ? settings[key] : select.value
-      select.replaceChildren(new Option(tr('使用当前后台模型', 'Use current background model'), ''))
+      select.replaceChildren(new Option(key === 'decisionProvider'
+        ? tr('选择已保存的 Provider', 'Choose a saved Provider')
+        : tr('使用当前后台模型', 'Use current background model'), ''))
       for (const profile of profiles) {
-        if (profile.id === 'default-provider') continue
+        if (key !== 'decisionProvider' && (profile.id === 'default-provider' || profile.apiFormat === 'decisions')) continue
         select.append(new Option(`${profile.label} · ${profile.model}`, profile.id))
       }
       if (current && ![...select.options].some(option => option.value === current)) {
@@ -39,6 +41,14 @@ export function initAssistant({ request, t }) {
       }
       select.value = current ?? ''
     }
+    updateDecisionChoice()
+  }
+
+  function updateDecisionChoice() {
+    const enabled = form.elements.namedItem('useForAnalysis').checked
+    const select = form.elements.namedItem('decisionProvider')
+    select.disabled = !enabled
+    select.required = enabled
   }
 
   function render(data) {
@@ -253,6 +263,7 @@ export function initAssistant({ request, t }) {
           else if (key === 'appRules') field.value = Object.entries(value).map(([app, mode]) => `${app}=${mode}`).join('\n')
           else field.value = value
         }
+        updateDecisionChoice()
       }
       render(data)
     } catch (error) {
@@ -288,6 +299,7 @@ export function initAssistant({ request, t }) {
   async function configure(test) {
     if (!form.reportValidity()) return
     const body = Object.fromEntries([...new FormData(form)].map(([key, value]) => [key, value.trim()]))
+    body.decisionProvider = form.elements.namedItem('decisionProvider').value
     const appRules = Object.create(null)
     for (const line of body.appRules.split('\n').map(row => row.trim()).filter(Boolean)) {
       const [name, policy, ...extra] = line.split('=').map(value => value.trim())
@@ -323,6 +335,7 @@ export function initAssistant({ request, t }) {
   }
 
   form.addEventListener('submit', event => { event.preventDefault(); void configure(false) })
+  form.elements.namedItem('useForAnalysis').addEventListener('change', updateDecisionChoice)
   lookup('decision-test').addEventListener('click', () => void configure(true))
   document.addEventListener('visibilitychange', () => {
     if (visible && !document.hidden) void refresh()

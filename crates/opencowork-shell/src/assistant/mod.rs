@@ -1,6 +1,6 @@
 mod analysis;
 mod cases;
-mod decision;
+pub(super) mod decision;
 mod execution;
 #[cfg(windows)]
 mod reply;
@@ -174,9 +174,21 @@ impl Assistant {
         let path = home.join("as-desktop");
         let (mut log, mut error) =
             load_or_report::<Vec<Observation>>(&path.join("observations.json"));
-        let (decision, settings_error) = load_or_report(&path.join("decision.json"));
+        let (mut decision, settings_error) =
+            load_or_report::<decision::Settings>(&path.join("decision.json"));
         if error.is_none() {
             error = settings_error;
+        }
+        match decision.migrate_legacy(cwd) {
+            Ok(true) => {
+                if let Err(failure) = persist(&path.join("decision.json"), &decision) {
+                    error = Some(format!(
+                        "Could not save migrated decision settings: {failure}"
+                    ));
+                }
+            }
+            Ok(false) => {}
+            Err(failure) => error = Some(format!("Could not migrate decision Provider: {failure}")),
         }
         let (mut learning, learning_error) =
             load_or_report::<Learning>(&path.join("learning.json"));
@@ -973,11 +985,19 @@ pub(super) async fn forget(
 
 pub(super) async fn save_decision(
     Extension(assistant): Extension<Assistant>,
+    Extension(shell): Extension<ShellState>,
     headers: HeaderMap,
-    Json(settings): Json<decision::Settings>,
+    Json(mut settings): Json<decision::Settings>,
 ) -> Result<Json<decision::Settings>, ApiError> {
     same_origin(&headers)?;
+    settings
+        .migrate_legacy(&shell.cwd)
+        .map_err(ApiError::bad_request)?;
     settings.validate().map_err(ApiError::bad_request)?;
+    if settings.use_for_analysis {
+        super::saved_provider_profile(&shell.cwd, &settings.decision_provider)
+            .map_err(ApiError::bad_request)?;
+    }
     let mut data = assistant.data();
     persist(&assistant.path.join("decision.json"), &settings)
         .map_err(|error| ApiError::internal(error.to_string()))?;

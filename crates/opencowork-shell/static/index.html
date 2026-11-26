@@ -395,15 +395,9 @@
                 <label><span data-i18n="assistant.skillProvider">Skill 整理 Provider</span><select name="skillProvider"></select></label>
                 <label><span data-i18n="assistant.appRules">按应用设置上传范围</span><textarea name="appRules" rows="3" placeholder="wxworklocal.exe=localOnly"></textarea></label>
                 <p class="field-hint" data-i18n="assistant.appRulesHint">每行填写 程序.exe=allow、textOnly、localOnly 或 ignore。依次表示允许、只传文字、只在本地记录和前台时跳过采集。</p>
-                <label class="assistant-check"><input type="checkbox" name="useForAnalysis" /> <span data-i18n="assistant.useNative">用 Gemini Decisions 排序当次候选</span></label>
-                <label><span data-i18n="assistant.endpoint">完整接口地址</span><input name="endpoint" placeholder="https://…/v1beta/decisions" autocomplete="off" aria-describedby="assistant-endpoint-hint" required /></label>
-                <p id="assistant-endpoint-hint" class="field-hint" data-i18n="assistant.endpointHint">填写完整决策接口地址。中转站配置原生透传路由后，可填写其入口地址，例如 https://你的中转站/v1/responses。</p>
-                <label><span data-i18n="assistant.model">模型名</span><input name="model" autocomplete="off" maxlength="128" required /></label>
-                <label><span data-i18n="assistant.auth">认证方式</span>
-                  <select name="auth"><option value="googleKey">x-goog-api-key</option><option value="bearer">Bearer</option></select>
-                </label>
-                <label><span data-i18n="assistant.keyEnv">密钥环境变量名</span><input name="apiKeyEnv" autocomplete="off" maxlength="128" aria-describedby="assistant-key-hint" /></label>
-                <p id="assistant-key-hint" class="field-hint" data-i18n="assistant.keyHint">留空时，可复用同一站点的当前聊天密钥。</p>
+                <label class="assistant-check"><input type="checkbox" name="useForAnalysis" /> <span data-i18n="assistant.useNative">使用独立决策模型选择当次候选</span></label>
+                <label><span data-i18n="assistant.decisionProvider">决策模型 Provider</span><select name="decisionProvider"></select></label>
+                <p class="field-hint" data-i18n="assistant.decisionHint">从 Provider 管理中选择已保存的模型。关闭独立决策模型时，由主模型完成判断；接口、模型和密钥统一在新建或编辑 Provider 中配置。</p>
                 <div class="assistant-row">
                   <button class="primary-button" type="submit" data-i18n="assistant.save">保存</button>
                   <button class="ghost-button" type="button" id="assistant-decision-test" data-i18n="assistant.test">用模拟请求测试</button>
@@ -983,7 +977,22 @@
               data-i18n-placeholder="provider.modelPlaceholder"
               placeholder="claude-sonnet-4-5"
             />
-            <small class="field-hint" data-i18n="provider.modelHint">直接用于当前壳层发起的会话请求，不改后端主循环默认值。</small>
+            <small class="field-hint" data-i18n="provider.modelHint">填写服务商提供的模型标识，可在对话或自主助手中选择使用。</small>
+          </label>
+          <label>
+            <span data-i18n="provider.apiFormat">接口格式</span>
+            <select id="provider-api-format">
+              <option value="chatCompletions" data-i18n="provider.formatChat">OpenAI 兼容，可用于对话或决策</option>
+              <option value="decisions" data-i18n="provider.formatDecisions">Decisions 原生选项接口</option>
+            </select>
+          </label>
+          <label id="provider-decision-auth-row" class="is-hidden">
+            <span data-i18n="provider.decisionAuth">决策接口认证方式</span>
+            <select id="provider-decision-auth">
+              <option value="bearer">Bearer</option>
+              <option value="googleKey">x-goog-api-key</option>
+              <option value="apiKey">x-api-key</option>
+            </select>
           </label>
           <label>
             <span data-i18n="provider.label">Provider 标签</span>
@@ -1019,6 +1028,11 @@
             <span data-i18n="provider.apiKeyClear">保存时清空当前 API Key</span>
           </label>
           <label>
+            <span data-i18n="provider.apiKeyEnv">API Key 环境变量</span>
+            <input id="provider-api-key-env" type="text" autocomplete="off" maxlength="128" placeholder="OPENAI_API_KEY" />
+            <small class="field-hint" data-i18n="provider.apiKeyEnvHint">可直接保存 API Key，或填写运行环境中已有的密钥变量名。</small>
+          </label>
+          <label>
             <span data-i18n="field.baseUrl">Base URL</span>
             <input
               id="provider-base-url"
@@ -1027,7 +1041,7 @@
               data-i18n-placeholder="provider.baseUrlPlaceholder"
               placeholder="https://api.openai.com/v1"
             />
-            <small class="field-hint" data-i18n="provider.baseUrlHint">填写兼容接口根地址；如果走官方默认地址，可保留默认值。</small>
+            <small id="provider-base-url-hint" class="field-hint" data-i18n="provider.baseUrlHint">填写兼容接口根地址；如果走官方默认地址，可保留默认值。</small>
           </label>
           <label>
             <span data-i18n="provider.baseUrlEnv">Base URL 环境变量</span>

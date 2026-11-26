@@ -260,7 +260,7 @@ pub(super) fn predict(
             suggestion.choices.clone(),
         ) {
             Ok(ranked) => {
-                selector = "geminiDecisions".into();
+                selector = "decisionModel".into();
                 confidence = Some(ranked.confidence);
                 input_tokens = ranked.input_tokens;
                 choice = if ranked.confidence >= 0.55 {

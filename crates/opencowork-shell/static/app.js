@@ -308,6 +308,11 @@ const els = {
   providerProfileLabel: document.querySelector('#provider-profile-label'),
   providerModel: document.querySelector('#provider-model'),
   providerName: document.querySelector('#provider-name'),
+  providerApiFormat: document.querySelector('#provider-api-format'),
+  providerDecisionAuth: document.querySelector('#provider-decision-auth'),
+  providerDecisionAuthRow: document.querySelector('#provider-decision-auth-row'),
+  providerApiKeyEnv: document.querySelector('#provider-api-key-env'),
+  providerBaseUrlHint: document.querySelector('#provider-base-url-hint'),
   providerApiKey: document.querySelector('#provider-api-key'),
   providerApiKeyVisibilityButton: document.querySelector('#provider-api-key-visibility-button'),
   providerApiKeyStatus: document.querySelector('#provider-api-key-status'),
@@ -543,7 +548,16 @@ const MESSAGES = {
     'assistant.empty': '暂无记录',
     'assistant.decision': '预测与决策模型',
     'assistant.auto': '开启后台预测，使用聊天模型理解屏幕文字',
-    'assistant.useNative': '用 Gemini Decisions 排序当次候选',
+    'assistant.useNative': '使用独立决策模型选择当次候选',
+    'assistant.decisionProvider': '决策模型 Provider',
+    'assistant.decisionHint': '从 Provider 管理中选择已保存的模型。关闭独立决策模型时，由主模型完成判断；接口、模型和密钥统一在新建或编辑 Provider 中配置。',
+    'provider.apiFormat': '接口格式',
+    'provider.formatChat': 'OpenAI 兼容，可用于对话或决策',
+    'provider.formatDecisions': 'Decisions 原生选项接口',
+    'provider.decisionAuth': '决策接口认证方式',
+    'provider.apiKeyEnv': 'API Key 环境变量',
+    'provider.apiKeyEnvHint': '可直接保存 API Key，或填写运行环境中已有的密钥变量名。',
+    'provider.decisionUrlHint': '填写完整决策接口地址，包括路径，例如 https://你的中转站/v1/responses。',
     'assistant.useImages': '允许按需将当前窗口裁剪图发给支持图片的模型',
     'assistant.endpointHint': '填写完整决策接口地址。中转站配置原生透传路由后，可填写其入口地址，例如 https://你的中转站/v1/responses。',
     'assistant.dailyLimit': '后台预测每日上限',
@@ -565,8 +579,9 @@ const MESSAGES = {
     'assistant.missing': '缺少的信息',
     'assistant.options': '当时的候选',
     'assistant.selector.chat': '聊天模型',
-    'assistant.selector.chatFallback': 'Gemini 未返回有效结果，使用聊天模型建议',
-    'assistant.selector.geminiDecisions': 'Gemini Decisions',
+    'assistant.selector.chatFallback': '独立决策模型未返回有效结果，使用主模型建议',
+    'assistant.selector.geminiDecisions': '决策模型',
+    'assistant.selector.decisionModel': '决策模型',
     'assistant.lessons': '已确认经验',
     'assistant.addOutcome': '记录实际处理结果',
     'assistant.outcome': '你实际上怎么处理的？',
@@ -739,7 +754,7 @@ const MESSAGES = {
     'provider.apiKeyPlaceholder': 'sk-...',
     'provider.baseUrlPlaceholder': 'https://api.openai.com/v1',
     'provider.baseUrlEnvPlaceholder': 'OPENAI_BASE_URL',
-    'provider.modelHint': '直接用于当前壳层发起的会话请求，不改后端主循环默认值。',
+    'provider.modelHint': '填写服务商提供的模型标识，可在对话或自主助手中选择使用。',
     'provider.nameHint': '用来区分供应商或路由，不会改底层运行时结构。',
     'provider.apiKeyHint': '直接填入可用的 API Key；壳层会在请求前自动接到运行环境里。',
     'provider.baseUrlHint': '填写兼容接口根地址；如果走官方默认地址，可保留默认值。',
@@ -1219,7 +1234,16 @@ const MESSAGES = {
     'assistant.empty': 'No observations yet',
     'assistant.decision': 'Predictions and decision model',
     'assistant.auto': 'Use the chat model to predict next steps in the background',
-    'assistant.useNative': 'Rank current options with Gemini Decisions',
+    'assistant.useNative': 'Use a separate decision model to select the next action',
+    'assistant.decisionProvider': 'Decision model Provider',
+    'assistant.decisionHint': 'Choose a saved Provider. When disabled, the main model makes the decision. Configure endpoints, models, and credentials in the Provider editor.',
+    'provider.apiFormat': 'API format',
+    'provider.formatChat': 'OpenAI-compatible, for chat or decisions',
+    'provider.formatDecisions': 'Native Decisions options API',
+    'provider.decisionAuth': 'Decision API authentication',
+    'provider.apiKeyEnv': 'API Key environment variable',
+    'provider.apiKeyEnvHint': 'Save an API Key directly or enter the name of an existing key environment variable.',
+    'provider.decisionUrlHint': 'Enter the complete decision endpoint, including its path, such as https://your-relay/v1/responses.',
     'assistant.useImages': 'Allow the vision model to receive a crop of the current window when needed',
     'assistant.endpointHint': 'Enter the full Decisions endpoint. When your relay has a native passthrough route, enter its full URL, such as https://your-relay/v1/responses.',
     'assistant.dailyLimit': 'Daily background prediction limit',
@@ -1241,8 +1265,9 @@ const MESSAGES = {
     'assistant.missing': 'Missing information',
     'assistant.options': 'Options at the time',
     'assistant.selector.chat': 'Chat model',
-    'assistant.selector.chatFallback': 'Gemini response unavailable, using the chat model suggestion',
-    'assistant.selector.geminiDecisions': 'Gemini Decisions',
+    'assistant.selector.chatFallback': 'Decision model unavailable, using the main model suggestion',
+    'assistant.selector.geminiDecisions': 'Decision model',
+    'assistant.selector.decisionModel': 'Decision model',
     'assistant.lessons': 'Confirmed lessons',
     'assistant.addOutcome': 'Record what happened',
     'assistant.outcome': 'What did you do?',
@@ -1498,7 +1523,7 @@ const MESSAGES = {
     'provider.apiKeyPlaceholder': 'sk-...',
     'provider.baseUrlPlaceholder': 'https://api.openai.com/v1',
     'provider.baseUrlEnvPlaceholder': 'OPENAI_BASE_URL',
-    'provider.modelHint': 'Used by shell-issued chat requests without changing the backend loop default.',
+    'provider.modelHint': 'Enter the model ID supplied by the service. Select this Provider in chat or the autonomous assistant.',
     'provider.nameHint': 'Use it to distinguish vendors or routes without changing the runtime structure.',
     'provider.apiKeyHint': 'Paste the API key directly. The shell injects it into the runtime environment before requests.',
     'provider.baseUrlHint': 'Use the compatible API root. Keep the default if you rely on the standard host.',
@@ -3563,7 +3588,7 @@ function renderComposerSettings() {
   els.composerPermission.setAttribute('aria-label', t('field.permission'))
   els.composerPermission.title = permissionModeLabel(els.composerPermission.value)
   els.composerModel.setAttribute('aria-label', state.locale === 'zh' ? '选择模型' : 'Choose model')
-  const profiles = currentProviderProfiles()
+  const profiles = currentProviderProfiles().filter(profile => profile.apiFormat !== 'decisions')
   const options = profiles.map(profile => {
     const option = document.createElement('option')
     option.value = profile.id
@@ -4092,7 +4117,7 @@ function selectedProviderProfile() {
     const matched = profiles.find((profile) => profile.id === state.selectedProviderProfileId)
     if (matched) return matched
   }
-  return profiles.find((profile) => profile.active) || null
+  return null
 }
 
 function renderSidebarSessions() {
@@ -4877,6 +4902,9 @@ function renderProviderProfileEditor() {
   els.providerProfileLabel.value = source.label || ''
   els.providerModel.value = source.model || ''
   els.providerName.value = source.name || ''
+  els.providerApiFormat.value = source.apiFormat || 'chatCompletions'
+  els.providerDecisionAuth.value = source.decisionAuth || 'bearer'
+  els.providerApiKeyEnv.value = source.apiKeyEnv || runtimeProvider.apiKeyEnv || 'OPENAI_API_KEY'
   els.providerApiKey.value = ''
   els.providerBaseUrl.value = source.baseUrl || ''
   els.providerBaseUrlEnv.value = source.baseUrlEnv || ''
@@ -4890,6 +4918,7 @@ function renderProviderProfileEditor() {
   els.providerReasoningReplay.checked = Boolean(capabilities.requiresReasoningContent)
   els.providerMaxRetries.value = source.maxRetries ?? 2
   els.providerProfileActivate.checked = profile ? Boolean(profile.active) : true
+  renderProviderProtocol()
   if (els.providerClearApiKey) {
     els.providerClearApiKey.checked = false
   }
@@ -4945,7 +4974,8 @@ function renderProviderProfilesList() {
     activateButton.type = 'button'
     activateButton.className = 'ghost-button'
     activateButton.textContent = profile.active ? t('providerProfiles.active') : t('providerProfiles.activateButton')
-    activateButton.disabled = profile.active
+    activateButton.disabled = profile.active || profile.apiFormat === 'decisions'
+    if (profile.apiFormat === 'decisions') activateButton.textContent = t('assistant.selector.decisionModel')
     activateButton.addEventListener('click', async (event) => {
       event.stopPropagation()
       await activateProviderProfile(profile.id)
@@ -6382,13 +6412,16 @@ async function submitProvider(event) {
     return
   }
   try {
-    await request('/api/provider-profiles', {
+    const savedProfiles = await request('/api/provider-profiles', {
       method: 'POST',
       body: JSON.stringify({
         id: state.selectedProviderProfileId,
         label: els.providerProfileLabel.value.trim(),
         model: els.providerModel.value.trim(),
         name: els.providerName.value.trim(),
+        apiFormat: els.providerApiFormat.value,
+        decisionAuth: els.providerDecisionAuth.value,
+        apiKeyEnv: els.providerApiKeyEnv.value.trim(),
         apiKey: els.providerApiKey.value.trim() || null,
         clearApiKey: Boolean(els.providerClearApiKey?.checked),
         baseUrl: els.providerBaseUrl.value.trim(),
@@ -6406,16 +6439,15 @@ async function submitProvider(event) {
         activate: Boolean(els.providerProfileActivate.checked),
       }),
     })
-    await loadBootstrap({ allowAutoSelect: false })
-    const matchingProfile = (state.bootstrap.providerProfiles || []).find((profile) =>
+    const matchingProfile = savedProfiles.find((profile) =>
       profile.label === els.providerProfileLabel.value.trim()
       && profile.model === els.providerModel.value.trim()
       && profile.name === els.providerName.value.trim()
     )
     state.selectedProviderProfileId =
       matchingProfile?.id
-      || (els.providerProfileActivate.checked ? state.bootstrap.activeProviderProfileId : null)
       || state.selectedProviderProfileId
+    await loadBootstrap({ allowAutoSelect: false })
     renderProviderProfileEditor()
     renderProviderProfilesList()
     setDrawerStatus(t('providerProfiles.saved'))
@@ -6435,6 +6467,17 @@ function newProviderProfile() {
 function resetProvider() {
   renderProviderProfileEditor()
   setDrawerStatus(t('common.reset'))
+}
+
+function renderProviderProtocol() {
+  const native = els.providerApiFormat.value === 'decisions'
+  els.providerDecisionAuthRow.classList.toggle('is-hidden', !native)
+  els.providerProfileActivate.disabled = native
+  if (native) els.providerProfileActivate.checked = false
+  els.providerStreaming.disabled = native
+  const hint = native ? 'provider.decisionUrlHint' : 'provider.baseUrlHint'
+  els.providerBaseUrlHint.dataset.i18n = hint
+  els.providerBaseUrlHint.textContent = t(hint)
 }
 
 async function savePermissionMode() {
@@ -7066,6 +7109,7 @@ els.blockViewerCopyButton.addEventListener('click', async () => {
   }
 })
 els.providerForm.addEventListener('submit', submitProvider)
+els.providerApiFormat.addEventListener('change', renderProviderProtocol)
 els.resetProviderButton.addEventListener('click', resetProvider)
 els.deleteProviderProfileButton.addEventListener('click', deleteProviderProfile)
 els.newSkillButton.addEventListener('click', newSkill)
