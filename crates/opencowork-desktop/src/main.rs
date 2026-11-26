@@ -10,11 +10,24 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tao::dpi::LogicalSize;
 use tao::event::{Event, WindowEvent};
-use tao::event_loop::{ControlFlow, EventLoop};
+use tao::event_loop::ControlFlow;
 use tao::window::WindowBuilder;
 use wry::WebViewBuilder;
 
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[cfg(windows)]
+mod tray;
+
+enum DesktopEvent {
+    Show,
+    Pause,
+    Quit,
+    #[cfg(windows)]
+    Notice(tray::Notice),
+    #[cfg(windows)]
+    ShowAssistant,
+}
 
 fn main() {
     if let Err(error) = run() {
@@ -63,7 +76,7 @@ fn run() -> anyhow::Result<()> {
         return Err(error);
     }
 
-    let event_loop = EventLoop::new();
+    let event_loop = tao::event_loop::EventLoopBuilder::<DesktopEvent>::with_user_event().build();
     let window = WindowBuilder::new()
         .with_title("OpenCowork Desktop")
         .with_inner_size(LogicalSize::new(1480.0, 980.0))
@@ -77,16 +90,69 @@ fn run() -> anyhow::Result<()> {
         .build(&window)
         .context("failed to build desktop webview")?;
 
+    #[cfg(windows)]
+    let mut tray = tray::Tray::new(&window, event_loop.create_proxy()).ok();
+    #[cfg(windows)]
+    if tray.is_some() {
+        tray::watch_notices(&shell_url, event_loop.create_proxy());
+    }
+    #[cfg(not(windows))]
+    let mut tray: Option<()> = None;
+
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
-
-        if let Event::WindowEvent {
-            event: WindowEvent::CloseRequested,
-            ..
-        } = event
-        {
-            let _ = terminate_shell_process(&mut shell_child);
-            *control_flow = ControlFlow::Exit;
+        match event {
+            Event::UserEvent(DesktopEvent::Show) => {
+                window.set_visible(true);
+                window.set_minimized(false);
+                window.set_focus();
+            }
+            #[cfg(windows)]
+            Event::UserEvent(DesktopEvent::Notice(notice)) if !window.is_visible() => {
+                if let Some(tray) = &tray {
+                    tray.notify(notice);
+                }
+            }
+            #[cfg(windows)]
+            Event::UserEvent(DesktopEvent::ShowAssistant) => {
+                window.set_visible(true);
+                window.set_minimized(false);
+                window.set_focus();
+                let _ = _webview
+                    .evaluate_script("document.getElementById('nav-assistant-button')?.click()");
+            }
+            Event::UserEvent(DesktopEvent::Pause) => {
+                let url = format!("{shell_url}api/assistant/observation");
+                thread::spawn(move || {
+                    if let Ok(client) = Client::builder()
+                        .no_proxy()
+                        .timeout(Duration::from_secs(2))
+                        .build()
+                    {
+                        let _ = client
+                            .post(url)
+                            .header("Content-Type", "application/json")
+                            .body(r#"{"enabled":false}"#)
+                            .send();
+                    }
+                });
+            }
+            Event::WindowEvent {
+                event: WindowEvent::CloseRequested,
+                ..
+            } if tray.is_some() => {
+                window.set_visible(false);
+            }
+            Event::UserEvent(DesktopEvent::Quit)
+            | Event::WindowEvent {
+                event: WindowEvent::CloseRequested,
+                ..
+            } => {
+                drop(tray.take());
+                let _ = terminate_shell_process(&mut shell_child);
+                *control_flow = ControlFlow::Exit;
+            }
+            _ => {}
         }
     });
 }
@@ -112,6 +178,7 @@ fn spawn_shell_process(cwd: &Path, port: u16) -> anyhow::Result<Child> {
     command
         .current_dir(cwd)
         .env("OPENCOWORK_SHELL_PORT", port.to_string())
+        .env("OPENCOWORK_DESKTOP_PID", std::process::id().to_string())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::from(std::fs::File::create(

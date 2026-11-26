@@ -40,6 +40,10 @@ pub(super) fn spec() -> super::ToolSpec {
             "amount":{"type":"integer","minimum":-2400,"maximum":2400,"description":"Legacy vertical wheel delta; positive=up"},
             "secondaryAction":{"type":"string","enum":["Invoke","Toggle","Expand","Collapse","Select","ScrollIntoView","Scroll Up","Scroll Down","Scroll Left","Scroll Right"]},
             "includeScreenshot":{"type":"boolean","default":true},"includeText":{"type":"boolean","default":true},
+            "requireForeground":{"type":"boolean","description":"Keep focus with the user; reject input when the target is no longer foreground."},
+            "expectedInputStamp":{"type":"integer","minimum":0,"maximum":u32::MAX},
+            "fallbackToTyping":{"type":"boolean","description":"For set_value, allow replacing text in an identified Edit control after checking its focus."},
+            "automationView":{"type":"string","enum":["control","raw"],"default":"control"},
             "captureMode":{"type":"string","enum":["window","visible"]},"waitMs":{"type":"integer","minimum":0,"maximum":5000}
         },"required":["action"]}),
         required_permission: opencowork_runtime::PermissionMode::WorkspaceWrite,
@@ -83,6 +87,7 @@ fn validate(input: &Value) -> Result<(), ToolError> {
         ("waitMs", 0, 5000),
         ("clickCount", 1, 3),
         ("elementIndex", 0, 199),
+        ("expectedInputStamp", 0, i64::from(u32::MAX)),
     ] {
         if let Some(value) = input.get(name) {
             if !value.as_i64().is_some_and(|v| (min..=max).contains(&v)) {

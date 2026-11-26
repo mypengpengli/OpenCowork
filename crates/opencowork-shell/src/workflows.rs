@@ -234,23 +234,104 @@ pub(super) fn model_json(
     instruction: &str,
     value: Value,
 ) -> Result<(Value, u64), String> {
+    model_json_request(cwd, instruction, value, Vec::new(), None, "")
+}
+
+pub(super) fn model_json_with_images(
+    cwd: &Path,
+    instruction: &str,
+    value: Value,
+    image_urls: Vec<String>,
+    provider_id: &str,
+) -> Result<(Value, u64), String> {
+    let timeout = if image_urls.is_empty() {
+        60_000
+    } else {
+        75_000
+    };
+    model_json_request(
+        cwd,
+        instruction,
+        value,
+        image_urls,
+        Some(timeout),
+        provider_id,
+    )
+}
+
+fn model_json_request(
+    cwd: &Path,
+    instruction: &str,
+    value: Value,
+    image_urls: Vec<String>,
+    timeout: Option<u64>,
+    provider_id: &str,
+) -> Result<(Value, u64), String> {
     use opencowork_api::*;
-    let (model, profile) = super::provider_diagnostics::profile(cwd, true)?;
-    let mut provider = OpenAiCompatClient::from_profile(profile)?;
-    let result = provider.execute(ProviderRequest {
+    let (model, mut profile, key) = if provider_id.is_empty() {
+        let (model, profile) = super::provider_diagnostics::profile(cwd, true)?;
+        (model, profile, None)
+    } else {
+        let settings = super::read_settings(cwd).map_err(|error| error.message)?;
+        let (profiles, active) = super::read_provider_profiles(&settings);
+        let primary = active
+            .as_deref()
+            .and_then(|id| profiles.iter().find(|profile| profile.id == id))
+            .or_else(|| profiles.first());
+        let saved = profiles
+            .iter()
+            .find(|profile| profile.id == provider_id)
+            .ok_or("The selected assistant Provider was removed. Choose another in settings.")?;
+        let mut profile = OpenAiCompatProfile::custom(
+            saved.name.clone(),
+            saved.api_key_env.clone(),
+            saved.base_url.clone(),
+            saved.base_url_env.clone(),
+        )
+        .with_streaming(saved.streaming);
+        profile.capabilities = saved.model_capabilities.clone();
+        let key = (!saved.api_key.trim().is_empty()).then(|| saved.api_key.clone());
+        if key.is_none()
+            && primary.is_some_and(|primary| {
+                primary.id != saved.id
+                    && !primary.api_key.trim().is_empty()
+                    && primary.api_key_env == saved.api_key_env
+            })
+        {
+            return Err(
+                "Give the selected assistant Provider its own key or key environment variable"
+                    .into(),
+            );
+        }
+        (saved.model.clone(), profile, key)
+    };
+    if let Some(timeout) = timeout {
+        profile = profile.with_timeout_ms(timeout).with_max_retries(0);
+    }
+    let deepseek_json = timeout.is_some() && model.to_ascii_lowercase().contains("deepseek");
+    let mut provider = match key {
+        Some(key) => OpenAiCompatClient::from_profile_with_key(profile, key)?,
+        None => OpenAiCompatClient::from_profile(profile)?,
+    };
+    let request = ProviderRequest {
         model: model.into(),
-        max_output_tokens: Some(768),
+        max_output_tokens: Some(if deepseek_json { 1536 } else { 768 }),
         system_prompt: vec![instruction.into()],
         messages: vec![InputMessage {
             reasoning: Default::default(),
             role: "user".into(),
             content: Some(value.to_string()),
-            image_urls: vec![],
+            image_urls,
             tool_calls: vec![],
             tool_call_id: None,
         }],
         tools: vec![],
-    })?;
+    };
+    let result = if deepseek_json {
+        provider.execute_deepseek_json(request)?
+    } else {
+        provider.execute(request)?
+    };
     let text = result
         .events
         .iter()
@@ -262,6 +343,19 @@ pub(super) fn model_json(
             }
         })
         .collect::<String>();
+    if text.trim().is_empty() {
+        let reason = result
+            .events
+            .iter()
+            .find_map(|event| match event {
+                ProviderEvent::Finish { reason } => Some(reason.as_str()),
+                _ => None,
+            })
+            .unwrap_or("unknown");
+        return Err(format!(
+            "Model returned no final JSON (finish reason: {reason})"
+        ));
+    }
     let tokens = result
         .events
         .iter()

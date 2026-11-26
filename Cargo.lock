@@ -1967,6 +1967,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "winreg",
 ]
 
 [[package]]
@@ -2013,7 +2014,9 @@ version = "0.6.0"
 dependencies = [
  "anyhow",
  "reqwest",
+ "serde",
  "tao",
+ "windows 0.62.2",
  "wry",
 ]
 
@@ -2073,6 +2076,7 @@ version = "0.6.0"
 dependencies = [
  "anyhow",
  "axum",
+ "base64",
  "chrono",
  "chrono-tz",
  "futures-core",
@@ -2091,6 +2095,7 @@ dependencies = [
  "tokio",
  "uuid",
  "walkdir",
+ "windows 0.62.2",
 ]
 
 [[package]]

@@ -1,4 +1,5 @@
 import { initSetup } from '/setup.mjs'
+import { initAssistant } from '/assistant.mjs'
 import { renderMarkdown } from '/markdown.mjs'
 import { initHistorySearch } from '/history-search.mjs'
 import { readChatStream, appendChatEvent } from '/chat-stream.mjs'
@@ -528,6 +529,68 @@ const MESSAGES = {
     'sidebar.empty': '还没有已保存的会话。',
     'menu.chat': '对话',
     'menu.history': '会话',
+    'menu.assistant': '自主助手',
+    'assistant.intro': '从你打开的消息、附件和网页中观察工作过程。',
+    'assistant.observation': '屏幕观察',
+    'assistant.start': '开始观察',
+    'assistant.pause': '暂停观察',
+    'assistant.rate': '本地采样',
+    'assistant.second': '每秒',
+    'assistant.half': '每半秒',
+    'assistant.preview': '屏幕预览',
+    'assistant.observations': '近期观察',
+    'assistant.retention': '最近的文字记录保留最多 30 天。',
+    'assistant.empty': '暂无记录',
+    'assistant.decision': '预测与决策模型',
+    'assistant.auto': '开启后台预测，使用聊天模型理解屏幕文字',
+    'assistant.useNative': '用 Gemini Decisions 排序当次候选',
+    'assistant.useImages': '允许按需将当前窗口裁剪图发给支持图片的模型',
+    'assistant.endpointHint': '填写完整决策接口地址。中转站配置原生透传路由后，可填写其入口地址，例如 https://你的中转站/v1/responses。',
+    'assistant.dailyLimit': '后台预测每日上限',
+    'assistant.textProvider': '文字分析 Provider',
+    'assistant.visionProvider': '图片分析 Provider',
+    'assistant.skillProvider': 'Skill 整理 Provider',
+    'assistant.appRules': '按应用设置上传范围',
+    'assistant.appRulesHint': '每行填写 程序.exe=allow、textOnly、localOnly 或 ignore。依次表示允许、只传文字、只在本地记录和前台时跳过采集。',
+    'assistant.notifications': '主窗口收起时，通知我可办理的事项和执行结果',
+    'assistant.autoRun': '允许自动执行已就绪的方案，无需逐笔授权',
+    'assistant.autoReplies': '允许自动代发已就绪的三局通文字回复，无需逐笔授权',
+    'assistant.analyze': '预测这一步',
+    'assistant.analyzeImage': '用截图预测',
+    'assistant.usedImage': '已使用当前窗口截图',
+    'assistant.analyzing': '正在预测…',
+    'assistant.budget': '滚动 24 小时内还可自动预测 {{remaining}} 次。',
+    'assistant.suggested': '建议下一步',
+    'assistant.basis': '依据',
+    'assistant.missing': '缺少的信息',
+    'assistant.options': '当时的候选',
+    'assistant.selector.chat': '聊天模型',
+    'assistant.selector.chatFallback': 'Gemini 未返回有效结果，使用聊天模型建议',
+    'assistant.selector.geminiDecisions': 'Gemini Decisions',
+    'assistant.lessons': '已确认经验',
+    'assistant.addOutcome': '记录实际处理结果',
+    'assistant.outcome': '你实际上怎么处理的？',
+    'assistant.lesson': '这次学到什么？例如，这次是临时代班。',
+    'assistant.endpoint': '完整接口地址',
+    'assistant.model': '模型名',
+    'assistant.auth': '认证方式',
+    'assistant.keyEnv': '密钥环境变量名',
+    'assistant.keyHint': '留空时，可复用同一站点的当前聊天密钥。',
+    'assistant.save': '保存',
+    'assistant.test': '用模拟请求测试',
+    'assistant.saved': '已保存',
+    'assistant.testing': '正在测试接口…',
+    'assistant.testResult': '返回选项 {{choice}}，置信度 {{confidence}}，耗时 {{latency}} 毫秒。',
+    'assistant.unavailable': '请从 Windows 桌面版开启屏幕观察。',
+    'assistant.ocr': 'OCR 语言 {{language}}',
+    'assistant.forget': '删除记录',
+    'assistant.phase.paused': '已暂停',
+    'assistant.phase.starting': '正在启动',
+    'assistant.phase.observing': '观察中',
+    'assistant.phase.waiting': '等待切换到工作窗口',
+    'assistant.phase.locked': '锁屏期间暂停',
+    'assistant.phase.error': '无法启动',
+    'assistant.phase.captureError': '暂时无法读取屏幕',
     'menu.settings': '设置',
     'locale.switchToEnglish': 'English',
     'locale.switchToChinese': '中文',
@@ -584,19 +647,6 @@ const MESSAGES = {
     'activity.prompt': '提示词预算',
     'activity.compacted': '是否压缩',
     'activity.events': '事件数',
-    'dial.title': '工具仪表',
-    'dial.motion': '转轮动效',
-    'dial.motion.pause': '暂停转轮动效',
-    'dial.motion.play': '开启转轮动效',
-    'dial.calls': '本轮调用',
-    'dial.telemetry': '本轮统计',
-    'dial.trace': '最近 24 次',
-    'dial.done': '成功',
-    'dial.pending': '待返回',
-    'dial.failed': '失败',
-    'dial.breakdown': '工具分布',
-    'dial.scale': '工具刻度',
-    'dial.history': '最近调用',
     'activity.empty': '当前还没有活动事件。',
     'composer.placeholder': '描述任务，或输入 / 查看快捷操作…',
     'composer.ready': '就绪。',
@@ -1155,6 +1205,68 @@ const MESSAGES = {
     'sidebar.empty': 'No saved sessions yet.',
     'menu.chat': 'Chat',
     'menu.history': 'Sessions',
+    'menu.assistant': 'Assistant',
+    'assistant.intro': 'Observe your work as you open messages, attachments and webpages.',
+    'assistant.observation': 'Screen observation',
+    'assistant.start': 'Start observing',
+    'assistant.pause': 'Pause observation',
+    'assistant.rate': 'Local sampling',
+    'assistant.second': 'Every second',
+    'assistant.half': 'Every half second',
+    'assistant.preview': 'Screen preview',
+    'assistant.observations': 'Recent observations',
+    'assistant.retention': 'Recent text observations are kept for up to 30 days.',
+    'assistant.empty': 'No observations yet',
+    'assistant.decision': 'Predictions and decision model',
+    'assistant.auto': 'Use the chat model to predict next steps in the background',
+    'assistant.useNative': 'Rank current options with Gemini Decisions',
+    'assistant.useImages': 'Allow the vision model to receive a crop of the current window when needed',
+    'assistant.endpointHint': 'Enter the full Decisions endpoint. When your relay has a native passthrough route, enter its full URL, such as https://your-relay/v1/responses.',
+    'assistant.dailyLimit': 'Daily background prediction limit',
+    'assistant.textProvider': 'Text analysis Provider',
+    'assistant.visionProvider': 'Vision analysis Provider',
+    'assistant.skillProvider': 'Skill drafting Provider',
+    'assistant.appRules': 'Upload rules by application',
+    'assistant.appRulesHint': 'Enter one executable.exe=allow, textOnly, localOnly, or ignore rule per line. Ignore skips capture when the app is in front.',
+    'assistant.notifications': 'Notify me about ready cases and results while the window is hidden',
+    'assistant.autoRun': 'Allow execution of ready plans without approving each case',
+    'assistant.autoReplies': 'Allow sending ready Sanjutong replies without approving each one',
+    'assistant.analyze': 'Predict next step',
+    'assistant.analyzeImage': 'Predict from screenshot',
+    'assistant.usedImage': 'Used a screenshot of the current window',
+    'assistant.analyzing': 'Analyzing…',
+    'assistant.budget': '{{remaining}} automatic predictions remaining in the rolling 24-hour window.',
+    'assistant.suggested': 'Suggested next step',
+    'assistant.basis': 'Evidence',
+    'assistant.missing': 'Missing information',
+    'assistant.options': 'Options at the time',
+    'assistant.selector.chat': 'Chat model',
+    'assistant.selector.chatFallback': 'Gemini response unavailable, using the chat model suggestion',
+    'assistant.selector.geminiDecisions': 'Gemini Decisions',
+    'assistant.lessons': 'Confirmed lessons',
+    'assistant.addOutcome': 'Record what happened',
+    'assistant.outcome': 'What did you do?',
+    'assistant.lesson': 'What should the assistant remember? Include exceptions if relevant.',
+    'assistant.endpoint': 'Full endpoint URL',
+    'assistant.model': 'Model name',
+    'assistant.auth': 'Authentication',
+    'assistant.keyEnv': 'API key environment variable',
+    'assistant.keyHint': 'Leave blank to reuse the active chat key on the same origin.',
+    'assistant.save': 'Save',
+    'assistant.test': 'Test with a sample request',
+    'assistant.saved': 'Saved',
+    'assistant.testing': 'Testing the endpoint…',
+    'assistant.testResult': 'Selected {{choice}} with {{confidence}} confidence in {{latency}} ms.',
+    'assistant.unavailable': 'Start the Windows desktop app to observe your screen.',
+    'assistant.ocr': 'OCR language {{language}}',
+    'assistant.forget': 'Delete observation',
+    'assistant.phase.paused': 'Paused',
+    'assistant.phase.starting': 'Starting',
+    'assistant.phase.observing': 'Observing',
+    'assistant.phase.waiting': 'Waiting for a work window',
+    'assistant.phase.locked': 'Paused while locked',
+    'assistant.phase.error': 'Unable to start',
+    'assistant.phase.captureError': 'Screen temporarily unavailable',
     'menu.settings': 'Settings',
     'locale.switchToEnglish': 'English',
     'locale.switchToChinese': '中文',
@@ -1211,19 +1323,6 @@ const MESSAGES = {
     'activity.prompt': 'Prompt Budget',
     'activity.compacted': 'Compacted',
     'activity.events': 'Events',
-    'dial.title': 'Tool instrument',
-    'dial.motion': 'Wheel animation',
-    'dial.motion.pause': 'Pause wheel animation',
-    'dial.motion.play': 'Enable wheel animation',
-    'dial.calls': 'Calls this turn',
-    'dial.telemetry': 'Turn statistics',
-    'dial.trace': 'Latest 24 calls',
-    'dial.done': 'Succeeded',
-    'dial.pending': 'Pending',
-    'dial.failed': 'Failed',
-    'dial.breakdown': 'Tool breakdown',
-    'dial.scale': 'Tool scale',
-    'dial.history': 'Recent calls',
     'activity.empty': 'No turn activity yet.',
     'composer.placeholder': 'Describe a task, or type / for shortcuts…',
     'composer.ready': 'Ready.',
@@ -3115,12 +3214,14 @@ function eventBody(event) {
 }
 
 // RENDER
+const assistantView = initAssistant({ request, t })
 function setView(view) {
-  if (!['chat', 'history', 'settings'].includes(view)) return
+  if (!['chat', 'history', 'settings', 'assistant'].includes(view)) return
   state.currentView = view
   els.chatView.classList.toggle('is-hidden', view !== 'chat')
   els.historyView.classList.toggle('is-hidden', view !== 'history')
   els.settingsView.classList.toggle('is-hidden', view !== 'settings')
+  assistantView.show(view === 'assistant')
   els.navButtons.forEach((button) => {
     button.classList.toggle('is-active', button.dataset.view === view)
   })
@@ -4167,389 +4268,8 @@ function renderTurnStats() {
     state.turnStats.compacted === null ? '-' : state.turnStats.compacted ? t('common.yes') : t('common.no')
 }
 
-const dialSectors = [
-  { zh: '读取', en: 'Read', color: '#147e9c', tools: ['read', 'read_file'] },
-  { zh: '搜索', en: 'Find', color: '#997129', tools: ['glob_search', 'grep_search', 'glob', 'grep', 'toolsearch'] },
-  { zh: '编辑', en: 'Edit', color: '#a54c29', tools: ['edit', 'edit_file', 'write', 'write_file', 'apply_patch'] },
-  { zh: '终端', en: 'Shell', color: '#62589a', tools: ['bash', 'shell', 'run_command'] },
-  { zh: '交互', en: 'Control', color: '#2f775b', tools: ['browser', 'computer'] },
-  { zh: '其他', en: 'Other', color: '#63707e', tools: [] },
-]
-const dialPanel = document.querySelector('#tool-dial')
-const dialButton = document.querySelector('#tool-dial-toggle')
-const dialFace = dialPanel.querySelector('.dial-face')
-const dialWheel = dialFace.querySelector('.dial-wheel')
-const dialLock = dialFace.querySelector('.dial-lock')
-const dialLockAngle = 83
-const dialMotionToggle = document.querySelector('#dial-motion-toggle')
-const dialMotionQuery = matchMedia('(prefers-reduced-motion: reduce)')
-let dialMotionPreference = localStorage.getItem('opencowork-dial-motion')
-// Each colored arc shares its start and end angles with the engraved tool sector.
-dialWheel.style.setProperty('--sector-band', 'conic-gradient(from -30deg, ' +
-  dialSectors.map((sector, index) => {
-    const start = index * 360 / dialSectors.length
-    const end = (index + 1) * 360 / dialSectors.length
-    return `${sector.color} ${start}deg ${end - 1}deg, transparent ${end - 1}deg ${end}deg`
-  }).join(', ') + ')')
-// The scale moves with the rotor. Engraved values sit inside the outer tick ring.
-for (let degrees = 0; degrees < 360; degrees += 15) {
-  const angle = degrees * Math.PI / 180
-  const mark = document.createElement('span')
-  mark.className = 'dial-degree'
-  mark.setAttribute('aria-hidden', 'true')
-  mark.textContent = String(degrees).padStart(3, '0') + '°'
-  mark.style.setProperty('--slot-x', Math.sin(angle).toFixed(6))
-  mark.style.setProperty('--slot-y', (-Math.cos(angle)).toFixed(6))
-  dialWheel.append(mark)
-}
-const dialLabels = dialSectors.map((sector, index) => {
-  const angle = index * 2 * Math.PI / dialSectors.length
-  const label = document.createElement('div')
-  label.className = 'dial-sector'
-  label.style.setProperty('--slot-x', Math.sin(angle).toFixed(6))
-  label.style.setProperty('--slot-y', (-Math.cos(angle)).toFixed(6))
-  label.style.setProperty('--sector-color', sector.color)
-  const name = document.createElement('b')
-  const count = document.createElement('small')
-  const age = document.createElement('time')
-  const trend = document.createElement('div')
-  const targets = document.createElement('ol')
-  trend.className = 'dial-sector-trend'
-  trend.setAttribute('aria-hidden', 'true')
-  label.append(name, count, age, trend, targets)
-  dialWheel.append(label)
-  return { label, name, count, age, trend, targets }
-})
-const dialTrace = dialPanel.querySelector('.dial-trace')
-const dialBreakdown = dialPanel.querySelector('.dial-breakdown')
-const dialBreakdownItems = dialSectors.map(sector => {
-  const row = document.createElement('div')
-  row.style.setProperty('--sector-color', sector.color)
-  row.append(document.createElement('dt'), document.createElement('dd'))
-  dialBreakdown.append(row)
-  return row
-})
-const dialHistory = dialPanel.querySelector('.dial-history')
-const dialHistoryList = dialHistory.querySelector('ul')
-const dialPreference = localStorage.getItem('opencowork-tool-dial')
-dialPanel.hidden = dialPreference === null ? !matchMedia('(min-width: 1000px)').matches : dialPreference !== 'open'
-let dialCallKey = ''
-let dialRenderKey = ''
-let dialFeedback = []
-let dialRotation
-let dialPlaybackScope = ''
-let dialPlaybackId = ''
-let dialPlaybackTimer
-let dialHoldUntil = 0
-const dialReceived = new Map()
-const dialQueue = []
-const dialTiming = { turn: 480, hold: 780, sameTool: 220 }
-
-function dialMotionEnabled() {
-  return dialMotionPreference === null ? !dialMotionQuery.matches : dialMotionPreference === 'on'
-}
-
-function rotateDial(sector, live) {
-  const angle = parseFloat(getComputedStyle(dialFace).getPropertyValue('--dial-angle'))
-  dialRotation?.cancel()
-  dialRotation = null
-  const start = Number.isFinite(angle) ? angle % 360 : dialLockAngle
-  const slotAngle = Math.max(0, sector) * 360 / dialSectors.length
-  const target = dialLockAngle - slotAngle
-  dialFace.style.setProperty('--dial-angle', target + 'deg')
-  dialWheel.style.setProperty('--dial-sector-start', (slotAngle - 29.5) + 'deg')
-  if (!dialMotionEnabled()) return
-  if (sector < 0) {
-    dialRotation = dialFace.animate([
-      { '--dial-angle': start + 'deg' },
-      { '--dial-angle': (start + 360) + 'deg' },
-    ], { duration: 180000, iterations: Infinity })
-  } else if (live) {
-    const travel = ((target - start) % 360 + 540) % 360 - 180
-    const sameTool = Math.abs(travel) < 18
-    const end = start + travel
-    const contact = end + (sameTool ? -3 : Math.sign(travel) * 1.8)
-    dialRotation = dialFace.animate([
-      { '--dial-angle': start + 'deg', easing: 'cubic-bezier(.38,.04,.18,1)' },
-      { '--dial-angle': contact + 'deg', offset: .72 },
-      { '--dial-angle': contact + 'deg', offset: .83, easing: 'ease-out' },
-      { '--dial-angle': end + 'deg' },
-    ], { duration: sameTool ? dialTiming.sameTool : dialTiming.turn })
-  }
-}
-
-function syncDialMotion() {
-  const enabled = dialMotionEnabled()
-  const label = t(enabled ? 'dial.motion.pause' : 'dial.motion.play')
-  dialMotionToggle.textContent = enabled ? 'Ⅱ' : '▶'
-  dialMotionToggle.setAttribute('aria-label', t('dial.motion'))
-  dialMotionToggle.setAttribute('aria-pressed', String(enabled))
-  dialMotionToggle.title = label
-}
-
-function resetDialMotion() {
-  clearTimeout(dialPlaybackTimer)
-  clearTimeout(dialAgeTimer)
-  dialRotation?.cancel()
-  dialRotation = null
-  for (const animation of dialFeedback) animation.cancel()
-  dialRenderKey = ''
-  renderToolDial(buildVisibleMessages())
-}
-
-let dialAgeTimer
-function updateDialAges() {
-  clearTimeout(dialAgeTimer)
-  if (document.hidden || dialPanel.hidden || !dialPanel.getClientRects().length) return
-  const now = performance.now()
-  let nextTick = Infinity
-  for (const { age } of dialLabels) {
-    if (age.hidden) continue
-    const elapsed = now - Number(age.dataset.received)
-    const seconds = Math.floor(elapsed / 1000)
-    age.textContent = seconds < 60 ? '−' + seconds + 's' : '−' + Math.floor(seconds / 60) + 'm'
-    const period = seconds < 60 ? 1000 : 60000
-    nextTick = Math.min(nextTick, period - elapsed % period)
-  }
-  if (Number.isFinite(nextTick)) dialAgeTimer = setTimeout(updateDialAges, Math.ceil(nextTick))
-}
-
-function clearDialPlayback() {
-  clearTimeout(dialPlaybackTimer)
-  dialQueue.length = 0
-  dialReceived.clear()
-  dialPlaybackId = ''
-  dialHoldUntil = 0
-}
-
-dialMotionToggle.addEventListener('click', () => {
-  dialMotionPreference = dialMotionEnabled() ? 'off' : 'on'
-  localStorage.setItem('opencowork-dial-motion', dialMotionPreference)
-  resetDialMotion()
-})
-dialMotionQuery.addEventListener('change', () => {
-  if (dialMotionPreference === null) resetDialMotion()
-})
-
-function dialSectorIndex(name) {
-  const index = dialSectors.findIndex(sector => sector.tools.includes(String(name).toLowerCase()))
-  return index >= 0 ? index : dialSectors.length - 1
-}
-
-function dialToolTarget(call) {
-  const input = structuredBlockValue(call?.input)
-  const value = ['path', 'file', 'pattern', 'query', 'command', 'url', 'action'].map(field => input?.[field])
-    .find(field => typeof field === 'string' && field.trim())
-  return value ? inlineSummaryText(value, 140) : ''
-}
-
-function renderToolDial(messages) {
-  const zh = state.locale === 'zh'
-  dialButton.setAttribute('aria-label', t('dial.title'))
-  dialButton.title = dialPanel.hidden
-    ? (zh ? '展开工具仪表' : 'Show tool instrument')
-    : (zh ? '收起工具仪表' : 'Hide tool instrument')
-  dialButton.setAttribute('aria-expanded', String(!dialPanel.hidden))
-  if (dialPanel.hidden || document.hidden) return
-  syncDialMotion()
-
-  // Read the current turn from the same transcript used by the work log.
-  const results = new Map()
-  const calls = []
-  let turnIndex = -1
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i]
-    if (message.role === 'user' && message.blocks?.some(block => block.type === 'text')) {
-      turnIndex = i
-      break
-    }
-    const blocks = message.blocks || []
-    for (let j = blocks.length - 1; j >= 0; j--) {
-      const block = blocks[j]
-      if (block.type === 'tool_result') results.set(getValue(block, 'tool_use_id', 'toolUseId'), block)
-      if (block.type === 'tool_use') calls.push(block)
-    }
-  }
-  const phaseOf = (call) => {
-    const result = results.get(call.id)
-    if (result) return getValue(result, 'is_error', 'isError') ? 'error' : 'done'
-    return state.pendingTurn ? 'running' : 'unknown'
-  }
-  const scope = JSON.stringify([state.currentSessionId, turnIndex])
-  if (scope !== dialPlaybackScope) {
-    clearDialPlayback()
-    dialPlaybackScope = scope
-  }
-  const now = performance.now()
-  for (const item of [...calls].reverse()) {
-    if (dialReceived.has(item.id)) continue
-    const live = state.pendingTurn || state.lastEvents.some(event => event.type === 'tool_call' && event.id === item.id)
-    dialReceived.set(item.id, live ? now : null)
-    if (live) dialQueue.push(item.id)
-  }
-  if (!dialMotionEnabled()) {
-    dialQueue.length = 0
-    dialPlaybackId = calls[0]?.id || ''
-  } else if (dialQueue.length && now >= dialHoldUntil) {
-    dialPlaybackId = dialQueue.shift()
-    dialHoldUntil = now + dialTiming.turn + dialTiming.hold
-  }
-  clearTimeout(dialPlaybackTimer)
-  if (dialQueue.length) {
-    dialPlaybackTimer = setTimeout(() => {
-      dialRenderKey = ''
-      renderToolDial(buildVisibleMessages())
-    }, Math.max(0, dialHoldUntil - now))
-  }
-  const call = calls.find(item => item.id === dialPlaybackId) || calls[0]
-  dialPanel.dataset.queued = String(dialQueue.length)
-  dialPanel.dataset.playbackId = call?.id || ''
-  const phaseCounts = { done: 0, running: 0, error: 0, unknown: 0 }
-  for (const item of calls) phaseCounts[phaseOf(item)]++
-  const sector = call ? dialSectorIndex(call.name) : -1
-  const key = call ? JSON.stringify([state.currentSessionId, call.id, call.name]) : ''
-  const phase = call ? phaseOf(call) : 'idle'
-  const visibleCalls = calls.slice(0, 5)
-  const traceCalls = calls.slice(0, 24).reverse()
-  const renderKey = JSON.stringify([state.locale, key, phase, calls.length,
-    traceCalls.map(item => [item.id, phaseOf(item)]), phaseCounts])
-  if (renderKey === dialRenderKey) return
-  dialRenderKey = renderKey
-  const changedCall = key !== dialCallKey
-  const changedResult = phase !== dialPanel.dataset.phase && (phase === 'done' || phase === 'error')
-  const live = Boolean(call && (state.pendingTurn ||
-    state.lastEvents.some(event => event.type === 'tool_call' && event.id === call.id)))
-  if (changedCall || (sector < 0 && !dialRotation)) {
-    rotateDial(sector, live && changedCall)
-    dialCallKey = key
-  }
-  // A fast result may arrive in the same render as its call. Show its result once.
-  if (live && (changedCall || changedResult) && dialMotionEnabled()) {
-    for (const animation of dialFeedback) animation.cancel()
-    const [impactRing, signal] = dialLock.children
-    const impact = phase === 'error' ? 1.65 : phase === 'done' ? 1.18 : .82
-    const signalFrames = phase === 'error'
-      ? [{ translate: '10% 0', opacity: 1 }, { translate: '34% 0' }, { translate: '17% 0', opacity: 0 }]
-      : [{ translate: '0 0', opacity: 1 }, { translate: '660% 0', opacity: 0 }]
-    const delay = dialRotation?.playState === 'running'
-      ? Math.max(0, dialRotation.effect.getComputedTiming().endTime * .72 - (dialRotation.currentTime ?? 0))
-      : 0
-    dialFeedback = [
-      dialWheel.animate([
-        { translate: '0 0' }, { translate: '2px 0', offset: .18 },
-        { translate: '-1px 0', offset: .52 }, { translate: '0 0' },
-      ], { delay, duration: 135, easing: 'ease-out' }),
-      impactRing.animate([
-        { transform: 'scale(.55)', opacity: .9 },
-        { transform: `scale(${impact})`, opacity: .66, offset: .38 },
-        { transform: `scale(${impact + .42})`, opacity: 0 },
-      ], { delay, duration: phase === 'error' ? 420 : 280, easing: 'ease-out' }),
-      signal.animate(signalFrames, { delay, duration: phase === 'error' ? 160 : 240, easing: 'ease-out' }),
-    ]
-  }
-  const sectorCounts = Array(dialSectors.length).fill(0)
-  const playedBySector = dialSectors.map(() => [])
-  const playedIndex = calls.indexOf(call)
-  for (const [position, item] of calls.entries()) {
-    const index = dialSectorIndex(item.name)
-    sectorCounts[index]++
-    if (position >= playedIndex) playedBySector[index].push(item)
-  }
-  dialBreakdown.setAttribute('aria-label', t(call ? 'dial.breakdown' : 'dial.scale'))
-  dialLabels.forEach((slot, i) => {
-    const name = dialSectors[i][state.locale]
-    const count = sectorCounts[i]
-    const breakdownItem = dialBreakdownItems[i]
-    const recent = playedBySector[i]
-    const latest = recent[0]
-    slot.name.textContent = latest?.name || name
-    slot.count.textContent = '×' + recent.length
-    slot.trend.replaceChildren(...recent.slice(0, 12).reverse().map(item => {
-      const bar = document.createElement('i')
-      bar.dataset.phase = phaseOf(item)
-      return bar
-    }))
-    const visibleTargets = recent.slice(0, 4).reverse()
-    slot.targets.start = recent.length - visibleTargets.length + 1
-    slot.targets.replaceChildren(...visibleTargets.map(item => {
-      const entry = document.createElement('li')
-      entry.textContent = dialToolTarget(item) || item.name
-      entry.title = entry.textContent
-      return entry
-    }))
-    const received = dialReceived.get(latest?.id)
-    slot.age.hidden = received == null
-    slot.age.dataset.received = received ?? ''
-    slot.age.title = zh ? '距收到调用的时间' : 'Time since the call arrived'
-    slot.label.dataset.phase = latest ? phaseOf(latest) : 'idle'
-    slot.label.title = latest?.name || name
-    slot.label.classList.toggle('selected', i === sector)
-    breakdownItem.firstElementChild.textContent = name
-    breakdownItem.lastElementChild.textContent = call ? String(count) : (i * 360 / dialSectors.length) + '°'
-    breakdownItem.style.setProperty('--dial-share', (count * 100 / (calls.length || 1)) + '%')
-  })
-  updateDialAges()
-  const status = {
-    idle: zh ? '等待工具调用' : 'Waiting for a tool call',
-    error: zh ? '执行失败' : 'Failed',
-    done: zh ? '已完成' : 'Completed',
-    running: zh ? '等待结果' : 'Awaiting result',
-    unknown: zh ? '未记录结果' : 'No recorded result',
-  }
-  dialPanel.dataset.phase = phase
-  dialPanel.style.setProperty('--dial-ink', dialSectors[sector]?.color || '#63707e')
-  document.querySelector('#dial-count').textContent = String(calls.length).padStart(2, '0')
-  document.querySelector('#dial-done-count').textContent = phaseCounts.done
-  document.querySelector('#dial-pending-count').textContent = phaseCounts.running
-  document.querySelector('#dial-error-count').textContent = phaseCounts.error
-  document.querySelector('#dial-tool-name').textContent = call?.name || (zh ? '待命' : 'Standby')
-  document.querySelector('#dial-status').textContent = status[phase]
-  const target = dialToolTarget(call)
-  const targetLine = document.querySelector('#dial-target')
-  targetLine.textContent = target
-  targetLine.title = targetLine.textContent
-  targetLine.hidden = !targetLine.textContent
-  dialTrace.replaceChildren(...traceCalls.map(item => {
-    const bar = document.createElement('i')
-    bar.style.setProperty('--trace-ink', dialSectors[dialSectorIndex(item.name)].color)
-    bar.dataset.phase = phaseOf(item)
-    return bar
-  }))
-  dialHistory.hidden = !visibleCalls.length
-  dialHistoryList.replaceChildren(...visibleCalls.map(item => {
-    const row = document.createElement('li')
-    row.style.setProperty('--row-ink', dialSectors[dialSectorIndex(item.name)].color)
-    const name = document.createElement('span')
-    name.textContent = item.name
-    name.title = item.name
-    const result = document.createElement('span')
-    result.dataset.phase = phaseOf(item)
-    result.textContent = status[result.dataset.phase]
-    row.append(name, result)
-    return row
-  }))
-}
-dialButton.addEventListener('click', () => {
-  dialPanel.hidden = !dialPanel.hidden
-  localStorage.setItem('opencowork-tool-dial', dialPanel.hidden ? 'closed' : 'open')
-  resetDialMotion()
-})
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden) {
-    clearTimeout(dialPlaybackTimer)
-    clearTimeout(dialAgeTimer)
-    dialRotation?.pause()
-    for (const animation of dialFeedback) animation.cancel()
-  } else if (!dialPanel.hidden) {
-    if (dialRotation?.playState === 'paused') dialRotation.play()
-    dialRenderKey = ''
-    renderToolDial(buildVisibleMessages())
-  }
-})
-
 function renderMessages() {
   const messages = buildVisibleMessages()
-  renderToolDial(messages)
   const processIndexes = processMessageIndexes(messages)
   const groups = processMessageGroups(messages, processIndexes)
   const groupStarts = new Map(groups.map(group => [group.start, group]))

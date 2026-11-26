@@ -59,7 +59,7 @@ try {
         if ($null -ne $request.elementIndex) {
             $cached=@($observed.elements | Where-Object {$_.index -eq $request.elementIndex})
             if ($cached.Count -ne 1) {throw 'stale_element: Index was not in the observation'}
-            $tree=Read-Elements ([IntPtr]$window.id) $window.x $window.y
+            $tree=Read-Elements ([IntPtr]$window.id) $window.x $window.y $request.automationView
             $found=@($tree.rows | Where-Object {$_.runtimeId -eq $cached[0].runtimeId -and $_.name -ceq $cached[0].name -and $_.role -eq $cached[0].role})
             if ($found.Count -ne 1) {throw 'stale_element: Control changed; observe again'}
             foreach ($field in @('left','top','width','height')) {if ($found[0].$field -ne $cached[0].$field) {throw 'stale_element: Control moved; observe again'}}
@@ -67,7 +67,9 @@ try {
             if (-not $element.Current.IsEnabled -or $element.Current.IsPassword) {throw 'element_unavailable: Control is disabled or protected'}
         }
         if ($action -in @('set_value','secondary_action') -and -not $element) {throw 'element_required: Use an observed elementIndex'}
-        if (-not [CoworkDesktop]::Focus([IntPtr]$window.id)) {throw 'foreground_not_target: Windows refused activation; observe again'}
+        if ($request.requireForeground) {
+            if ([CoworkDesktop]::GetForegroundWindow().ToInt64() -ne $window.id) {throw 'foreground_not_target: User switched windows'}
+        } elseif (-not [CoworkDesktop]::Focus([IntPtr]$window.id)) {throw 'foreground_not_target: Windows refused activation; observe again'}
         $activated=Window-Object ([CoworkDesktop]::Describe([IntPtr]$window.id))
         foreach ($field in @('x','y','width','height')) {if ($activated[$field] -ne $window[$field]) {throw 'stale_state: Activation changed window geometry; observe again'}}
         if ($action -in @('type','key')) {
@@ -76,6 +78,12 @@ try {
         }
         # Consume before input: a partial/failed action must not be replayed.
         [IO.File]::WriteAllText($request.statePath,'{}')
+        if ($request.requireForeground) {
+            if ([CoworkDesktop]::GetForegroundWindow().ToInt64() -ne $window.id -or
+                ($null -ne $request.expectedInputStamp -and [CoworkDesktop]::LastInputStamp() -ne [uint32]$request.expectedInputStamp)) {
+                throw 'user_took_control: Input or window changed before dispatch'
+            }
+        }
     }
     if ($action -in @('activate_window','focus')) {if (-not [CoworkDesktop]::Focus([IntPtr]$window.id)) {throw 'foreground_not_target: Windows refused activation'}}
     if ($action -eq 'wait') {$ms=500;if ($null -ne $request.waitMs) {$ms=[int]$request.waitMs};if ($ms -lt 0 -or $ms -gt 5000) {throw 'waitMs must be 0..5000'};Start-Sleep -Milliseconds $ms}
@@ -102,8 +110,20 @@ try {
     if ($action -eq 'key') {[CoworkDesktop]::Key([string]$request.key)}
     if ($action -eq 'set_value') {
         $value=Pattern $element ([System.Windows.Automation.ValuePattern]::Pattern)
-        if (-not $value -or $value.Current.IsReadOnly) {throw 'unsupported_pattern: No writable ValuePattern; click, observe focus, and type instead'}
-        $value.SetValue([string]$request.text)
+        if ($value -and (-not $value.Current.IsReadOnly)) {
+            $value.SetValue([string]$request.text)
+        } elseif ($request.fallbackToTyping -and $request.requireForeground -and $element.Current.ControlType -eq [System.Windows.Automation.ControlType]::Edit) {
+            $element.SetFocus()
+            $confirmed=Focus-Identity
+            $targetKey=($element.GetRuntimeId() -join '.')
+            if ($confirmed.password -or $confirmed.key -ne $targetKey -or [CoworkDesktop]::GetForegroundWindow().ToInt64() -ne $window.id) {
+                throw 'focus_changed: Could not verify the approved text field'
+            }
+            [CoworkDesktop]::Key('Control_L+a')
+            [CoworkDesktop]::TypeText([string]$request.text)
+        } else {
+            throw 'unsupported_pattern: No writable ValuePattern; click, observe focus, and type instead'
+        }
     }
     if ($action -eq 'secondary_action') {
         $p=$null
@@ -131,6 +151,7 @@ try {
         }
         if (-not $p) {throw 'unsupported_pattern: Observe supported actions again'}
     }
+    if ($mutating -and $request.requireForeground) {$result.lastInputStamp=[CoworkDesktop]::LastInputStamp()}
     if ($window -or $action -in @('snapshot','screenshot')) {
         # A failed observation also invalidates the previously cached state.
         if ($request.statePath) {[IO.File]::WriteAllText($request.statePath,'{}')}
@@ -144,7 +165,7 @@ try {
             $result.stateId=$stateId;$result.capturedAt=[DateTime]::UtcNow.ToString('o')
             if ($window -and [CoworkDesktop]::GetForegroundWindow().ToInt64() -eq $window.id) {$result.focusKey=(Focus-Identity).key}
             if ($request.includeText -ne $false -and $action -ne 'screenshot' -and $handle -ne [IntPtr]::Zero) {
-                $tree=Read-Elements $handle $originX $originY;$result.elements=$tree.rows;$result.truncated=$tree.truncated
+                $tree=Read-Elements $handle $originX $originY $request.automationView;$result.elements=$tree.rows;$result.truncated=$tree.truncated
                 $focused=@($tree.rows | Where-Object {$_.focused}) | Select-Object -First 1
                 if ($focused) {$result.focusedRuntimeId=$focused.runtimeId;$result.focusedElement=$focused}
                 $result.selectedElements=@($tree.rows | Where-Object {$_.selected})

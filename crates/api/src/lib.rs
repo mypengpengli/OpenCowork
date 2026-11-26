@@ -1,6 +1,73 @@
 mod openai_compat;
 mod request_permit;
 
+/// Create an HTTP client for configured providers. Windows desktop installs can use
+/// the user's manually configured system proxy even when the process has no proxy variables.
+pub fn provider_http_client_builder() -> reqwest::blocking::ClientBuilder {
+    let builder = reqwest::blocking::Client::builder();
+    #[cfg(windows)]
+    if !["HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY"]
+        .iter()
+        .any(|name| std::env::var(name).is_ok_and(|value| !value.trim().is_empty()))
+    {
+        use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+        let settings = (|| -> Option<_> {
+            let settings = RegKey::predef(HKEY_CURRENT_USER)
+                .open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Internet Settings")
+                .ok()?;
+            if settings.get_value::<u32, _>("ProxyEnable").ok()? == 0 {
+                return None;
+            }
+            let address: String = settings.get_value("ProxyServer").ok()?;
+            let address = if address.contains('=') {
+                address
+                    .split(';')
+                    .find_map(|item| item.trim().strip_prefix("https="))?
+            } else {
+                address.trim()
+            };
+            let bypass: String = settings.get_value("ProxyOverride").unwrap_or_default();
+            let endpoint = if address.contains("://") {
+                address.to_owned()
+            } else {
+                format!("http://{address}")
+            };
+            let endpoint = reqwest::Url::parse(&endpoint).ok()?;
+            if !matches!(endpoint.scheme(), "http" | "https") {
+                return None;
+            }
+            Some((endpoint, bypass))
+        })();
+        if let Some((endpoint, bypass)) = settings {
+            let bypass = bypass
+                .split(';')
+                .map(str::trim)
+                .map(str::to_ascii_lowercase)
+                .collect::<Vec<_>>();
+            let env_bypass = reqwest::NoProxy::from_env();
+            return builder.proxy(
+                reqwest::Proxy::custom(move |url| {
+                    let host = url.host_str()?.to_ascii_lowercase();
+                    let excluded = matches!(host.as_str(), "localhost" | "127.0.0.1" | "[::1]")
+                        || host
+                            .parse::<std::net::IpAddr>()
+                            .is_ok_and(|address| address.is_loopback())
+                        || bypass.iter().any(|pattern| {
+                            pattern == &host
+                                || pattern == "<local>" && !host.contains('.')
+                                || pattern
+                                    .strip_prefix('*')
+                                    .is_some_and(|suffix| host.ends_with(suffix))
+                        });
+                    (url.scheme() == "https" && !excluded).then(|| endpoint.clone())
+                })
+                .no_proxy(env_bypass),
+            );
+        }
+    }
+    builder
+}
+
 pub use openai_compat::{
     default_openai_profile_for_model, OpenAiCompatClient, OpenAiCompatProfile,
     DEFAULT_OPENAI_BASE_URL, DEFAULT_PROVIDER_MAX_RETRIES, DEFAULT_XAI_BASE_URL,

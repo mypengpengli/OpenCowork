@@ -127,15 +127,22 @@ pub struct OpenAiCompatClient {
 
 impl OpenAiCompatClient {
     pub fn from_profile(profile: OpenAiCompatProfile) -> Result<Self, String> {
-        profile.capabilities.validate()?;
         let api_key =
             std::env::var(&profile.api_key_env).map_err(|_| missing_api_key_message(&profile))?;
+        Self::from_profile_with_key(profile, api_key)
+    }
+
+    pub fn from_profile_with_key(
+        profile: OpenAiCompatProfile,
+        api_key: String,
+    ) -> Result<Self, String> {
+        profile.capabilities.validate()?;
         if api_key.trim().is_empty() {
             return Err(missing_api_key_message(&profile));
         }
 
         Ok(Self {
-            http: Client::builder()
+            http: crate::provider_http_client_builder()
                 .timeout(Duration::from_millis(profile.timeout_ms))
                 .build()
                 .map_err(|error| error.to_string())?,
@@ -144,7 +151,12 @@ impl OpenAiCompatClient {
         })
     }
 
-    fn send(&self, request: &ProviderRequest, stream: bool) -> Result<Response, String> {
+    fn send(
+        &self,
+        request: &ProviderRequest,
+        stream: bool,
+        deepseek_json: bool,
+    ) -> Result<Response, String> {
         let mut body = build_chat_completion_request(request, stream);
         if self.profile.capabilities.supports_images == Some(false)
             && request.messages.iter().any(|m| !m.image_urls.is_empty())
@@ -172,6 +184,13 @@ impl OpenAiCompatClient {
         }
         if let Some(effort) = &self.profile.reasoning_effort {
             body["reasoning_effort"] = effort.clone().into();
+        }
+        if deepseek_json {
+            body["thinking"] = json!({"type":"disabled"});
+            body["response_format"] = json!({"type":"json_object"});
+            body.as_object_mut()
+                .expect("completion request is an object")
+                .remove("reasoning_effort");
         }
         let attempts = self.profile.max_retries.saturating_add(1);
         for attempt in 0..attempts {
@@ -225,6 +244,31 @@ impl OpenAiCompatClient {
             "{}/chat/completions",
             self.profile.resolved_base_url().trim_end_matches('/')
         )
+    }
+
+    pub fn execute_deepseek_json(
+        &mut self,
+        request: ProviderRequest,
+    ) -> Result<ProviderResponse, String> {
+        self.complete(request, true)
+    }
+
+    fn complete(
+        &mut self,
+        request: ProviderRequest,
+        deepseek_json: bool,
+    ) -> Result<ProviderResponse, String> {
+        let _permit = crate::request_permit::RequestPermit::acquire(
+            &self.profile.resolved_base_url(),
+            self.profile
+                .capabilities
+                .max_concurrent_requests
+                .unwrap_or(64),
+            self.profile.timeout_ms,
+        )?;
+        let response = self.send(&request, false, deepseek_json)?;
+        let payload = read_success_payload(response, &self.profile)?;
+        normalize_chat_completion_payload(&payload)
     }
 }
 
@@ -282,17 +326,7 @@ impl ProviderClient for OpenAiCompatClient {
         ))
     }
     fn execute(&mut self, request: ProviderRequest) -> Result<ProviderResponse, String> {
-        let _permit = crate::request_permit::RequestPermit::acquire(
-            &self.profile.resolved_base_url(),
-            self.profile
-                .capabilities
-                .max_concurrent_requests
-                .unwrap_or(64),
-            self.profile.timeout_ms,
-        )?;
-        let response = self.send(&request, false)?;
-        let payload = read_success_payload(response, &self.profile)?;
-        normalize_chat_completion_payload(&payload)
+        self.complete(request, false)
     }
 
     fn stream_execute(&mut self, request: ProviderRequest) -> Result<Vec<ProviderEvent>, String> {
@@ -319,7 +353,7 @@ impl ProviderClient for OpenAiCompatClient {
                 .unwrap_or(64),
             self.profile.timeout_ms,
         )?;
-        let response = self.send(&request, true)?;
+        let response = self.send(&request, true, false)?;
         read_stream_events(response, &self.profile, on_event)
     }
 }
@@ -1055,7 +1089,7 @@ mod tests {
         let (base_url, server) = start_http_sequence(vec![504, 503, 200]);
         let client = mock_client(base_url, 2);
         let response = client
-            .send(&test_request(), false)
+            .send(&test_request(), false, false)
             .expect("eventual success");
         assert_eq!(response.status().as_u16(), 200);
         assert_eq!(server.join().expect("server complete"), 3);
@@ -1066,7 +1100,7 @@ mod tests {
         let (base_url, server) = start_http_sequence(vec![504, 504, 504]);
         let client = mock_client(base_url, 2);
         let error = client
-            .send(&test_request(), false)
+            .send(&test_request(), false, false)
             .expect_err("retry exhaustion");
         assert!(error.contains("HTTP 504"));
         assert!(error.contains("after 3 attempts"));
@@ -1077,7 +1111,9 @@ mod tests {
     fn does_not_retry_non_transient_http_errors() {
         let (base_url, server) = start_http_sequence(vec![400]);
         let client = mock_client(base_url, 2);
-        let response = client.send(&test_request(), false).expect("raw response");
+        let response = client
+            .send(&test_request(), false, false)
+            .expect("raw response");
         assert_eq!(response.status().as_u16(), 400);
         assert_eq!(server.join().expect("server complete"), 1);
     }

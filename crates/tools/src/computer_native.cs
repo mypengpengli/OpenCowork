@@ -15,6 +15,8 @@ public static class CoworkDesktop {
     [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
     private delegate bool EnumCallback(IntPtr window, IntPtr parameter);
     [DllImport("user32.dll")] private static extern bool EnumWindows(EnumCallback callback, IntPtr parameter);
+    [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr parent, EnumCallback callback, IntPtr parameter);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetClassName(IntPtr window, StringBuilder name, int count);
     [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr window);
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr window);
     [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr window);
@@ -45,9 +47,26 @@ public static class CoworkDesktop {
         EnumWindows((window, parameter) => { if(IsWindowVisible(window)) { try { var info=Describe(window); if(info.MainWindowTitle.Length>0) result.Add(info); } catch {} } return true; },IntPtr.Zero);
         return result.ToArray();
     }
+    public static IntPtr[] BrowserRenderers(IntPtr parent) {
+        var result = new List<IntPtr>();
+        EnumChildWindows(parent, (child, parameter) => {
+            var name = new StringBuilder(96);
+            if (IsWindowVisible(child) && GetClassName(child, name, name.Capacity)>0 &&
+                name.ToString()=="Chrome_RenderWidgetHostHWND") result.Add(child);
+            return result.Count<8;
+        }, IntPtr.Zero);
+        return result.ToArray();
+    }
     public static bool OwnsPoint(IntPtr window,int x,int y) { return GetAncestor(WindowFromPoint(new POINT{X=x,Y=y}),2)==window; }
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [StructLayout(LayoutKind.Sequential)] private struct LASTINPUT { public uint Size; public uint Time; }
+    [DllImport("user32.dll")] private static extern bool GetLastInputInfo(ref LASTINPUT input);
+    public static uint LastInputStamp() {
+        var input = new LASTINPUT { Size = (uint)Marshal.SizeOf(typeof(LASTINPUT)) };
+        if (!GetLastInputInfo(ref input)) throw new InvalidOperationException("Could not verify desktop input");
+        return input.Time;
+    }
     [StructLayout(LayoutKind.Sequential)] private struct GUIINFO {public uint Size,Flags;public IntPtr Active,Focus,Capture,MenuOwner,MoveSize,Caret;public RECT CaretRect;}
     [DllImport("user32.dll")] private static extern bool GetGUIThreadInfo(uint thread, ref GUIINFO info);
     public static long FocusHandle() {uint ignored;var thread=GetWindowThreadProcessId(GetForegroundWindow(),out ignored);var info=new GUIINFO{Size=(uint)Marshal.SizeOf(typeof(GUIINFO))};return GetGUIThreadInfo(thread,ref info)?info.Focus.ToInt64():0;}

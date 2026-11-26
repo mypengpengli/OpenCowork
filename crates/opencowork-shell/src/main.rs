@@ -1,4 +1,5 @@
 mod acp;
+mod assistant;
 mod background_memory;
 mod chat;
 mod history_search;
@@ -479,6 +480,7 @@ async fn main() -> anyhow::Result<()> {
     }
     let cwd = env::current_dir().context("failed to resolve current directory")?;
     let config_home = default_config_home();
+    let assistant = assistant::Assistant::new(&config_home, &cwd);
     chat::recover(&config_home);
     let acp = AcpCoordinator::new(cwd.clone(), config_home.clone());
     acp.spawn_background_worker();
@@ -577,6 +579,83 @@ async fn main() -> anyhow::Result<()> {
             get(background_memory::provenance).post(background_memory::resolve_conflict),
         )
         .route("/api/health", get(|| async { StatusCode::NO_CONTENT }))
+        .route(
+            "/assistant.mjs",
+            get(|| async {
+                (
+                    [(
+                        header::CONTENT_TYPE,
+                        "application/javascript; charset=utf-8",
+                    )],
+                    include_str!("../static/assistant.mjs"),
+                )
+            }),
+        )
+        .route(
+            "/assistant-tasks.mjs",
+            get(|| async {
+                (
+                    [(
+                        header::CONTENT_TYPE,
+                        "application/javascript; charset=utf-8",
+                    )],
+                    include_str!("../static/assistant-tasks.mjs"),
+                )
+            }),
+        )
+        .route("/api/assistant", get(assistant::overview))
+        .route("/api/assistant/notice", get(assistant::tasks_api::notice))
+        .route("/api/assistant/observation", post(assistant::update))
+        .route("/api/assistant/preview", get(assistant::preview))
+        .route(
+            "/api/assistant/observations/:id",
+            axum::routing::delete(assistant::forget),
+        )
+        .route(
+            "/api/assistant/observations/:id/analyze",
+            post(assistant::analyze),
+        )
+        .route(
+            "/api/assistant/observations/:id/outcome",
+            post(assistant::record_outcome),
+        )
+        .route(
+            "/api/assistant/outcomes/:id",
+            axum::routing::delete(assistant::forget_outcome),
+        )
+        .route("/api/assistant/decision", post(assistant::save_decision))
+        .route(
+            "/api/assistant/cases/:id",
+            post(assistant::tasks_api::edit).delete(assistant::tasks_api::delete_case),
+        )
+        .route(
+            "/api/assistant/cases/:id/approve",
+            post(assistant::tasks_api::approve),
+        )
+        .route(
+            "/api/assistant/cases/:id/stop",
+            post(assistant::tasks_api::stop),
+        )
+        .route(
+            "/api/assistant/cases/:id/verify",
+            post(assistant::tasks_api::verify),
+        )
+        .route(
+            "/api/assistant/cases/:id/draft",
+            post(assistant::tasks_api::draft),
+        )
+        .route(
+            "/api/assistant/cases/:id/skill",
+            post(assistant::tasks_api::install).delete(assistant::tasks_api::disable_skill),
+        )
+        .route(
+            "/api/assistant/grants/:id",
+            axum::routing::delete(assistant::tasks_api::revoke),
+        )
+        .route(
+            "/api/assistant/decision/test",
+            post(assistant::test_decision),
+        )
         .route(
             "/api/subagents",
             get(subagents::overview).post(subagents::configure),
@@ -703,6 +782,7 @@ async fn main() -> anyhow::Result<()> {
             "/api/workspaces/directories",
             get(workspace_manager::directories),
         )
+        .layer(axum::Extension(assistant))
         .layer(axum::middleware::from_fn_with_state(
             manager,
             workspace_manager::resolve_request,

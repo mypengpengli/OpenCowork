@@ -58,6 +58,10 @@
             <span class="sidebar-button-icon">&#9719;</span>
             <span class="sidebar-button-label" data-i18n="menu.history">会话</span>
           </button>
+          <button id="nav-assistant-button" class="sidebar-nav-button" type="button" data-view="assistant">
+            <span class="sidebar-button-icon" aria-hidden="true">&#9672;</span>
+            <span class="sidebar-button-label" data-i18n="menu.assistant">自主助手</span>
+          </button>
           <button id="nav-settings-button" class="sidebar-nav-button" type="button" data-view="settings">
             <span class="sidebar-button-icon">&#9881;</span>
             <span class="sidebar-button-label" data-i18n="menu.settings">设置</span>
@@ -310,53 +314,6 @@
               <span class="composer-helper-copy" data-i18n="composer.shortcut">Enter 发送，Ctrl + Enter 换行。</span>
             </div>
           </footer>
-          <aside class="tool-dial-rail" aria-labelledby="tool-dial-toggle">
-            <button id="tool-dial-toggle" type="button" aria-expanded="false" aria-controls="tool-dial">
-              <span class="dial-toggle-glyph" aria-hidden="true"></span>
-              <span class="dial-toggle-label" data-i18n="dial.title">工具仪表</span>
-            </button>
-            <div id="tool-dial" hidden>
-              <div class="dial-instrument">
-                <div class="dial-face">
-                  <div class="dial-wheel"><i class="dial-band" aria-hidden="true"></i></div>
-                  <div class="dial-lock" aria-hidden="true"><i></i><b></b></div>
-                  <button class="dial-motion-toggle" id="dial-motion-toggle" type="button" aria-pressed="false"></button>
-                  <div class="dial-counter">
-                    <strong id="dial-count">00</strong>
-                    <span data-i18n="dial.calls">本轮调用</span>
-                  </div>
-                </div>
-                <div class="dial-readout">
-                  <span class="dial-signal" aria-hidden="true"></span>
-                  <span id="dial-status" role="status"></span>
-                  <div class="dial-readout-text">
-                    <strong id="dial-tool-name"></strong>
-                    <span id="dial-target" hidden></span>
-                  </div>
-                </div>
-              </div>
-              <section class="dial-telemetry" aria-labelledby="dial-telemetry-title">
-                <div class="dial-telemetry-header">
-                  <h3 id="dial-telemetry-title" data-i18n="dial.telemetry">本轮统计</h3>
-                  <span data-i18n="dial.trace">最近 24 次</span>
-                </div>
-                <div class="dial-trace" aria-hidden="true"></div>
-                <dl class="dial-metrics">
-                  <div><dt data-i18n="dial.done">成功</dt><dd id="dial-done-count">0</dd></div>
-                  <div><dt data-i18n="dial.pending">待返回</dt><dd id="dial-pending-count">0</dd></div>
-                  <div><dt data-i18n="dial.failed">失败</dt><dd id="dial-error-count">0</dd></div>
-                </dl>
-                <div class="dial-history" hidden>
-                  <h4 data-i18n="dial.history">最近调用</h4>
-                  <ul></ul>
-                </div>
-                <div class="dial-legend">
-                  <h4 data-i18n="dial.scale">工具刻度</h4>
-                  <dl class="dial-breakdown" aria-label="工具分布"></dl>
-                </div>
-              </section>
-            </div>
-          </aside>
         </section>
 
         <section id="history-view" class="page-view is-hidden">
@@ -376,6 +333,85 @@
           </header>
 
           <div id="history-list" class="history-list"></div>
+        </section>
+
+        <section id="assistant-view" class="page-view is-hidden">
+          <header class="page-header">
+            <div>
+              <h2 data-i18n="menu.assistant">自主助手</h2>
+              <p class="page-copy" data-i18n="assistant.intro">从你打开的消息、附件和网页中观察工作过程。</p>
+            </div>
+          </header>
+          <div class="assistant-content">
+            <section class="settings-card">
+              <div class="assistant-row">
+                <h3 data-i18n="assistant.observation">屏幕观察</h3>
+                <span id="assistant-phase" class="status-tag" role="status"></span>
+              </div>
+              <div class="assistant-row">
+                <button id="assistant-toggle" class="primary-button" type="button" disabled data-i18n="assistant.start">开始观察</button>
+                <label>
+                  <span data-i18n="assistant.rate">本地采样</span>
+                  <select id="assistant-interval" disabled>
+                    <option value="1000" data-i18n="assistant.second">每秒</option>
+                    <option value="500" data-i18n="assistant.half">每半秒</option>
+                  </select>
+                </label>
+                <button id="assistant-preview-toggle" class="ghost-button" type="button" aria-expanded="false" aria-controls="assistant-preview" disabled data-i18n="assistant.preview">屏幕预览</button>
+              </div>
+              <p id="assistant-status" class="field-hint" role="status"></p>
+              <img id="assistant-preview" hidden alt="" />
+            </section>
+            <section class="settings-card" id="assistant-cases-panel">
+              <h3 id="assistant-cases-title">当前事项</h3>
+              <p id="assistant-case-status" class="field-hint" role="status"></p>
+              <div id="assistant-cases"></div>
+              <div id="assistant-grants"></div>
+            </section>
+            <section class="settings-card">
+              <h3 data-i18n="assistant.observations">近期观察</h3>
+              <p class="field-hint" data-i18n="assistant.retention">最近的文字记录保留最多 30 天。</p>
+              <p id="assistant-empty" class="field-hint" data-i18n="assistant.empty">暂无记录</p>
+              <div id="assistant-observations"></div>
+            </section>
+            <section class="settings-card">
+              <h3 data-i18n="assistant.lessons">已确认经验</h3>
+              <p id="assistant-lessons-empty" class="field-hint" data-i18n="assistant.empty">暂无记录</p>
+              <div id="assistant-lessons"></div>
+            </section>
+            <section class="settings-card">
+              <h3 data-i18n="assistant.decision">预测与决策模型</h3>
+              <form id="assistant-decision-form">
+                <label class="assistant-check"><input type="checkbox" name="analyzeAutomatically" /> <span data-i18n="assistant.auto">开启后台预测，使用聊天模型理解屏幕文字</span></label>
+                <label class="assistant-check"><input type="checkbox" name="useImages" /> <span data-i18n="assistant.useImages">允许按需将当前窗口裁剪图发给支持图片的模型</span></label>
+                <label class="assistant-check"><input type="checkbox" name="showNotifications" /> <span data-i18n="assistant.notifications">主窗口收起时，通知我可办理的事项和执行结果</span></label>
+                <label class="assistant-check"><input type="checkbox" name="autoRunReady" /> <span data-i18n="assistant.autoRun">允许自动执行已就绪的方案，无需逐笔授权</span></label>
+                <label class="assistant-check"><input type="checkbox" name="autoRunReplies" /> <span data-i18n="assistant.autoReplies">允许自动代发已就绪的三局通文字回复，无需逐笔授权</span></label>
+                <p id="assistant-analysis-status" class="field-hint" role="status"></p>
+                <p id="assistant-metrics" class="field-hint"></p>
+                <label><span data-i18n="assistant.dailyLimit">后台预测每日上限</span><input name="dailyLimit" type="number" min="0" max="1000" required /></label>
+                <label><span data-i18n="assistant.textProvider">文字分析 Provider</span><select name="textProvider"></select></label>
+                <label><span data-i18n="assistant.visionProvider">图片分析 Provider</span><select name="visionProvider"></select></label>
+                <label><span data-i18n="assistant.skillProvider">Skill 整理 Provider</span><select name="skillProvider"></select></label>
+                <label><span data-i18n="assistant.appRules">按应用设置上传范围</span><textarea name="appRules" rows="3" placeholder="wxworklocal.exe=localOnly"></textarea></label>
+                <p class="field-hint" data-i18n="assistant.appRulesHint">每行填写 程序.exe=allow、textOnly、localOnly 或 ignore。依次表示允许、只传文字、只在本地记录和前台时跳过采集。</p>
+                <label class="assistant-check"><input type="checkbox" name="useForAnalysis" /> <span data-i18n="assistant.useNative">用 Gemini Decisions 排序当次候选</span></label>
+                <label><span data-i18n="assistant.endpoint">完整接口地址</span><input name="endpoint" placeholder="https://…/v1beta/decisions" autocomplete="off" aria-describedby="assistant-endpoint-hint" required /></label>
+                <p id="assistant-endpoint-hint" class="field-hint" data-i18n="assistant.endpointHint">填写完整决策接口地址。中转站配置原生透传路由后，可填写其入口地址，例如 https://你的中转站/v1/responses。</p>
+                <label><span data-i18n="assistant.model">模型名</span><input name="model" autocomplete="off" maxlength="128" required /></label>
+                <label><span data-i18n="assistant.auth">认证方式</span>
+                  <select name="auth"><option value="googleKey">x-goog-api-key</option><option value="bearer">Bearer</option></select>
+                </label>
+                <label><span data-i18n="assistant.keyEnv">密钥环境变量名</span><input name="apiKeyEnv" autocomplete="off" maxlength="128" aria-describedby="assistant-key-hint" /></label>
+                <p id="assistant-key-hint" class="field-hint" data-i18n="assistant.keyHint">留空时，可复用同一站点的当前聊天密钥。</p>
+                <div class="assistant-row">
+                  <button class="primary-button" type="submit" data-i18n="assistant.save">保存</button>
+                  <button class="ghost-button" type="button" id="assistant-decision-test" data-i18n="assistant.test">用模拟请求测试</button>
+                </div>
+                <p id="assistant-decision-status" class="field-hint" role="status"></p>
+              </form>
+            </section>
+          </div>
         </section>
 
         <section id="settings-view" class="page-view is-hidden">

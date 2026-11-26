@@ -16,16 +16,24 @@ function Focus-Identity {
     if ($focused) {return @{key=($focused.GetRuntimeId() -join '.');password=$focused.Current.IsPassword}}
     return @{key=('hwnd:'+[CoworkDesktop]::FocusHandle());password=$false}
 }
-function Read-Elements($handle,$originX,$originY) {
+function Read-Elements($handle,$originX,$originY,$view='control') {
     $rows=[Collections.Generic.List[object]]::new();$objects=[Collections.Generic.List[object]]::new()
     $root=[System.Windows.Automation.AutomationElement]::FromHandle($handle)
     $queue=[Collections.Generic.Queue[object]]::new();$queue.Enqueue(@($root,0))
-    $walker=[System.Windows.Automation.TreeWalker]::ControlViewWalker
+    $walker=if ($view -eq 'raw') {[System.Windows.Automation.TreeWalker]::RawViewWalker} else {[System.Windows.Automation.TreeWalker]::ControlViewWalker}
+    if ($view -eq 'raw') {
+        foreach ($renderer in [CoworkDesktop]::BrowserRenderers($handle)) {
+            try {$queue.Enqueue(@([System.Windows.Automation.AutomationElement]::FromHandle($renderer),1))} catch {}
+        }
+    }
+    $seen=[Collections.Generic.HashSet[string]]::new()
     $watch=[Diagnostics.Stopwatch]::StartNew()
     while ($queue.Count -gt 0 -and $rows.Count -lt 200 -and $watch.ElapsedMilliseconds -lt 2500) {
         $entry=$queue.Dequeue();$element=$entry[0];$depth=[int]$entry[1]
         try {
             $info=$element.Current;$rect=$info.BoundingRectangle
+            $runtimeId=$element.GetRuntimeId() -join '.'
+            if ($runtimeId -and -not $seen.Add($runtimeId)) {continue}
             if (-not $info.IsOffscreen -and -not $rect.IsEmpty) {
                 $actions=[Collections.Generic.List[string]]::new()
                 $row=@{index=$rows.Count;name=(Short-Text $info.Name 512);role=$info.ControlType.ProgrammaticName;className=$info.ClassName;automationId=$info.AutomationId;focused=$info.HasKeyboardFocus;enabled=$info.IsEnabled;password=$info.IsPassword;depth=$depth;runtimeId=($element.GetRuntimeId() -join '.');x=[int]($rect.X+$rect.Width/2)-$originX;y=[int]($rect.Y+$rect.Height/2)-$originY;left=[int]$rect.X-$originX;top=[int]$rect.Y-$originY;width=[int]$rect.Width;height=[int]$rect.Height}
