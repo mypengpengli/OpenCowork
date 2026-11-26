@@ -58,6 +58,10 @@
             <span class="sidebar-button-icon">&#9719;</span>
             <span class="sidebar-button-label" data-i18n="menu.history">会话</span>
           </button>
+          <button id="nav-schedules-button" class="sidebar-nav-button" type="button" data-view="schedules">
+            <span class="sidebar-button-icon" aria-hidden="true">&#9201;</span>
+            <span class="sidebar-button-label" data-i18n="menu.schedules">定时任务</span>
+          </button>
           <button id="nav-assistant-button" class="sidebar-nav-button" type="button" data-view="assistant">
             <span class="sidebar-button-icon" aria-hidden="true">&#9672;</span>
             <span class="sidebar-button-label" data-i18n="menu.assistant">自主助手</span>
@@ -419,6 +423,7 @@
           </div>
         </section>
 
+        <section id="schedules-view" class="page-view is-hidden" aria-label="定时任务"></section>
         <section id="settings-view" class="page-view is-hidden">
           <header class="page-header">
             <div>

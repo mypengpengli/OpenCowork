@@ -175,21 +175,12 @@ export function initWorkflows({ state, request, composer, status, prepareTask, o
   }
   learning.append(btn('刷新候选', refreshLearning), candidates); host.append(learning)
 
-  const scheduler = detail('定时任务与结果收件箱'), jobText = el('textarea'); bind(jobText, '到时执行的任务', 'placeholder'); bind(jobText, '到时执行的任务', 'aria-label')
-  const minutes = input('间隔分钟；填 0 使用每日时间', 'number', 60), daily = input('每日执行时间', 'time', '09:00'), timezone = input('IANA 时区', 'text', Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai'), catchup = input('错过后补一次', 'checkbox'), jobs = el('div')
-  async function refreshJobs() {
-    const d = await request('/api/schedules'); jobs.replaceChildren()
-    for (const j of d.jobs) jobs.append(row(el('span', `${j.status} · ${j.text} · 下次 ${new Date(j.nextRunAt * 1000).toLocaleString()} (${j.timezone})`), btn(j.status === 'enabled' ? '暂停' : j.status === 'running' ? '取消当前执行' : '恢复', async () => { await call('/api/schedules', { id: j.id, action: j.status === 'enabled' ? 'pause' : j.status === 'running' ? 'cancel' : 'resume' }); await refreshJobs() })))
-    jobs.append(el('h4', '本地收件箱')); for (const r of d.inbox) jobs.append(row(btn(`${r.status} · ${new Date(r.at * 1000).toLocaleString()} · 查看结果`, () => openSession(r.sessionId)), el('span', r.error || '')))
-  }
-  scheduler.append(el('p', '程序运行时执行。默认跳过错过的任务；异常中断后暂停，先检查结果再恢复。'), jobText, row(minutes, daily, timezone), label('错过执行后补一次', catchup), row(btn('创建定时任务', async () => { await call('/api/schedules', { text: jobText.value, intervalSeconds: Number(minutes.value) > 0 ? Number(minutes.value) * 60 : undefined, dailyTime: daily.value, timezone: timezone.value, missedPolicy: catchup.checked ? 'once' : 'skip' }); jobText.value = ''; await refreshJobs() }), btn('刷新任务与收件箱', refreshJobs)), jobs); host.append(scheduler)
-
   const trees = detail('隔离工作区'), treeName = input('任务名称（英文、数字、短横线）'), treeContent = el('pre', '', 'feature-file-preview')
   async function refreshTrees() { treeContent.textContent = (await request('/api/worktrees')).content }
   trees.append(el('p', '从已提交版本创建独立 Git worktree；当前未提交更改保留在原工作区。新路径可作为独立任务的工作目录。'), row(treeName, btn('创建独立工作区', async () => { const r = await call('/api/worktrees', { name: treeName.value }); await refreshTrees(); status(`已创建 ${r.branch}：${r.path}`) }), btn('刷新列表', refreshTrees)), treeContent); host.append(trees)
-  for (const [panel, refresh] of [[goalPanel, refreshGoal], [learning, refreshLearning], [scheduler, refreshJobs], [trees, refreshTrees]]) panel.addEventListener('toggle', () => { if (panel.open) refresh().catch(e => status(e.message, true)) })
+  for (const [panel, refresh] of [[goalPanel, refreshGoal], [learning, refreshLearning], [trees, refreshTrees]]) panel.addEventListener('toggle', () => { if (panel.open) refresh().catch(e => status(e.message, true)) })
   let polling = false
-  const timer = setInterval(async () => { if (document.hidden || polling) return; polling = true; try { await Promise.allSettled([refreshGoal(), refreshTakeover(), ...(scheduler.open ? [refreshJobs()] : [])]) } finally { polling = false } }, 3000)
+  const timer = setInterval(async () => { if (document.hidden || polling) return; polling = true; try { await Promise.allSettled([refreshGoal(), refreshTakeover()]) } finally { polling = false } }, 3000)
   window.addEventListener('pagehide', () => clearInterval(timer))
   function updateControls() {
     quickReasoning.disabled = !executionReady || state.sending || Boolean(document.querySelector('.composer-toolbar [data-busy]'))
@@ -207,7 +198,7 @@ export function initWorkflows({ state, request, composer, status, prepareTask, o
   steering.addEventListener('input', updateControls); goalNext.addEventListener('change', renderGoal)
   document.querySelector('.workspace-tools').addEventListener('ui:action-done', () => { updateControls(); renderTakeover() })
   updateControls(); renderGoal()
-  return { panels: { goalPanel, review, search, memories, learning, scheduler, trees }, takeover, summary, host, updateControls,
+  return { panels: { goalPanel, review, search, memories, learning, trees }, takeover, summary, host, updateControls,
     localize: () => { ui.localize(document); renderGoal(); renderTakeover() },
     requestExtras: text => { const enabled = goalNext.checked; goalNext.checked = false; renderGoal(); return enabled ? { goal: text } : {} } }
 }

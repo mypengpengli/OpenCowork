@@ -18,6 +18,14 @@ fn read(path: &Path) -> Value {
         .unwrap_or(Value::Null)
 }
 fn next(v: &Value, after: u64) -> Result<u64, String> {
+    if !v["intervalSeconds"].is_null()
+        && v["intervalSeconds"]
+            .as_u64()
+            .filter(|s| (60..=31536000).contains(s))
+            .is_none()
+    {
+        return Err("Interval must be between 60 and 31536000 seconds".into());
+    }
     if let Some(seconds) = v["intervalSeconds"]
         .as_u64()
         .filter(|s| *s >= 60 && *s <= 31536000)
@@ -103,9 +111,13 @@ pub(super) async fn change(
         .map_err(|_| ApiError::bad_request("Job is running; use Cancel first"))?;
     let mut job = read(&p);
     match v["action"].as_str().unwrap_or("create") {
-        "create" => {
-            if !job.is_null() {
+        "create" | "update" => {
+            let updating = v["action"] == "update";
+            if !updating && !job.is_null() {
                 return Err(ApiError::bad_request("Schedule already exists"));
+            }
+            if updating && job["text"].as_str().is_none() {
+                return Err(ApiError::bad_request("Job missing"));
             }
             let text = v["text"].as_str().unwrap_or("");
             if text.trim().is_empty() || text.len() > 16000 {
@@ -114,9 +126,53 @@ pub(super) async fn change(
                 ));
             }
             let when = next(&v, now()).map_err(ApiError::bad_request)?;
-            job = serde_json::json!({"id":id,"text":text,"intervalSeconds":v["intervalSeconds"],"dailyTime":v["dailyTime"],"timezone":v["timezone"].as_str().unwrap_or("Asia/Shanghai"),"missedPolicy":if v["missedPolicy"]=="once"{"once"}else{"skip"},"nextRunAt":when,"status":"enabled","budget":"execution settings"});
+            let name = v["name"].as_str().unwrap_or("").trim();
+            if name.chars().count() > 120 {
+                return Err(ApiError::bad_request(
+                    "Task name must be at most 120 characters",
+                ));
+            }
+            let status = if updating && job["status"] == "paused" {
+                "paused"
+            } else {
+                "enabled"
+            };
+            if !updating {
+                job = serde_json::json!({"id":id,"budget":"execution settings"});
+            }
+            for key in ["intervalSeconds", "dailyTime", "timezone"] {
+                job[key] = v[key].clone();
+            }
+            job["timezone"] = v["timezone"].as_str().unwrap_or("Asia/Shanghai").into();
+            job["name"] = name.into();
+            job["text"] = text.into();
+            job["missedPolicy"] = if v["missedPolicy"] == "once" {
+                "once"
+            } else {
+                "skip"
+            }
+            .into();
+            job["nextRunAt"] = when.into();
+            job["status"] = status.into();
         }
-        "pause" => job["status"] = "paused".into(),
+        "delete" => {
+            if job["text"].as_str().is_none() {
+                return Err(ApiError::bad_request("Job missing"));
+            }
+            fs::remove_file(&p).map_err(internal_error)?;
+            return Ok(Json(serde_json::json!({"deleted":true})));
+        }
+        "pause" | "runNow" => {
+            if job["text"].as_str().is_none() {
+                return Err(ApiError::bad_request("Job missing"));
+            }
+            if v["action"] == "pause" {
+                job["status"] = "paused".into();
+            } else {
+                job["status"] = "enabled".into();
+                job["nextRunAt"] = now().into();
+            }
+        }
         "resume" => {
             if job["text"].as_str().is_none() {
                 return Err(ApiError::bad_request("Job missing"));
@@ -155,7 +211,7 @@ pub(super) fn start(state: ShellState) {
                     let _ = write_json_atomic(&p, &job);
                     let _ = write_json_atomic(
                         &dir.join("inbox").join(format!("recovered-{id}.json")),
-                        &serde_json::json!({"jobId":id,"sessionId":job["sessionId"],"status":"unknown","at":now(),"error":job["error"]}),
+                        &serde_json::json!({"jobId":id,"jobName":job["name"],"sessionId":job["sessionId"],"status":"unknown","at":now(),"error":job["error"]}),
                     );
                     continue;
                 }
@@ -202,7 +258,7 @@ pub(super) fn start(state: ShellState) {
                         goal: None,
                         model: None,
                     };
-                    let mut result = serde_json::json!({"jobId":id,"sessionId":session,"status":"failed","at":now()});
+                    let mut result = serde_json::json!({"jobId":id,"jobName":job["name"],"sessionId":session,"status":"failed","at":now()});
                     match chat::stream_turn(State(state), Json(payload)).await {
                         Ok(response) => {
                             match axum::body::to_bytes(response.into_body(), 64 * 1024 * 1024).await
@@ -238,6 +294,9 @@ pub(super) fn start(state: ShellState) {
                     if let Ok(n) = next(&job, now()) {
                         job["nextRunAt"] = n.into();
                     }
+                    job["lastRunAt"] = now().into();
+                    job["lastStatus"] = result["status"].clone();
+                    job["lastError"] = result["error"].clone();
                     let _ = write_json_atomic(&inbox, &result);
                     let _ = write_json_atomic(&p, &job);
                 });

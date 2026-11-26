@@ -1,7 +1,7 @@
 import { initWorkflows } from '/workflows.mjs'
 import { createUi } from '/ui-controls.mjs'
 import { initSubagents } from '/subagents.mjs'
-export function initFeaturePanels({ state, request, composer, status, prepareTask, openSession }) {
+export function initFeaturePanels({ state, request, composer, status, prepareTask, openSession, setView }) {
   const ui = createUi(state, status), { tr, el, button, bind } = ui
   let references = [], files = [], changes = [], selected = '', previewToken = 0, contextToken = 0, currentId, refreshTimer
   const settings = el('article', '', 'settings-card feature-settings')
@@ -142,8 +142,8 @@ export function initFeaturePanels({ state, request, composer, status, prepareTas
   const back = button(tr('返回', 'Back'), () => { closePanel(); menu.hidden = false; menu.querySelector('button').focus() })
   const close = button(tr('收起', 'Close'), () => { closeMenu(); add.focus() })
   const header = el('div', '', 'tool-dock-header'); header.append(back, panelTitle, close); panel.append(header, panelBody)
-  const { goalPanel, review, search: historySearch, memories, learning, scheduler, trees } = workflows.panels
-  const panels = [childTasks, browser, task, goalPanel, review, trees, diagnostics, historySearch, memories, learning, scheduler]
+  const { goalPanel, review, search: historySearch, memories, learning, trees } = workflows.panels
+  const panels = [childTasks, browser, task, goalPanel, review, trees, diagnostics, historySearch, memories, learning]
   const parking = el('div'); parking.hidden = true; parking.append(...panels)
   function closePanel() { for (const item of panels) { item.open = false; parking.append(item) } panel.hidden = true }
   function closeMenu() { menu.hidden = true; closePanel(); add.setAttribute('aria-expanded', 'false') }
@@ -155,12 +155,13 @@ export function initFeaturePanels({ state, request, composer, status, prepareTas
   }
   for (const [title, entries] of [
     [tr('附件', 'Attachments'), [[tr('添加文件', 'Add files'), browser, search], [tr('引用历史会话', 'Reference a previous session'), browser, sessions]]],
-    [tr('任务与文件', 'Tasks and files'), [[tr('任务步骤', 'Task steps'), task], [tr('子智能体任务', 'Subagent tasks'), childTasks], [tr('目标、补充要求与消息队列'), goalPanel], [tr('审阅更改与恢复'), review], [tr('隔离工作区'), trees], [tr('定时任务与结果收件箱'), scheduler]]],
+    [tr('任务与文件', 'Tasks and files'), [[tr('任务步骤', 'Task steps'), task], [tr('子智能体任务', 'Subagent tasks'), childTasks], [tr('目标、补充要求与消息队列'), goalPanel], [tr('审阅更改与恢复'), review], [tr('隔离工作区'), trees]]],
     [tr('上下文与经验', 'Context and knowledge'), [[tr('本次上下文来源与用量'), diagnostics], [tr('历史全文搜索'), historySearch], [tr('记忆来源与冲突'), memories], [tr('可复用技能候选'), learning]]],
   ]) {
     menu.append(el('small', title, 'composer-menu-heading'))
     for (const [label, item, focus] of entries) menu.append(button(label, () => openPanel(item, focus)))
   }
+  menu.append(button(tr('定时任务与结果收件箱'), () => { closeMenu(); setView('schedules') }))
   add.addEventListener('click', () => {
     if (!menu.hidden || !panel.hidden) closeMenu()
     else { menu.hidden = false; add.setAttribute('aria-expanded', 'true'); menu.querySelector('button').focus() }
