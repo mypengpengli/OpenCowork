@@ -2743,6 +2743,7 @@ button:disabled {
 #assistant-preview { max-width: 100%; border: 1px solid var(--line); border-radius: 8px; }
 #assistant-observations details, #assistant-lessons article { border-top: 1px solid var(--line); padding: 10px 0; }
 #assistant-observations summary { cursor: pointer; overflow-wrap: anywhere; }
+#assistant-observations { max-height: min(65vh, 640px); overflow: auto; scrollbar-gutter: stable; }
 #assistant-observations details p, #assistant-lessons p { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 0; }
 .assistant-outcome { display: grid; gap: 8px; margin-top: 10px; }
 .assistant-outcome textarea { width: 100%; min-height: 64px; }

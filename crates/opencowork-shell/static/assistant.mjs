@@ -21,6 +21,13 @@ export function initAssistant({ request, t }) {
   let previewAt = 0
   let rendered = ''
   let renderedLessons = ''
+  let historyPage = 1
+  let historyAnchor = null
+  let history = null
+  const outcomeEditors = new Map()
+  const previousPage = lookup('history-previous')
+  const nextPage = lookup('history-next')
+  const latestPage = lookup('history-latest')
   const tr = (zh, en) => document.documentElement.lang.startsWith('en') ? en : zh
   const providerFields = ['textProvider', 'visionProvider', 'skillProvider', 'decisionProvider']
 
@@ -82,7 +89,6 @@ export function initAssistant({ request, t }) {
       previewAt = Date.now()
       preview.src = `/api/assistant/preview?t=${previewAt}`
     }
-    lookup('empty').hidden = data.observations.length > 0
     const lessonIds = data.lessons.map(item => item.id).join(',')
     lookup('lessons-empty').hidden = Boolean(lessonIds)
     if (renderedLessons !== lessonIds) {
@@ -99,8 +105,32 @@ export function initAssistant({ request, t }) {
         return row
       }))
     }
+    if (history) renderObservations({ ...data, ...history })
+    renderPagination()
+  }
+
+  function renderPagination() {
+    previousPage.disabled = refreshing || changing || !history || history.page <= 1
+    nextPage.disabled = refreshing || changing || !history || history.page >= history.pages
+    latestPage.disabled = refreshing || changing || !history || history.page === 1
+    const hasNew = historyPage > 1 && overview?.observations[0]?.id !== history?.anchor
+    latestPage.textContent = hasNew
+      ? tr('有新记录，查看最新', 'New observations · View latest')
+      : t('assistant.latestPage')
+    const feedback = lookup('history-status')
+    feedback.hidden = !history?.anchorExpired
+    feedback.textContent = tr('先前浏览的记录已删除或过期，已返回最新一页。', 'The earlier history expired or was deleted. Showing the latest page.')
+    if (history) lookup('history-page').textContent = tr(
+      `第 ${history.page} / ${history.pages} 页 · 共 ${history.total} 条 · 每页 ${history.pageSize} 条`,
+      `Page ${history.page} of ${history.pages} · ${history.total} observations · ${history.pageSize} per page`,
+    )
+  }
+
+  function renderObservations(data) {
+    lookup('empty').hidden = data.observations.length > 0
+    const lessonIds = data.lessons.map(item => item.id).join(',')
     const caseVersions = data.cases.map(item => [item.id, item.version])
-    const ids = JSON.stringify([data.observations.map(item => item.id), data.predictions, lessonIds, data.imageObservation, caseVersions, data.decision.appRules])
+    const ids = JSON.stringify([document.documentElement.lang, data.page, data.observations.map(item => item.id), data.predictions, lessonIds, data.imageObservation, caseVersions, data.decision.appRules])
     if (ids === rendered) return
     // Keep any user-entered outcome attached to its frame as observations update.
     const existing = new Map([...activity.children].map(row => [row.dataset.id, row]))
@@ -151,7 +181,11 @@ export function initAssistant({ request, t }) {
       if (assignment) row.append(assignment)
       row.append(actions)
       const prior = data.lessons.find(lesson => lesson.observationId === item.id)
-      row.append(existing.get(item.id)?.querySelector('.assistant-outcome') || outcomeForm(item.id, prior))
+      const editor = outcomeEditors.get(item.id) || outcomeForm(item.id, prior)
+      outcomeEditors.delete(item.id)
+      outcomeEditors.set(item.id, editor)
+      if (outcomeEditors.size > 300) outcomeEditors.delete(outcomeEditors.keys().next().value)
+      row.append(editor)
       return row
     }))
   }
@@ -251,9 +285,18 @@ export function initAssistant({ request, t }) {
   async function refresh() {
     if (refreshing || changing || document.hidden) return
     refreshing = true
+    renderPagination()
     try {
-      const data = await request('/api/assistant')
+      const query = new URLSearchParams({ page: String(historyPage), pageSize: '10' })
+      if (historyPage > 1 && historyAnchor) query.set('anchor', historyAnchor)
+      const [data, result] = await Promise.all([
+        request('/api/assistant'),
+        request('/api/assistant/observations?' + query),
+      ])
       if (changing) return
+      history = result
+      historyPage = result.page
+      historyAnchor = result.anchor
       if (!overview) {
         await loadProviderOptions(data.decision)
         for (const [key, value] of Object.entries(data.decision)) {
@@ -267,11 +310,29 @@ export function initAssistant({ request, t }) {
       }
       render(data)
     } catch (error) {
+      if (history) {
+        historyPage = history.page
+        historyAnchor = history.anchor
+      }
       status.textContent = error.message
     } finally {
       refreshing = false
+      renderPagination()
     }
   }
+
+  async function changePage(target) {
+    if (refreshing || changing || !history) return
+    historyPage = target
+    if (target === 1) historyAnchor = null
+    rendered = ''
+    await refresh()
+    activity.scrollTop = 0
+  }
+
+  previousPage.addEventListener('click', () => void changePage(Math.max(1, historyPage - 1)))
+  nextPage.addEventListener('click', () => void changePage(historyPage + 1))
+  latestPage.addEventListener('click', () => void changePage(1))
 
   async function update(body) {
     changing = true

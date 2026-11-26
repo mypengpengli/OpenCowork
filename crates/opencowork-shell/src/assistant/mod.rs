@@ -929,6 +929,96 @@ pub(super) async fn overview(
     ))
 }
 
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ObservationQuery {
+    page: Option<usize>,
+    page_size: Option<usize>,
+    anchor: Option<Uuid>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ObservationPage {
+    page: usize,
+    page_size: usize,
+    total: usize,
+    pages: usize,
+    anchor: Option<Uuid>,
+    anchor_expired: bool,
+    observations: Vec<Observation>,
+    predictions: Vec<analysis::Prediction>,
+    lessons: Vec<analysis::Outcome>,
+}
+
+impl Assistant {
+    fn observation_page(&self, query: ObservationQuery) -> ObservationPage {
+        let data = self.data();
+        let cutoff = now_ms().saturating_sub(RETENTION_MS);
+        let all = data
+            .log
+            .iter()
+            .filter(|item| item.time_ms >= cutoff)
+            .collect::<Vec<_>>();
+        let anchor_position = query
+            .anchor
+            .and_then(|id| all.iter().position(|item| item.id == id));
+        let anchor_expired = query.anchor.is_some() && anchor_position.is_none();
+        let end = anchor_position.map_or(all.len(), |index| index + 1);
+        let items = &all[..end];
+        let page_size = query.page_size.unwrap_or(10).clamp(1, 50);
+        let pages = items.len().div_ceil(page_size).max(1);
+        let page = if anchor_expired {
+            1
+        } else {
+            query.page.unwrap_or(1).clamp(1, pages)
+        };
+        let observations = items
+            .iter()
+            .rev()
+            .skip((page - 1) * page_size)
+            .take(page_size)
+            .map(|item| (*item).clone())
+            .collect::<Vec<_>>();
+        let contains = |id| observations.iter().any(|item| item.id == id);
+        ObservationPage {
+            page,
+            page_size,
+            total: items.len(),
+            pages,
+            anchor: items.last().map(|item| item.id),
+            anchor_expired,
+            predictions: data
+                .learning
+                .predictions
+                .iter()
+                .filter(|item| contains(item.observation_id))
+                .cloned()
+                .collect(),
+            lessons: data
+                .learning
+                .lessons
+                .iter()
+                .filter(|item| contains(item.observation_id))
+                .cloned()
+                .collect(),
+            observations,
+        }
+    }
+}
+
+pub(super) async fn observations(
+    Extension(assistant): Extension<Assistant>,
+    headers: HeaderMap,
+    Query(query): Query<ObservationQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    same_origin(&headers)?;
+    Ok((
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(assistant.observation_page(query)),
+    ))
+}
+
 pub(super) async fn update(
     Extension(assistant): Extension<Assistant>,
     headers: HeaderMap,

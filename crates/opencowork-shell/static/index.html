@@ -368,9 +368,16 @@
               <div id="assistant-cases"></div>
               <div id="assistant-grants"></div>
             </section>
-            <section class="settings-card">
+            <section class="settings-card" id="assistant-history-panel">
               <h3 data-i18n="assistant.observations">近期观察</h3>
-              <p class="field-hint" data-i18n="assistant.retention">最近的文字记录保留最多 30 天。</p>
+              <p class="field-hint" data-i18n="assistant.retention">本地保留最多 300 条近期文字记录，最长 30 天，每页显示 10 条。</p>
+              <nav class="assistant-row" aria-label="观察记录分页" data-i18n-aria-label="assistant.pagination">
+                <button id="assistant-history-previous" type="button" class="ghost-button" disabled data-i18n="assistant.previousPage">上一页</button>
+                <span id="assistant-history-page" class="field-hint" role="status"></span>
+                <button id="assistant-history-next" type="button" class="ghost-button" disabled data-i18n="assistant.nextPage">下一页</button>
+                <button id="assistant-history-latest" type="button" class="ghost-button" disabled data-i18n="assistant.latestPage">查看最新</button>
+              </nav>
+              <p id="assistant-history-status" class="field-hint" role="status" hidden></p>
               <p id="assistant-empty" class="field-hint" data-i18n="assistant.empty">暂无记录</p>
               <div id="assistant-observations"></div>
             </section>

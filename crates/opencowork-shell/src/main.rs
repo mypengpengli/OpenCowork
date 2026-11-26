@@ -612,6 +612,7 @@ async fn main() -> anyhow::Result<()> {
             }),
         )
         .route("/api/assistant", get(assistant::overview))
+        .route("/api/assistant/observations", get(assistant::observations))
         .route("/api/assistant/notice", get(assistant::tasks_api::notice))
         .route("/api/assistant/observation", post(assistant::update))
         .route("/api/assistant/preview", get(assistant::preview))
