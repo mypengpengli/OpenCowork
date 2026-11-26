@@ -3,9 +3,11 @@ import { renderMarkdown } from '/markdown.mjs'
 import { initHistorySearch } from '/history-search.mjs'
 import { readChatStream, appendChatEvent } from '/chat-stream.mjs'
 import { initFeaturePanels } from '/features.mjs'
+import { initSchedules } from '/schedules.mjs'
 import { appendDraft, processMessageIndexes, processMessageGroups, resolveSlashInvocation, coalesceAsync, completeSlashInput } from '/ui-controls.mjs'
 let fullHistorySearch
 let featurePanels
+let schedulesPage
 const selectedWorkspaceId = new URL(location.href).searchParams.get('workspace') || ''
 const workspaceHeaders = selectedWorkspaceId ? { 'X-OpenCowork-Workspace': selectedWorkspaceId } : {}
 
@@ -528,6 +530,7 @@ const MESSAGES = {
     'sidebar.empty': '还没有已保存的会话。',
     'menu.chat': '对话',
     'menu.history': '会话',
+    'menu.schedules': '定时任务',
     'menu.settings': '设置',
     'locale.switchToEnglish': 'English',
     'locale.switchToChinese': '中文',
@@ -1155,6 +1158,7 @@ const MESSAGES = {
     'sidebar.empty': 'No saved sessions yet.',
     'menu.chat': 'Chat',
     'menu.history': 'Sessions',
+    'menu.schedules': 'Scheduled tasks',
     'menu.settings': 'Settings',
     'locale.switchToEnglish': 'English',
     'locale.switchToChinese': '中文',
@@ -3116,11 +3120,13 @@ function eventBody(event) {
 
 // RENDER
 function setView(view) {
-  if (!['chat', 'history', 'settings'].includes(view)) return
+  if (!['chat', 'history', 'settings', 'schedules'].includes(view)) return
   state.currentView = view
   els.chatView.classList.toggle('is-hidden', view !== 'chat')
   els.historyView.classList.toggle('is-hidden', view !== 'history')
   els.settingsView.classList.toggle('is-hidden', view !== 'settings')
+  document.querySelector('#schedules-view').classList.toggle('is-hidden', view !== 'schedules')
+  if (view === 'schedules') schedulesPage?.refresh()
   els.navButtons.forEach((button) => {
     button.classList.toggle('is-active', button.dataset.view === view)
   })
@@ -7403,7 +7409,8 @@ fullHistorySearch = initHistorySearch({ state, request, container: els.historyLi
 initWorkspacePicker()
 initSessionActions()
 window.addEventListener('opencowork:composer-state', updateComposerState)
-featurePanels = initFeaturePanels({state, request, composer: els.composerInput, status: setComposerStatus, openSession: loadSession, prepareTask})
+featurePanels = initFeaturePanels({state, request, composer: els.composerInput, status: setComposerStatus, openSession: loadSession, prepareTask, setView})
+schedulesPage = initSchedules({state, request, openSession: async id => { await loadSession(id); setView('chat') }})
 
 async function openFileReference(path, line = 1) {
   let relative = String(path).replaceAll('\\', '/')
