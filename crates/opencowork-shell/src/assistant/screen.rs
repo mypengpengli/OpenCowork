@@ -633,7 +633,7 @@ fn recognize(
             results.push(text);
         }
     }
-    Ok(results.join("\n").chars().take(6000).collect())
+    Ok(results.join("\n"))
 }
 
 fn signature(pixels: &[u8], width: usize, height: usize) -> Vec<u8> {

@@ -95,7 +95,28 @@ class FixtureModel(check.Models):
         instructions, content = request["messages"][0]["content"], request["messages"][-1]["content"]
         assert isinstance(content, str)
         inputs = json.loads(content)
-        if "reusable skill" in instructions.lower():
+        if "new_observations" in inputs:
+            frames = inputs["new_observations"]
+            latest = frames[-1]
+            covered = [frame["id"] for frame in frames]
+            output = {"covered": covered, "caseChanges": [], "suggestion": None}
+            if inputs["live_candidate"] and latest["window"].startswith("AS Approval Fixture"):
+                existing = next((item for item in inputs["case_handoff"] if item["title"] == "Project A"), None)
+                anchor = next((item for item in frames if item["window"] == "Inbox A"), None)
+                # The replay's prior manual feedback has already linked the
+                # Inbox A frame to Project A. The form is specific to that fixture.
+                if existing and anchor:
+                    output["caseChanges"] = [{"caseId": existing["id"], "version": existing["version"],
+                        "title": existing["title"], "summary": "Fixture member A948 requests read access",
+                        "fragments": [anchor["id"], latest["id"]], "facts": [], "missing": []}]
+                    output["suggestion"] = {"task": "Approve project A", "evidence": "AS Approval Fixture",
+                        "missing": [], "choices": {"prepare": "Approve A948"}, "choice": "prepare",
+                        "case": {"caseId": existing["id"], "title": existing["title"]},
+                        "plan": {"choiceId": "prepare", "before": "AS Approval Fixture", "verify": "Approved A948",
+                                 "site": "127.0.0.1:" + str(self.server.server_port) if self.server.browser else None,
+                                 "steps": [{"action": "setValue", "control": "Member ID", "value": "A948"},
+                                           {"action": "invoke", "control": "Approve fixture", "value": None}]}}
+        elif "reusable skill" in instructions.lower():
             output = {"title": "Record member approval", "trigger": "When an identified member requests project access",
                       "steps": ["Match the account number", "Select the verified role and submit"],
                       "checks": ["Look for confirmation containing the member number"], "exceptions": ["Wait for missing account number"]}

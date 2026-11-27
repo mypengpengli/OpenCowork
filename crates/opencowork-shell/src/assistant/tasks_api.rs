@@ -1,6 +1,4 @@
-use super::{
-    cases, execution, now_ms, persist, same_origin, ApiError, Assistant, Overview, ShellState,
-};
+use super::{cases, execution, now_ms, same_origin, ApiError, Assistant, Overview, ShellState};
 use axum::{
     extract::Path,
     http::{HeaderMap, StatusCode},
@@ -22,6 +20,14 @@ pub struct Edit {
     observation: Option<Uuid>,
     manual_baseline_seconds: Option<u64>,
     mute_for_minutes: Option<u64>,
+    correction: Option<Correction>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Correction {
+    field: super::context::Field,
+    value: String,
 }
 
 pub async fn edit(
@@ -52,8 +58,7 @@ pub async fn edit(
             ));
         }
         history.cases[index].manual_baseline_seconds = (seconds > 0).then_some(seconds);
-        persist(&assistant.path.join("learning.json"), &history).map_err(io_error)?;
-        data.learning = history;
+        assistant.commit(&mut data, history).map_err(io_error)?;
         drop(data);
         return Ok(Json(assistant.view()));
     }
@@ -64,8 +69,7 @@ pub async fn edit(
             ));
         }
         history.cases[index].mute_until_ms = (minutes > 0).then(|| now_ms() + minutes * 60_000);
-        persist(&assistant.path.join("learning.json"), &history).map_err(io_error)?;
-        data.learning = history;
+        assistant.commit(&mut data, history).map_err(io_error)?;
         drop(data);
         return Ok(Json(assistant.view()));
     }
@@ -93,6 +97,7 @@ pub async fn edit(
     let mut appended = Vec::new();
     let mut sources = std::collections::BTreeSet::new();
     let mut merged_facts = None;
+    let mut merged_evidence = Vec::new();
     if let Some(source_id) = edit.merge_from {
         if source_id == id {
             return Err(ApiError::bad_request("Choose a different case to merge"));
@@ -113,6 +118,7 @@ pub async fn edit(
         appended.append(&mut source.observations);
         source.add_upload_sources(&mut sources);
         merged_facts = Some(source.facts.clone());
+        merged_evidence.append(&mut source.evidence);
         source.status = cases::Status::Cancelled;
         source.plan = None;
         source.version += 1;
@@ -135,15 +141,25 @@ pub async fn edit(
                         "Stop the source case before moving its observation",
                     ));
                 }
-                source.observations.retain(|value| *value != observation);
-                source.version += 1;
-                source.plan = None;
+                source.remove_observation(observation);
             }
         }
         appended.push(observation);
     }
     let current = &mut history.cases[index];
     current.record_sources(sources);
+    current.evidence.extend(merged_evidence);
+    current.rebuild_revisions();
+    current.refresh_request();
+    if let Some(correction) = edit.correction {
+        current
+            .user_correction(
+                correction.field,
+                &correction.value,
+                data.log.last().map_or(0, |item| item.seq),
+            )
+            .map_err(ApiError::bad_request)?;
+    }
     if let Some(title) = edit.title {
         let title = cases::limit(&title, 160);
         if title.is_empty() {
@@ -156,9 +172,6 @@ pub async fn edit(
             current.observations.push(item);
         }
     }
-    current
-        .observations
-        .drain(..current.observations.len().saturating_sub(40));
     if let Some(facts) = merged_facts {
         current.facts = cases::limit(&format!("{}\n{}", current.facts, facts), 1100);
     }
@@ -189,16 +202,19 @@ pub async fn edit(
         ));
     }
     current.version += 1;
+    current.draft_stale |= current.draft.is_some();
     current.updated_ms = now_ms();
     current.plan = None;
+    history
+        .grants
+        .retain(|grant| grant.case_id != id && edit.merge_from != Some(grant.case_id));
     let attached = &current.observations;
     for prediction in &mut history.predictions {
         if attached.contains(&prediction.observation_id) {
             prediction.case_id = Some(id);
         }
     }
-    persist(&assistant.path.join("learning.json"), &history).map_err(io_error)?;
-    data.learning = history;
+    assistant.commit(&mut data, history).map_err(io_error)?;
     drop(data);
     assistant.schedule_draft(&shell.cwd, id);
     Ok(Json(assistant.view()))
@@ -235,6 +251,7 @@ pub async fn delete_case(
         ));
     }
     next.cases.remove(index);
+    next.progress.draft_attempts.remove(&id);
     next.predictions
         .retain(|prediction| prediction.case_id != Some(id));
     next.grants.retain(|grant| grant.case_id != id);
@@ -243,8 +260,7 @@ pub async fn delete_case(
             case.related_case_id = None;
         }
     }
-    persist(&assistant.path.join("learning.json"), &next).map_err(io_error)?;
-    data.learning = next;
+    assistant.commit(&mut data, next).map_err(io_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -287,8 +303,7 @@ pub async fn stop(
         history
             .grants
             .retain(|grant| plan.is_none_or(|plan| !grant.plan.same_recipe(plan)));
-        persist(&assistant.path.join("learning.json"), &history).map_err(io_error)?;
-        data.learning = history;
+        assistant.commit(&mut data, history).map_err(io_error)?;
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -302,8 +317,7 @@ pub async fn revoke(
     let mut data = assistant.data();
     let mut history = data.learning.clone();
     history.grants.retain(|grant| grant.id != id);
-    persist(&assistant.path.join("learning.json"), &history).map_err(io_error)?;
-    data.learning = history;
+    assistant.commit(&mut data, history).map_err(io_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -381,8 +395,7 @@ pub async fn verify(
     case.version += 1;
     case.updated_ms = now_ms();
     case.completed_ms = Some(case.updated_ms);
-    persist(&assistant.path.join("learning.json"), &next).map_err(io_error)?;
-    data.learning = next;
+    assistant.commit(&mut data, next).map_err(io_error)?;
     drop(data);
     assistant.schedule_draft(&shell.cwd, id);
     Ok(Json(assistant.view()))
@@ -421,8 +434,7 @@ pub async fn install(
     if draft.installed.is_none() {
         draft.installed =
             Some(cases::install(&shell.cwd, id, draft).map_err(ApiError::bad_request)?);
-        persist(&assistant.path.join("learning.json"), &history).map_err(io_error)?;
-        data.learning = history;
+        assistant.commit(&mut data, history).map_err(io_error)?;
     }
     drop(data);
     Ok(Json(assistant.view()))
@@ -447,8 +459,7 @@ pub async fn disable_skill(
         cases::disable_skill(&shell.cwd, id, FsPath::new(installed))
             .map_err(ApiError::bad_request)?;
         draft.installed = None;
-        persist(&assistant.path.join("learning.json"), &history).map_err(io_error)?;
-        data.learning = history;
+        assistant.commit(&mut data, history).map_err(io_error)?;
     }
     drop(data);
     Ok(Json(assistant.view()))
@@ -494,16 +505,18 @@ pub async fn notice(
             text: run.detail.clone(),
         })));
     }
-    if !data.enabled || data.phase != "observing" {
+    if !data.enabled || data.phase != "observing" || !data.decision.analyze_automatically {
         return Ok(Json(None));
     }
-    let latest = data
-        .log
-        .last()
-        .filter(|item| now.saturating_sub(item.time_ms) <= 30_000);
+    let latest = data.log.last().filter(|item| {
+        now.saturating_sub(item.time_ms) <= 30_000
+            && item.session == data.session
+            && data.learning.permits_observation(item, &data.decision)
+    });
     let prediction = latest.and_then(|item| {
         data.learning.predictions.iter().find(|prediction| {
-            prediction.observation_id == item.id
+            prediction.live
+                && prediction.observation_id == item.id
                 && prediction.choice != "observe"
                 && prediction.case_id.is_some()
         })
@@ -512,6 +525,7 @@ pub async fn notice(
         let case = data.learning.cases.iter().find(|case| {
             Some(case.id) == prediction.case_id
                 && case.status.open()
+                && case.upload_allowed(&data.decision)
                 && case.mute_until_ms.is_none_or(|until| until <= now)
                 && case.run.as_ref().is_none_or(|run| !run.is_running())
         })?;
@@ -546,13 +560,7 @@ impl Assistant {
                 .learning
                 .cases
                 .iter()
-                .find(|case| {
-                    case.id == id
-                        && case.status == cases::Status::Done
-                        && case.draft.is_none()
-                        && case.outcome.is_some()
-                        && case.upload_allowed(&data.decision)
-                })
+                .find(|case| case.id == id && case.needs_draft(&data.decision))
                 .cloned()
             else {
                 return false;
@@ -563,17 +571,21 @@ impl Assistant {
             if data.drafting.len() >= 2 {
                 return false;
             }
+            let mut next = data.learning.clone();
+            next.progress.draft_attempts.insert(id, now_ms());
+            if let Err(error) = self.commit(&mut data, next) {
+                data.analysis_error = Some(error.to_string());
+                return false;
+            }
             data.drafting.push(id);
             let history = data
                 .log
                 .iter()
-                .rev()
                 .filter(|item| {
                     !item.assistant_action
                         && case.observations.contains(&item.id)
-                        && item.allowed_for_upload(&data.decision)
+                        && data.learning.permits_observation(item, &data.decision)
                 })
-                .take(6)
                 .map(super::Observation::for_upload)
                 .collect::<Vec<_>>();
             let lessons = data
@@ -583,6 +595,7 @@ impl Assistant {
                 .rev()
                 .filter(|lesson| {
                     case.observations.contains(&lesson.observation_id)
+                        && !lesson.local_only
                         && data.decision.permits_text(&lesson.source_app)
                 })
                 .take(8)
@@ -601,25 +614,53 @@ impl Assistant {
         let started = std::thread::Builder::new()
             .name("as-completed-skill".into())
             .spawn(move || {
-                let result = cases::draft(&cwd, &case, &history, &lessons, &provider);
+                let allowed = || {
+                    let data = worker.data();
+                    data.settings_revision == settings_revision
+                        && data
+                            .learning
+                            .cases
+                            .iter()
+                            .any(|current| current.id == id && current.version == case.version)
+                        && lessons.iter().all(|lesson| {
+                            data.learning
+                                .lessons
+                                .iter()
+                                .any(|current| current.id == lesson.id)
+                        })
+                };
+                let result = cases::draft(&cwd, &case, &history, &lessons, &provider, allowed);
                 let mut data = worker.data();
                 data.drafting.retain(|candidate| *candidate != id);
-                if data.settings_revision != settings_revision {
+                if data.settings_revision != settings_revision
+                    || !lessons.iter().all(|lesson| {
+                        data.learning
+                            .lessons
+                            .iter()
+                            .any(|current| current.id == lesson.id)
+                    })
+                {
                     return;
                 }
                 let mut next = data.learning.clone();
                 let Some(current) = next.cases.iter_mut().find(|value| {
-                    value.id == id && value.version == case.version && value.draft.is_none()
+                    value.id == id
+                        && value.version == case.version
+                        && (value.draft.is_none()
+                            || value.draft_stale
+                                && value
+                                    .draft
+                                    .as_ref()
+                                    .is_some_and(|draft| draft.installed.is_none()))
                 }) else {
                     return;
                 };
                 match result {
                     Ok(draft) => {
                         current.draft = Some(draft);
-                        if let Err(error) = persist(&worker.path.join("learning.json"), &next) {
+                        current.draft_stale = false;
+                        if let Err(error) = worker.commit(&mut data, next) {
                             data.analysis_error = Some(error.to_string());
-                        } else {
-                            data.learning = next;
                         }
                     }
                     Err(error) => data.analysis_error = Some(cases::limit(&error, 400)),
@@ -694,6 +735,15 @@ impl Assistant {
             {
                 return Err("Check the previous result before making another change".into());
             }
+            if !case.upload_allowed(&data.decision) {
+                return Err(
+                    "This case includes evidence blocked by the current application policy".into(),
+                );
+            }
+            if mode.is_none() && (!data.decision.analyze_automatically || data.phase != "observing")
+            {
+                return Err("Automatic suggestions are paused".into());
+            }
             let plan = case
                 .plan
                 .as_ref()
@@ -717,11 +767,15 @@ impl Assistant {
                 ended_ms: None,
             };
             next.grants.retain(|grant| valid(grant));
+            let workspace = super::workspace_key(cwd);
             let previous_grant = next
                 .grants
                 .iter()
                 .find(|grant| {
-                    grant.mode != Mode::Once && valid(grant) && grant.plan.same_recipe(&plan)
+                    grant.workspace == workspace
+                        && grant.mode != Mode::Once
+                        && valid(grant)
+                        && grant.plan.same_recipe(&plan)
                 })
                 .map(|grant| grant.id);
             let automatic = mode.is_none()
@@ -738,6 +792,7 @@ impl Assistant {
                 let grant = Grant {
                     id: Uuid::new_v4(),
                     case_id,
+                    workspace,
                     mode,
                     plan: plan.clone(),
                     from_global_setting: automatic,
@@ -754,8 +809,8 @@ impl Assistant {
                 previous_grant.ok_or("This plan has no standing authorization")?
             };
             case.run = Some(run.clone());
-            persist(&self.path.join("learning.json"), &next).map_err(|error| error.to_string())?;
-            data.learning = next;
+            self.commit(&mut data, next)
+                .map_err(|error| error.to_string())?;
             data.execution_worker = Some(run.id);
             (plan, run, grant_id, data.revision)
         };
@@ -798,6 +853,7 @@ impl Assistant {
                 })
                 || !data.learning.cases.iter().any(|case| {
                     case.id == case_id
+                        && case.upload_allowed(&data.decision)
                         && case.version == plan.version
                         && case.status == cases::Status::Working
                         && case
@@ -835,8 +891,8 @@ impl Assistant {
             } else {
                 format!("Dispatching step {changed} of {}", plan.steps.len())
             };
-            persist(&self.path.join("learning.json"), &next).map_err(|error| error.to_string())?;
-            data.learning = next;
+            self.commit(&mut data, next)
+                .map_err(|error| error.to_string())?;
             Ok(())
         };
         let result = execution::run(&plan, check, progress);
@@ -889,11 +945,10 @@ impl Assistant {
         }
         next.grants
             .retain(|grant| grant.id != grant_id || grant.mode != Mode::Once);
-        if let Err(error) = persist(&self.path.join("learning.json"), &next) {
+        if let Err(error) = self.commit(&mut data, next) {
             data.analysis_error = Some(error.to_string());
             return;
         }
-        data.learning = next;
         drop(data);
         if succeeded {
             self.schedule_draft(cwd, case_id);

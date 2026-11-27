@@ -1,5 +1,11 @@
 mod analysis;
 mod cases;
+mod context;
+mod store;
+#[cfg(windows)]
+mod worker;
+#[cfg(windows)]
+use worker::PendingSuggestion;
 pub(super) mod decision;
 mod execution;
 #[cfg(windows)]
@@ -25,7 +31,6 @@ use std::{
 use uuid::Uuid;
 
 const RETENTION_MS: u64 = 30 * 24 * 60 * 60 * 1000;
-const MAX_OBSERVATIONS: usize = 300;
 const PREVIEW_TTL: Duration = Duration::from_secs(30);
 const AUTO_INTERVAL: Duration = Duration::from_secs(20);
 
@@ -34,6 +39,7 @@ pub(super) struct Assistant {
     shared: Arc<Shared>,
     path: PathBuf,
     desktop_pid: Option<u32>,
+    store: Option<Arc<store::Store>>,
 }
 
 struct Shared {
@@ -57,6 +63,12 @@ struct Data {
     analysis_error: Option<String>,
     drafting: Vec<Uuid>,
     execution_worker: Option<Uuid>,
+    learning_revision: u64,
+    session: Option<Uuid>,
+    #[cfg(windows)]
+    pending: Option<PendingSuggestion>,
+    #[cfg(windows)]
+    capture_gap: Option<u64>,
 }
 
 struct Preview {
@@ -74,12 +86,32 @@ struct Learning {
     auto_calls: Vec<u64>,
     cases: Vec<cases::Case>,
     grants: Vec<execution::Grant>,
+    progress: context::Progress,
+}
+
+impl Learning {
+    fn permits_observation(&self, item: &Observation, settings: &decision::Settings) -> bool {
+        item.allowed_for_upload(settings)
+            && !self
+                .progress
+                .gaps
+                .iter()
+                .any(|gap| gap.seq == item.seq && gap.reason == "uploadExcluded")
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Observation {
     id: Uuid,
+    #[serde(default)]
+    seq: u64,
+    #[serde(default)]
+    session: Option<Uuid>,
+    #[serde(default)]
+    local_at_capture: bool,
+    #[serde(default)]
+    input_stamp: Option<u32>,
     time_ms: u64,
     window: String,
     text: String,
@@ -111,7 +143,8 @@ enum ObservationEvent {
 
 impl Observation {
     fn allowed_for_upload(&self, settings: &decision::Settings) -> bool {
-        settings.permits_text(&self.app)
+        !self.local_at_capture
+            && settings.permits_text(&self.app)
             && (self.window_text.is_some() || !settings.restricts_uploads())
     }
 
@@ -149,11 +182,55 @@ pub(super) struct Overview {
     analyzing: bool,
     analysis_error: Option<String>,
     auto_remaining: usize,
+    progress: ProgressView,
     cases: Vec<cases::Case>,
     grants: Vec<execution::Grant>,
     drafting: Vec<Uuid>,
     execution_in_flight: bool,
     metrics: analysis::Metrics,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProgressView {
+    through: u64,
+    through_time_ms: Option<u64>,
+    pending: usize,
+    oldest_pending_ms: Option<u64>,
+    legacy_coverage_unknown: bool,
+    gaps: usize,
+    recent_gaps: Vec<context::Gap>,
+    recent_batches: Vec<context::Receipt>,
+    recent_attempts: Vec<context::Attempt>,
+}
+
+impl ProgressView {
+    fn from_data(data: &Data) -> Self {
+        let progress = &data.learning.progress;
+        let through = progress.cursor.seq;
+        let processed = data.log.iter().rev().find(|item| item.seq <= through);
+        let pending = data.log.partition_point(|item| item.seq <= through);
+        Self {
+            through,
+            through_time_ms: processed.map(|item| item.time_ms),
+            pending: data.log.len() - pending,
+            oldest_pending_ms: data.log.get(pending).map(|item| item.time_ms),
+            legacy_coverage_unknown: progress.legacy_coverage_unknown,
+            gaps: progress
+                .gaps
+                .iter()
+                .filter(|gap| {
+                    matches!(
+                        gap.reason.as_str(),
+                        "deleted" | "expired" | "captureInterrupted"
+                    )
+                })
+                .count(),
+            recent_gaps: progress.gaps.iter().rev().take(10).cloned().collect(),
+            recent_batches: progress.batches.iter().rev().take(8).cloned().collect(),
+            recent_attempts: progress.attempts.iter().rev().take(8).cloned().collect(),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -172,32 +249,34 @@ impl Assistant {
         #[cfg(not(windows))]
         let desktop_pid = None;
         let path = home.join("as-desktop");
-        let (mut log, mut error) =
-            load_or_report::<Vec<Observation>>(&path.join("observations.json"));
+        let (store, log, mut learning, mut error) = match store::Store::open(&path) {
+            Ok((store, log, learning)) => (Some(Arc::new(store)), log, learning, None),
+            Err(error) => (
+                None,
+                Vec::new(),
+                Learning::default(),
+                Some(error.to_string()),
+            ),
+        };
+        let desktop_pid = desktop_pid.filter(|_| store.is_some());
         let (mut decision, settings_error) =
             load_or_report::<decision::Settings>(&path.join("decision.json"));
         if error.is_none() {
             error = settings_error;
         }
-        match decision.migrate_legacy(cwd) {
-            Ok(true) => {
-                if let Err(failure) = persist(&path.join("decision.json"), &decision) {
-                    error = Some(format!(
-                        "Could not save migrated decision settings: {failure}"
-                    ));
+        if store.is_some() {
+            match decision.migrate_legacy(cwd) {
+                Ok(true) => {
+                    if let Err(failure) = persist(&path.join("decision.json"), &decision) {
+                        error = Some(format!(
+                            "Could not save migrated decision settings: {failure}"
+                        ));
+                    }
                 }
-            }
-            Ok(false) => {}
-            Err(failure) => error = Some(format!("Could not migrate decision Provider: {failure}")),
-        }
-        let (mut learning, learning_error) =
-            load_or_report::<Learning>(&path.join("learning.json"));
-        if error.is_none() {
-            error = learning_error;
-        }
-        if prune(&mut log) {
-            if let Err(failure) = persist(&path.join("observations.json"), &log) {
-                error = Some(format!("Could not apply observation retention: {failure}"));
+                Ok(false) => {}
+                Err(failure) => {
+                    error = Some(format!("Could not migrate decision Provider: {failure}"))
+                }
             }
         }
         let mut recovered = false;
@@ -221,9 +300,18 @@ impl Assistant {
             grant.mode == execution::Mode::Always
                 || grant.expires_ms.is_some_and(|ms| ms > now_ms())
         });
-        if prune_learning(&mut learning, &log) || recovered {
-            if let Err(failure) = persist(&path.join("learning.json"), &learning) {
-                error = Some(format!("Could not apply prediction retention: {failure}"));
+        let workspace = workspace_key(cwd);
+        for grant in &mut learning.grants {
+            if grant.workspace.is_empty() {
+                grant.workspace = workspace.clone();
+                recovered = true;
+            }
+        }
+        if recovered {
+            if let Some(store) = &store {
+                if let Err(failure) = store.save(&learning, &[]) {
+                    error = Some(format!("Could not record interrupted execution: {failure}"));
+                }
             }
         }
         #[allow(unused_mut)]
@@ -245,12 +333,27 @@ impl Assistant {
                     analysis_error: None,
                     drafting: Vec::new(),
                     execution_worker: None,
+                    learning_revision: 0,
+                    session: None,
+                    #[cfg(windows)]
+                    pending: None,
+                    #[cfg(windows)]
+                    capture_gap: None,
                 }),
                 wake: Condvar::new(),
             }),
             path,
             desktop_pid,
+            store,
         };
+        {
+            let mut data = assistant.data();
+            if assistant.store.is_some() {
+                if let Err(failure) = assistant.expire(&mut data) {
+                    data.error = Some(failure.to_string());
+                }
+            }
+        }
         #[cfg(windows)]
         if let Some(pid) = desktop_pid {
             let worker = assistant.clone();
@@ -280,6 +383,72 @@ impl Assistant {
             .data
             .lock()
             .unwrap_or_else(|error| error.into_inner())
+    }
+
+    fn store(&self) -> io::Result<&store::Store> {
+        self.store.as_deref().ok_or_else(|| {
+            io::Error::other("AS storage is unavailable or owned by another process")
+        })
+    }
+
+    fn commit(&self, data: &mut Data, learning: Learning) -> io::Result<()> {
+        self.commit_with_removal(data, learning, &[])
+    }
+
+    fn commit_with_removal(
+        &self,
+        data: &mut Data,
+        learning: Learning,
+        remove: &[Uuid],
+    ) -> io::Result<()> {
+        self.store()?.save(&learning, remove)?;
+        data.learning = learning;
+        data.learning_revision += 1;
+        Ok(())
+    }
+
+    fn expire(&self, data: &mut Data) -> io::Result<()> {
+        let cutoff = now_ms().saturating_sub(RETENTION_MS);
+        let expired = data
+            .log
+            .iter()
+            .filter(|item| item.time_ms < cutoff)
+            .collect::<Vec<_>>();
+        if expired.is_empty() {
+            return Ok(());
+        }
+        let mut learning = data.learning.clone();
+        let remove = expired
+            .iter()
+            .map(|item| item.id)
+            .collect::<std::collections::HashSet<_>>();
+        if data
+            .log
+            .iter()
+            .find(|item| item.seq > learning.progress.cursor.seq)
+            .is_some_and(|item| remove.contains(&item.id))
+        {
+            learning.progress.cursor.offset = 0;
+            learning.progress.evidence_requests.clear();
+            learning.progress.follow_up_through = None;
+        }
+        for item in expired
+            .into_iter()
+            .filter(|item| item.seq > learning.progress.cursor.seq)
+        {
+            learning.progress.gaps.push(context::Gap {
+                seq: item.seq,
+                time_ms: item.time_ms,
+                reason: "expired".into(),
+            });
+        }
+        learning
+            .predictions
+            .retain(|item| !remove.contains(&item.observation_id));
+        let ids = remove.iter().copied().collect::<Vec<_>>();
+        self.commit_with_removal(data, learning, &ids)?;
+        data.log.retain(|item| !remove.contains(&item.id));
+        Ok(())
     }
 
     fn view(&self) -> Overview {
@@ -330,6 +499,7 @@ impl Assistant {
             analyzing: data.active_analysis.is_some(),
             analysis_error: data.analysis_error.clone(),
             auto_remaining: auto_remaining(&data.learning, &data.decision),
+            progress: ProgressView::from_data(&data),
             cases: cases.into_iter().rev().take(80).cloned().collect(),
             grants: data
                 .learning
@@ -372,6 +542,7 @@ impl Assistant {
         }
         if let Some(enabled) = update.enabled.filter(|enabled| *enabled != data.enabled) {
             data.enabled = enabled;
+            data.session = enabled.then(Uuid::new_v4);
             data.revision += 1;
             data.phase = if enabled { "starting" } else { "paused" };
             data.preview = None;
@@ -410,6 +581,7 @@ impl Assistant {
         let _lock = screen::ObserverLock::acquire()?;
         let mut screen = screen::Screen::new()?;
         let mut last_settings_revision = None;
+        let mut last_retention = Instant::now();
         loop {
             anyhow::ensure!(
                 screen::parent_is_running(pid),
@@ -486,8 +658,15 @@ impl Assistant {
                                 .is_some_and(|run| run.status == execution::RunStatus::Running)
                                 && case.plan.as_ref().is_some_and(|plan| plan.hwnd == hwnd)
                         });
-                        data.log.push(Observation {
+                        let mut record = Observation {
                             id: Uuid::new_v4(),
+                            seq: 0,
+                            session: data.session,
+                            local_at_capture: !settings.permits_text(&app)
+                                || settings.restricts_uploads() && window_text.is_none(),
+                            input_stamp: screen::foreground_input()
+                                .filter(|(h, p, _)| *h == hwnd && *p == pid)
+                                .map(|(_, _, stamp)| stamp),
                             time_ms: now_ms(),
                             window,
                             text,
@@ -502,11 +681,30 @@ impl Assistant {
                             pid,
                             app,
                             assistant_action,
-                        });
-                        prune(&mut data.log);
-                        data.error = persist(&self.path.join("observations.json"), &data.log)
-                            .err()
-                            .map(|error| format!("Could not save observation: {error}"));
+                        };
+                        if let Err(error) = self.store()?.append(&mut record) {
+                            data.capture_gap.get_or_insert(record.time_ms);
+                            data.phase = "captureError";
+                            data.error = Some(format!("Could not save observation: {error}"));
+                            data.preview = None;
+                            screen.clear();
+                            let _waiting =
+                                self.shared.wake.wait_timeout(data, Duration::from_secs(1));
+                            continue;
+                        }
+                        if let Some(at) = data.capture_gap {
+                            let mut next = data.learning.clone();
+                            next.progress.gaps.push(context::Gap {
+                                seq: record.seq,
+                                time_ms: at,
+                                reason: "captureInterrupted".into(),
+                            });
+                            if self.commit(&mut data, next).is_ok() {
+                                data.capture_gap = None;
+                            }
+                        }
+                        data.log.push(record);
+                        data.error = None;
                         self.shared.wake.notify_all();
                     }
                     let observation = data.log.last().expect("observation captured").id;
@@ -521,19 +719,14 @@ impl Assistant {
                     data.phase = "captureError";
                     data.preview = None;
                     data.error = Some(error.to_string());
+                    data.capture_gap.get_or_insert_with(now_ms);
                     screen.clear();
                 }
             }
-            if prune(&mut data.log) {
-                if let Err(error) = persist(&self.path.join("observations.json"), &data.log) {
-                    data.error = Some(format!("Could not apply observation retention: {error}"));
-                }
-            }
-            let Data { learning, log, .. } = &mut *data;
-            if prune_learning(learning, log) {
-                if let Err(error) = persist(&self.path.join("learning.json"), learning) {
-                    data.analysis_error =
-                        Some(format!("Could not apply prediction retention: {error}"));
+            if last_retention.elapsed() >= Duration::from_secs(60) {
+                last_retention = Instant::now();
+                if let Err(error) = self.expire(&mut data) {
+                    data.error = Some(error.to_string());
                 }
             }
             let delay = Duration::from_millis(data.interval_ms).saturating_sub(start.elapsed());
@@ -541,71 +734,17 @@ impl Assistant {
         }
     }
 
-    #[cfg(windows)]
-    fn run_analysis(&self, cwd: &FsPath) {
-        use std::hash::{DefaultHasher, Hash, Hasher};
-        let mut last_attempt = None;
-        let mut last_run = None::<Instant>;
-        loop {
-            let data = self.data();
-            let (data, _) = self
-                .shared
-                .wake
-                .wait_timeout(data, Duration::from_secs(1))
-                .unwrap_or_else(|error| error.into_inner());
-            let Some(latest) = data.log.last() else {
-                continue;
-            };
-            if !data.enabled
-                || data.phase != "observing"
-                || !data.decision.analyze_automatically
-                || data.active_analysis.is_some()
-                || latest.assistant_action
-                || !latest.allowed_for_upload(&data.decision)
-                || data
-                    .learning
-                    .predictions
-                    .iter()
-                    .any(|p| p.observation_id == latest.id)
-                || now_ms().saturating_sub(latest.time_ms) < 1800
-                || now_ms().saturating_sub(latest.time_ms) > 60_000
-                || last_run.is_some_and(|last| last.elapsed() < AUTO_INTERVAL)
-                || auto_remaining(&data.learning, &data.decision) == 0
-            {
-                continue;
-            }
-            let mut hash = DefaultHasher::new();
-            latest.hwnd.hash(&mut hash);
-            latest.pid.hash(&mut hash);
-            latest.window.hash(&mut hash);
-            let text = latest.window_text.as_ref().unwrap_or(&latest.text);
-            text.hash(&mut hash);
-            if data.decision.use_images && text.trim().chars().count() < 60 {
-                latest.id.hash(&mut hash);
-            }
-            let attempt = (hash.finish(), data.settings_revision);
-            if last_attempt == Some(attempt) {
-                continue;
-            }
-            let id = latest.id;
-            let revision = data.revision;
-            drop(data);
-            last_attempt = Some(attempt);
-            last_run = Some(Instant::now());
-            let _ = self.analyze(cwd, id, Some(revision), false);
-        }
-    }
-
     fn analyze(
         &self,
         cwd: &FsPath,
         id: Uuid,
-        automatic_revision: Option<u64>,
         request_image: bool,
     ) -> Result<analysis::Prediction, String> {
+        self.store().map_err(|error| error.to_string())?;
         let (
             settings,
             settings_revision,
+            learning_revision,
             observations,
             lessons,
             open_cases,
@@ -625,37 +764,17 @@ impl Assistant {
                 })
                 .ok_or("Observation no longer exists")?;
             let latest = &data.log[position];
-            if !latest.allowed_for_upload(&data.decision) {
+            if !data.learning.permits_observation(latest, &data.decision) {
                 return Err("This observation is local only or has no isolated window text".into());
             }
             let published = latest.time_ms;
-            if let Some(revision) = automatic_revision {
-                if data.revision != revision
-                    || !data.enabled
-                    || !data.decision.analyze_automatically
-                    || data.log.len() != position + 1
-                    || auto_remaining(&data.learning, &data.decision) == 0
-                {
-                    return Err("Observation changed before analysis".into());
-                }
-                let old_calls = data.learning.auto_calls.clone();
-                data.learning
-                    .auto_calls
-                    .retain(|at| now_ms().saturating_sub(*at) < 86_400_000);
-                data.learning.auto_calls.push(now_ms());
-                if let Err(error) = persist(&self.path.join("learning.json"), &data.learning) {
-                    data.learning.auto_calls = old_calls;
-                    data.analysis_error = Some(error.to_string());
-                    return Err(error.to_string());
-                }
-            }
             let mut originals = data.log[..=position]
                 .iter()
                 .rev()
                 .take_while(|item| published.saturating_sub(item.time_ms) <= 180_000)
                 .filter(|item| !item.assistant_action || item.id == id)
-                .filter(|item| item.allowed_for_upload(&data.decision))
-                .take(4)
+                .filter(|item| data.learning.permits_observation(item, &data.decision))
+                .take(12)
                 .collect::<Vec<_>>();
             originals.reverse();
             let evidence = originals
@@ -668,7 +787,13 @@ impl Assistant {
                 .learning
                 .lessons
                 .iter()
-                .filter(|lesson| data.decision.permits_text(&lesson.source_app))
+                .filter(|lesson| {
+                    !lesson.local_only
+                        && data.decision.permits_text(&lesson.source_app)
+                        && data.log[..=position]
+                            .iter()
+                            .any(|item| item.id == lesson.observation_id)
+                })
                 .cloned()
                 .collect::<Vec<_>>();
             let latest = evidence.last().expect("latest allowed observation");
@@ -678,14 +803,14 @@ impl Assistant {
                 .learning
                 .cases
                 .iter()
-                .filter(|case| case.upload_allowed(&data.decision))
+                .filter(|case| case.upload_allowed(&data.decision) && case.updated_ms <= published)
                 .collect::<Vec<_>>();
             let open_cases = cases::references(eligible_cases.iter().copied());
             let skills = eligible_cases
                 .iter()
                 .rev()
                 .filter_map(|case| case.draft.as_ref().map(|draft| (case, draft)))
-                .filter(|(_, draft)| draft.installed.is_some())
+                .filter(|(case, draft)| draft.installed.is_some() && !case.draft_stale)
                 .take(8)
                 .map(|(case, draft)| {
                     case.add_upload_sources(&mut sources);
@@ -699,8 +824,7 @@ impl Assistant {
             }
             let image = (data.decision.use_images
                 && data.decision.app_policy(&latest.app) == decision::AppPolicy::Allow
-                && (request_image
-                    || automatic_revision.is_some() && latest.text.trim().chars().count() < 60))
+                && request_image)
                 .then(|| {
                     current_preview(&data)
                         .filter(|preview| preview.observation == id)
@@ -715,6 +839,7 @@ impl Assistant {
             (
                 data.decision.clone(),
                 data.settings_revision,
+                data.learning_revision,
                 evidence,
                 lessons,
                 open_cases,
@@ -732,11 +857,17 @@ impl Assistant {
             &open_cases,
             &skills,
             image.as_deref(),
+            || {
+                let data = self.data();
+                settings_revision == data.settings_revision
+                    && learning_revision == data.learning_revision
+                    && data.log.iter().any(|item| item.id == id)
+            },
         );
         let mut data = self.data();
         data.active_analysis = None;
         if settings_revision != data.settings_revision
-            || automatic_revision.is_some_and(|rev| rev != data.revision)
+            || learning_revision != data.learning_revision
             || !data.log.iter().any(|item| item.id == id)
         {
             return Err("Observation was cleared while the model was working".into());
@@ -774,15 +905,11 @@ impl Assistant {
                 }
                 history.predictions.retain(|item| item.observation_id != id);
                 history.predictions.push(prediction.clone());
-                persist(&self.path.join("learning.json"), &history)
+                self.commit(&mut data, history)
                     .map_err(|error| error.to_string())?;
-                data.learning = history;
                 drop(data);
                 if let Some(case_id) = prediction.case_id {
                     self.schedule_draft(cwd, case_id);
-                    if automatic_revision.is_some() {
-                        self.try_auto_execute(cwd, case_id);
-                    }
                 }
                 Ok(prediction)
             }
@@ -836,13 +963,11 @@ fn relevant_lessons(
         .collect()
 }
 
-fn prune_learning(learning: &mut Learning, log: &[Observation]) -> bool {
-    let count = learning.predictions.len();
-    learning.predictions.retain(|item| {
-        log.iter()
-            .any(|observation| observation.id == item.observation_id)
-    });
-    count != learning.predictions.len()
+fn workspace_key(cwd: &FsPath) -> String {
+    cwd.canonicalize()
+        .unwrap_or_else(|_| cwd.to_path_buf())
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn now_ms() -> u64 {
@@ -856,14 +981,6 @@ fn current_preview(data: &Data) -> Option<&Preview> {
     data.preview
         .as_ref()
         .filter(|preview| preview.time.elapsed() < PREVIEW_TTL)
-}
-
-fn prune(log: &mut Vec<Observation>) -> bool {
-    let count = log.len();
-    let oldest = now_ms().saturating_sub(RETENTION_MS);
-    log.retain(|item| item.time_ms >= oldest);
-    log.drain(..log.len().saturating_sub(MAX_OBSERVATIONS));
-    count != log.len()
 }
 
 fn load_or_report<T: serde::de::DeserializeOwned + Default>(path: &FsPath) -> (T, Option<String>) {
@@ -1056,19 +1173,70 @@ pub(super) async fn forget(
     same_origin(&headers)?;
     let id = Uuid::parse_str(&id).map_err(|_| ApiError::bad_request("Invalid observation ID"))?;
     let mut data = assistant.data();
-    let mut updated = data.log.clone();
-    updated.retain(|item| item.id != id);
-    if updated.len() == data.log.len() {
-        return Err(ApiError::not_found("Observation not found"));
+    let item = data
+        .log
+        .iter()
+        .find(|item| item.id == id)
+        .ok_or_else(|| ApiError::not_found("Observation not found"))?;
+    let mut learning = data.learning.clone();
+    learning.progress.gaps.push(context::Gap {
+        seq: item.seq,
+        time_ms: item.time_ms,
+        reason: "deleted".into(),
+    });
+    if learning.progress.cursor.seq < item.seq
+        && data
+            .log
+            .iter()
+            .find(|old| old.seq > learning.progress.cursor.seq)
+            .is_some_and(|old| old.id == id)
+    {
+        learning.progress.cursor.offset = 0;
     }
-    persist(&assistant.path.join("observations.json"), &updated)
+    learning
+        .predictions
+        .retain(|item| item.observation_id != id);
+    learning.lessons.retain(|item| item.observation_id != id);
+    let affected = learning
+        .cases
+        .iter()
+        .filter(|case| {
+            case.observations.contains(&id)
+                || case.evidence.iter().any(|fact| fact.observation_id == id)
+        })
+        .map(|case| case.id)
+        .collect::<std::collections::BTreeSet<_>>();
+    if learning.cases.iter().any(|case| {
+        affected.contains(&case.id)
+            && case.run.as_ref().is_some_and(|run| {
+                run.is_running() || run.status == execution::RunStatus::Unverified
+            })
+    }) {
+        return Err(ApiError::bad_request(
+            "Stop or verify the affected execution before deleting this observation",
+        ));
+    }
+    for case in &mut learning.cases {
+        case.remove_observation(id);
+    }
+    learning
+        .grants
+        .retain(|grant| !affected.contains(&grant.case_id));
+    learning.predictions.retain(|prediction| {
+        prediction
+            .case_id
+            .is_none_or(|case| !affected.contains(&case))
+    });
+    for batch in &mut learning.progress.batches {
+        batch.associations.retain(|_, ids| {
+            ids.retain(|id| !affected.contains(id));
+            !ids.is_empty()
+        });
+    }
+    assistant
+        .commit_with_removal(&mut data, learning, &[id])
         .map_err(|error| ApiError::internal(error.to_string()))?;
-    data.log = updated;
-    let Data { log, learning, .. } = &mut *data;
-    if prune_learning(learning, log) {
-        persist(&assistant.path.join("learning.json"), learning)
-            .map_err(|error| ApiError::internal(error.to_string()))?;
-    }
+    data.log.retain(|item| item.id != id);
     data.preview = None;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1089,6 +1257,9 @@ pub(super) async fn save_decision(
             .map_err(ApiError::bad_request)?;
     }
     let mut data = assistant.data();
+    assistant
+        .store()
+        .map_err(|error| ApiError::internal(error.to_string()))?;
     persist(&assistant.path.join("decision.json"), &settings)
         .map_err(|error| ApiError::internal(error.to_string()))?;
     data.decision = settings.clone();
@@ -1115,7 +1286,7 @@ pub(super) async fn analyze(
 ) -> Result<Json<analysis::Prediction>, ApiError> {
     same_origin(&headers)?;
     let result =
-        tokio::task::spawn_blocking(move || assistant.analyze(&shell.cwd, id, None, query.image))
+        tokio::task::spawn_blocking(move || assistant.analyze(&shell.cwd, id, query.image))
             .await
             .map_err(|error| ApiError::internal(error.to_string()))?
             .map_err(ApiError::bad_request)?;
@@ -1146,12 +1317,15 @@ pub(super) async fn record_outcome(
         ));
     }
     let mut data = assistant.data();
-    let source_app = data
+    let observation = data
         .log
         .iter()
         .find(|item| item.id == id)
-        .map(Observation::upload_source)
         .ok_or_else(|| ApiError::not_found("Observation no longer exists"))?;
+    let source_app = observation.upload_source();
+    let local_only = !data
+        .learning
+        .permits_observation(observation, &data.decision);
     let mut history = data.learning.clone();
     history.lessons.retain(|lesson| lesson.observation_id != id);
     history.lessons.push(analysis::Outcome {
@@ -1160,14 +1334,15 @@ pub(super) async fn record_outcome(
         summary: summary.into(),
         lesson: lesson.into(),
         source_app,
+        local_only,
         feedback: input.feedback,
     });
     history
         .lessons
         .drain(..history.lessons.len().saturating_sub(300));
-    persist(&assistant.path.join("learning.json"), &history)
+    assistant
+        .commit(&mut data, history)
         .map_err(|error| ApiError::internal(error.to_string()))?;
-    data.learning = history;
     drop(data);
     Ok(Json(assistant.view()))
 }
@@ -1184,9 +1359,9 @@ pub(super) async fn forget_outcome(
     if history.lessons.len() == data.learning.lessons.len() {
         return Err(ApiError::not_found("Outcome no longer exists"));
     }
-    persist(&assistant.path.join("learning.json"), &history)
+    assistant
+        .commit(&mut data, history)
         .map_err(|error| ApiError::internal(error.to_string()))?;
-    data.learning = history;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1202,4 +1377,28 @@ pub(super) async fn test_decision(
         .map_err(|error| ApiError::internal(error.to_string()))?
         .map_err(ApiError::bad_request)?;
     Ok(Json(result))
+}
+
+pub(super) fn worker_budget(cwd: &FsPath, provider_id: &str, budget: usize) -> usize {
+    let window = if provider_id.is_empty() {
+        super::provider_diagnostics::profile(cwd, true)
+            .ok()
+            .map(|(model, profile)| {
+                profile.capabilities.context_window.unwrap_or_else(|| {
+                    opencowork_runtime::get_context_window_for_model(&model, None)
+                })
+            })
+    } else {
+        super::saved_provider_profile(cwd, provider_id)
+            .ok()
+            .map(|profile| {
+                profile
+                    .model_capabilities
+                    .context_window
+                    .unwrap_or_else(|| {
+                        opencowork_runtime::get_context_window_for_model(&profile.model, None)
+                    })
+            })
+    };
+    budget.min(window.unwrap_or(16_384).saturating_sub(5_500).max(1000))
 }

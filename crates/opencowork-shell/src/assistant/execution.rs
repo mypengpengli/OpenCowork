@@ -221,6 +221,8 @@ pub enum Mode {
 #[serde(rename_all = "camelCase")]
 pub struct Grant {
     pub id: Uuid,
+    #[serde(default)]
+    pub workspace: String,
     pub case_id: Uuid,
     pub mode: Mode,
     pub expires_ms: Option<u64>,

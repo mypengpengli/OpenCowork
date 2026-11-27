@@ -1,9 +1,11 @@
 """Check observation pages and live updates using isolated data and a headless browser."""
 
+from contextlib import closing
 import json
 import os
 from pathlib import Path
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -49,7 +51,14 @@ def run(executable):
                 if process:
                     process.terminate()
                     process.wait(timeout=10)
-                (store / "observations.json").write_text(json.dumps(records), encoding="utf-8")
+                database = store / "assistant.sqlite3"
+                if not database.exists():
+                    (store / "observations.json").write_text(json.dumps(records), encoding="utf-8")
+                else:
+                    with closing(sqlite3.connect(database)) as db, db:
+                        item = records[-1]
+                        db.execute("INSERT INTO observations (id, time_ms, body) VALUES (?, ?, ?)",
+                                   (item["id"], item["timeMs"], json.dumps(item)))
                 process = subprocess.Popen([executable], cwd=root, env=env, stdout=log, stderr=log,
                                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                 for _ in range(100):

@@ -234,7 +234,7 @@ pub(super) fn model_json(
     instruction: &str,
     value: Value,
 ) -> Result<(Value, u64), String> {
-    model_json_request(cwd, instruction, value, Vec::new(), None, "")
+    model_json_request(cwd, instruction, value, Vec::new(), None, "", None)
 }
 
 pub(super) fn model_json_with_images(
@@ -256,7 +256,19 @@ pub(super) fn model_json_with_images(
         image_urls,
         Some(timeout),
         provider_id,
+        None,
     )
+}
+
+pub(super) fn assistant_batch_json(
+    cwd: &Path,
+    instruction: &str,
+    value: Value,
+    images: Vec<String>,
+    provider_id: &str,
+) -> Result<(Value, u64), String> {
+    let timeout = if images.is_empty() { 60_000 } else { 75_000 };
+    model_json_request(cwd, instruction, value, images, Some(timeout), provider_id, Some(4096))
 }
 
 fn model_json_request(
@@ -266,6 +278,7 @@ fn model_json_request(
     image_urls: Vec<String>,
     timeout: Option<u64>,
     provider_id: &str,
+    output_limit: Option<usize>,
 ) -> Result<(Value, u64), String> {
     use opencowork_api::*;
     let (model, mut profile, key) = if provider_id.is_empty() {
@@ -317,7 +330,7 @@ fn model_json_request(
     };
     let request = ProviderRequest {
         model: model.into(),
-        max_output_tokens: Some(if deepseek_json { 1536 } else { 768 }),
+        max_output_tokens: Some(output_limit.unwrap_or(if deepseek_json { 1536 } else { 768 })),
         system_prompt: vec![instruction.into()],
         messages: vec![InputMessage {
             reasoning: Default::default(),
@@ -334,6 +347,9 @@ fn model_json_request(
     } else {
         provider.execute(request)?
     };
+    if output_limit.is_some() && result.events.iter().any(|event| matches!(event, ProviderEvent::Finish { reason } if reason == "length" || reason == "max_tokens")) {
+        return Err("Model output exceeded the batch capacity".into());
+    }
     let text = result
         .events
         .iter()

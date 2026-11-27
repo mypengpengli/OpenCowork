@@ -71,6 +71,57 @@ export function initAssistant({ request, t }) {
       : data.language ? t('assistant.ocr', { language: data.language }) : '')
     lookup('analysis-status').textContent = data.analysisError || (data.analyzing ? t('assistant.analyzing')
       : data.decision.analyzeAutomatically ? t('assistant.budget', { remaining: data.autoRemaining }) : '')
+    if (data.progress) {
+      const p = data.progress
+      const clock = ms => new Date(ms).toLocaleString()
+      const parts = [
+        p.throughTimeMs ? tr('已整理至 ' + clock(p.throughTimeMs), 'Processed through ' + clock(p.throughTimeMs)) : '',
+        tr('待整理 ' + p.pending + ' 条', p.pending + ' pending'),
+        p.oldestPendingMs ? tr('最早 ' + clock(p.oldestPendingMs), 'Oldest ' + clock(p.oldestPendingMs)) : '',
+        p.gaps ? tr('已知缺口 ' + p.gaps + ' 处', p.gaps + ' known gaps') : '',
+        p.legacyCoverageUnknown ? tr('升级前的记录覆盖范围未知', 'Prior-version coverage unknown') : '',
+      ].filter(Boolean)
+      lookup('analysis-status').textContent = [lookup('analysis-status').textContent, ...parts].filter(Boolean).join(' · ')
+    }
+    const coverage = lookup('coverage')
+    if (coverage) {
+      const progress = data.progress
+      const attempts = progress?.recentAttempts ?? []
+      const gaps = progress?.recentGaps ?? []
+      coverage.hidden = !attempts.length && !gaps.length
+      lookup('coverage-title').textContent = tr('最近整理详情', 'Recent processing details')
+      const completed = new Map((progress?.recentBatches ?? []).map(batch => [batch.id, batch]))
+      const rows = attempts.map(attempt => {
+        const batch = completed.get(attempt.id)
+        const tail = attempt.through.seq + Number(attempt.through.offset > 0)
+        const references = batch?.citedCases.length ?? 0
+        return [
+          new Date(attempt.timeMs).toLocaleString(),
+          '#' + (attempt.start.seq + 1) + '–' + tail,
+          batch ? tr('已提交', 'Committed') : tr('未提交', 'Uncommitted'),
+          attempt.usedImage ? tr('附图', 'With image') : '',
+          batch ? tr('引用 ' + references + ' 笔旧事项', references + ' prior cases') : '',
+          batch?.tokens ? batch.tokens + ' tokens' : '',
+        ].filter(Boolean).join(' · ')
+      })
+      const reason = {
+        expired: tr('未整理即过期', 'Expired before processing'),
+        deleted: tr('用户删除', 'User deleted'),
+        captureInterrupted: tr('采集中断', 'Capture interrupted'),
+        assistantAction: tr('助手操作', 'Assistant action'),
+        uploadExcluded: tr('按应用规则排除', 'Excluded by app policy'),
+      }
+      for (const gap of gaps) rows.push('#' + gap.seq + ' · ' + (reason[gap.reason] ?? gap.reason))
+      const target = lookup('coverage-entries')
+      if (target.dataset.rows !== JSON.stringify(rows)) {
+        target.dataset.rows = JSON.stringify(rows)
+        target.replaceChildren(...rows.map(line => {
+          const item = document.createElement('li')
+          item.textContent = line
+          return item
+        }))
+      }
+    }
     const m = data.metrics
     if (m) {
       const measure = n => n == null ? '—' : `${n} ms`

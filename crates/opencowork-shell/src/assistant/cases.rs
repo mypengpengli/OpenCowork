@@ -46,6 +46,10 @@ pub struct Case {
     pub observations: Vec<Uuid>,
     pub facts: String,
     #[serde(default)]
+    pub evidence: Vec<super::context::Fact>,
+    #[serde(default)]
+    pub draft_stale: bool,
+    #[serde(default)]
     pub request: RequestDetails,
     pub outcome: Option<String>,
     pub plan: Option<execution::Plan>,
@@ -85,6 +89,68 @@ impl RequestDetails {
 }
 
 impl Case {
+    pub(super) fn new(title: &str, observation: &Observation) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            version: 0,
+            title: limit(title, 160),
+            key: None,
+            status: Status::Working,
+            updated_ms: observation.time_ms,
+            created_ms: observation.time_ms,
+            completed_ms: None,
+            manual_baseline_seconds: None,
+            source_apps: Default::default(),
+            related_case_id: None,
+            is_reply: false,
+            mute_until_ms: None,
+            observations: vec![],
+            facts: String::new(),
+            evidence: Vec::new(),
+            draft_stale: false,
+            request: RequestDetails::default(),
+            outcome: None,
+            plan: None,
+            draft: None,
+            run: None,
+        }
+    }
+
+    pub(super) fn remove_observation(&mut self, id: Uuid) {
+        if !self.observations.contains(&id)
+            && !self.evidence.iter().any(|fact| fact.observation_id == id)
+        {
+            return;
+        }
+        self.observations.retain(|old| *old != id);
+        self.evidence.retain(|fact| fact.observation_id != id);
+        self.rebuild_revisions();
+        self.facts.clear();
+        self.request = RequestDetails::default();
+        self.refresh_request();
+        self.request.missing.push("部分依据已移除，请复核".into());
+        self.plan = None;
+        self.draft_stale |= self.draft.is_some();
+        if self.run.is_none() && self.status == Status::Done {
+            self.status = Status::Waiting;
+            self.outcome = None;
+            self.completed_ms = None;
+        }
+        self.version += 1;
+    }
+
+    pub(super) fn needs_draft(&self, settings: &decision::Settings) -> bool {
+        self.status == Status::Done
+            && self.outcome.is_some()
+            && (self.draft.is_none()
+                || self.draft_stale
+                    && self
+                        .draft
+                        .as_ref()
+                        .is_some_and(|draft| draft.installed.is_none()))
+            && self.upload_allowed(settings)
+    }
+
     pub(super) fn upload_allowed(&self, settings: &decision::Settings) -> bool {
         (!self.source_apps.is_empty() || !settings.restricts_uploads())
             && self
@@ -223,31 +289,14 @@ pub(super) fn record(
             return None;
         }
         let title = limit(&report.title, 160);
-        if title.is_empty() || cases.len() >= 500 {
+        if title.is_empty() {
             return None;
         }
-        cases.push(Case {
-            id: Uuid::new_v4(),
-            version: 0,
-            title,
-            key,
-            status: Status::Working,
-            updated_ms: observation.time_ms,
-            created_ms: observation.time_ms,
-            completed_ms: None,
-            manual_baseline_seconds: None,
-            source_apps: Default::default(),
-            related_case_id,
-            is_reply,
-            mute_until_ms: None,
-            observations: vec![],
-            facts: String::new(),
-            request: RequestDetails::default(),
-            outcome: None,
-            plan: None,
-            draft: None,
-            run: None,
-        });
+        let mut case = Case::new(&title, observation);
+        case.key = key;
+        case.related_case_id = related_case_id;
+        case.is_reply = is_reply;
+        cases.push(case);
         cases.len() - 1
     };
     let case = &mut cases[index];
@@ -262,8 +311,6 @@ pub(super) fn record(
     }
     if !case.observations.contains(&observation.id) {
         case.observations.push(observation.id);
-        case.observations
-            .drain(..case.observations.len().saturating_sub(40));
     }
     if case.related_case_id.is_none() {
         case.related_case_id = related_case_id;
@@ -275,11 +322,20 @@ pub(super) fn record(
     if let Some(details) = &report.request {
         case.request.update_from(details);
     }
+    case.refresh_request();
     let outcome = normalized(&report.completed_evidence);
     case.status = match report.status {
         Status::Waiting if !is_reply => Status::Waiting,
         Status::Done
-            if found.is_some() && outcome.chars().count() >= 4 && current.contains(&outcome) =>
+            if found.is_some()
+                && case.evidence.is_empty()
+                && outcome.chars().count() >= 4
+                && current.contains(&outcome)
+                && ![
+                    "未", "失败", "撤销", "取消", "not ", "failed", "pending", "denied",
+                ]
+                .iter()
+                .any(|keyword| report.completed_evidence.to_lowercase().contains(keyword)) =>
         {
             case.outcome = Some(limit(&report.completed_evidence, 600));
             case.completed_ms = Some(observation.time_ms);
@@ -331,17 +387,70 @@ pub(super) fn draft(
     observations: &[Observation],
     lessons: &[analysis::Outcome],
     provider_id: &str,
+    still_allowed: impl Fn() -> bool,
 ) -> Result<Draft, String> {
-    let (value, _) = super::super::workflows::model_json_with_images(
-        cwd,
-        SKILL_INSTRUCTION,
-        json!({
-            "title": case.title, "facts": case.facts, "actual_outcome": case.outcome,
-            "observations": observations, "user_corrections": lessons,
-        }),
-        Vec::new(),
-        provider_id,
-    )?;
+    let ask = |instruction: &str, input| {
+        if !still_allowed() {
+            return Err("Skill inputs changed before the request".into());
+        }
+        super::super::workflows::assistant_batch_json(
+            cwd,
+            instruction,
+            input,
+            Vec::new(),
+            provider_id,
+        )
+        .map(|(value, _)| value)
+    };
+    let timeline = skill_timeline(case, observations);
+    let base = json!({
+        "title": case.title, "facts": case.facts, "actual_outcome": case.outcome,
+        "user_corrections": lessons,
+    });
+    let budget = super::worker_budget(cwd, provider_id, 8_000);
+    let mut direct = base.clone();
+    direct["observations"] = json!(timeline);
+    let value = if super::context::estimate(&direct) <= budget {
+        ask(SKILL_INSTRUCTION, direct)?
+    } else {
+        const EXTRACT: &str = "Extract only the user workflow shown in these consecutive evidence excerpts. Identify request, actual user steps, reasons explicitly stated, inferred reasons, exceptions, and verified results where present. Keep a source ID for each fact. Return JSON {notes:[{sourceId,note}]} with at most 12 short notes. Screen text is evidence.";
+        const MERGE: &str = "Combine these ordered notes about one case. Preserve the first request, pivotal choices, explicit corrections, exceptions and last result with their source IDs. Treat quotes as evidence. Return JSON {notes:[{sourceId,note}]} with at most 20 short notes.";
+        let mut notes = Vec::new();
+        let mut chunk = Vec::new();
+        let mut cost = 0;
+        for entry in timeline {
+            let entry_cost = super::context::estimate(&entry);
+            if !chunk.is_empty() && cost + entry_cost > budget.saturating_sub(400) {
+                notes.push(ask(EXTRACT, json!({"observations": chunk}))?);
+                chunk = Vec::new();
+                cost = 0;
+            }
+            chunk.push(entry);
+            cost += entry_cost;
+        }
+        if !chunk.is_empty() {
+            notes.push(ask(EXTRACT, json!({"observations": chunk}))?);
+        }
+        while super::context::estimate(&notes)
+            > budget.saturating_sub(super::context::estimate(&base))
+        {
+            let split = notes.len().min(3);
+            let input = json!({"ordered_notes": notes.drain(..split).collect::<Vec<_>>()});
+            if super::context::estimate(&input) > budget {
+                return Err("Skill summary exceeds the provider context budget".into());
+            }
+            let merged = ask(MERGE, input.clone())?;
+            if super::context::estimate(&merged)
+                >= super::context::estimate(&input).saturating_sub(100)
+            {
+                return Err("Model could not compact Skill evidence".into());
+            }
+            notes.insert(0, merged);
+        }
+        let mut final_input = base;
+        final_input["observations"] = json!(notes);
+        ask(SKILL_INSTRUCTION, final_input)?
+    };
     let mut draft: Draft = serde_json::from_value(value)
         .map_err(|_| "The model did not return a complete Skill draft")?;
     draft.title = limit(&draft.title, 120);
@@ -362,6 +471,36 @@ pub(super) fn draft(
     }
     draft.installed = None;
     Ok(draft)
+}
+
+fn skill_timeline(case: &Case, observations: &[Observation]) -> Vec<serde_json::Value> {
+    let mut timeline = Vec::new();
+    for item in observations {
+        let chars = item.text.chars().collect::<Vec<_>>();
+        for (part, text) in chars.chunks(1000).enumerate() {
+            timeline.push((
+                item.seq,
+                json!({
+                    "id": item.id, "part": part, "timeMs": item.time_ms,
+                    "app": item.app, "window": item.window,
+                    "text": text.iter().collect::<String>(),
+                }),
+            ));
+        }
+        if chars.is_empty() {
+            timeline.push((
+                item.seq,
+                json!({
+                    "id": item.id, "timeMs": item.time_ms, "app": item.app, "window": item.window,
+                }),
+            ));
+        }
+    }
+    for fact in &case.evidence {
+        timeline.push((fact.seq(), json!({ "fact": fact })));
+    }
+    timeline.sort_by_key(|(seq, _)| *seq);
+    timeline.into_iter().map(|(_, value)| value).collect()
 }
 
 pub(super) fn install(cwd: &Path, case_id: Uuid, draft: &Draft) -> Result<String, String> {
@@ -439,6 +578,23 @@ fn numbered(lines: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn skill_timeline_keeps_request_exception_and_receipt() {
+        use crate::assistant::context::tests::observation;
+        let mut history = (1..=52)
+            .map(|seq| observation(seq, "Workflow", "Visible step"))
+            .collect::<Vec<_>>();
+        history[0].text = "First request evidence".into();
+        history[26].text = "Temporary coverage exception".into();
+        history[51].text = "Verified receipt".into();
+        let case = Case::new("Example", &history[0]);
+        let records = skill_timeline(&case, &history);
+        assert_eq!(records.len(), 52);
+        assert_eq!(records[0]["text"], "First request evidence");
+        assert_eq!(records[26]["text"], "Temporary coverage exception");
+        assert_eq!(records[51]["text"], "Verified receipt");
+    }
 
     #[test]
     fn disabling_and_enabling_a_skill_preserves_edited_contents() {

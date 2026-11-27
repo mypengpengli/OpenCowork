@@ -395,6 +395,10 @@
                 <label class="assistant-check"><input type="checkbox" name="autoRunReady" /> <span data-i18n="assistant.autoRun">允许自动执行已就绪的方案，无需逐笔授权</span></label>
                 <label class="assistant-check"><input type="checkbox" name="autoRunReplies" /> <span data-i18n="assistant.autoReplies">允许自动代发已就绪的三局通文字回复，无需逐笔授权</span></label>
                 <p id="assistant-analysis-status" class="field-hint" role="status"></p>
+                <details id="assistant-coverage">
+                  <summary id="assistant-coverage-title"></summary>
+                  <ul id="assistant-coverage-entries"></ul>
+                </details>
                 <p id="assistant-metrics" class="field-hint"></p>
                 <label><span data-i18n="assistant.dailyLimit">后台预测每日上限</span><input name="dailyLimit" type="number" min="0" max="1000" required /></label>
                 <label><span data-i18n="assistant.textProvider">文字分析 Provider</span><select name="textProvider"></select></label>

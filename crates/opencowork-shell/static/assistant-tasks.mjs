@@ -81,6 +81,26 @@ export function initTasks({ page, request, refresh }) {
       version: item.version, status: 'cancelled',
     })))
     row.append(controls)
+    const correction = node('div', '', 'assistant-row')
+    const field = node('select')
+    field.setAttribute('aria-label', tr('要更正的字段', 'Field to correct'))
+    for (const [key, label] of [
+      ['project', tr('项目', 'Project')], ['account', tr('账号', 'Account')],
+      ['requestedRole', tr('请求角色', 'Requested role')], ['selectedRole', tr('实际选择', 'Actual selection')],
+      ['subject', tr('办理对象', 'Subject')], ['requester', tr('申请人', 'Requester')],
+    ]) {
+      const option = node('option', label)
+      option.value = key
+      field.append(option)
+    }
+    const value = node('input')
+    value.placeholder = tr('输入核实后的值', 'Enter the confirmed value')
+    value.setAttribute('aria-label', value.placeholder)
+    value.maxLength = 240
+    correction.append(field, value, action('确认更正', 'Confirm correction', () => post(base(item.id), {
+      version: item.version, correction: { field: field.value, value: value.value },
+    })))
+    row.append(correction)
     const outcome = node('div', '', 'assistant-row')
     const result = node('input')
     result.value = item.outcome ?? ''
@@ -147,7 +167,7 @@ export function initTasks({ page, request, refresh }) {
   }
 
   function addDraft(row, item, data) {
-    if (!item.draft) {
+    if (!item.draft || item.draftStale && !item.draft.installed) {
       if (data.drafting.includes(item.id)) row.append(node('p', tr('正在整理 Skill…', 'Drafting Skill…')))
       else row.append(action('整理 Skill', 'Draft Skill', () => post(base(item.id) + '/draft')))
       return
@@ -155,6 +175,9 @@ export function initTasks({ page, request, refresh }) {
     const draft = item.draft
     const section = node('div', '', 'assistant-prediction')
     section.append(node('strong', draft.title), node('p', draft.trigger))
+    if (item.draftStale) {
+      section.append(node('p', tr('依据已有变更，请重新核对这份 Skill。', 'The case evidence changed. Review this Skill.')))
+    }
     for (const [label, lines] of [
       [tr('操作步骤', 'Steps'), draft.steps],
       [tr('完成检查', 'Checks'), draft.checks],
@@ -204,6 +227,32 @@ export function initTasks({ page, request, refresh }) {
           if (value) row.append(node('p', label + ' · ' + value, 'field-hint'))
         }
         if (item.facts) row.append(node('p', item.facts))
+        if (item.evidence?.length) {
+          const evidence = node('details')
+          evidence.append(node('summary', tr('事项证据', 'Case evidence') + ' · ' + item.evidence.length))
+          evidence.addEventListener('toggle', () => {
+            if (!evidence.open || evidence.children.length > 1) return
+            const entries = node('ol')
+            for (const fact of item.evidence) {
+              const label = {
+                requester: tr('请求人', 'Requester'), subject: tr('办理对象', 'Subject'),
+                account: tr('账号', 'Account'), project: tr('项目', 'Project'),
+                purpose: tr('用途', 'Purpose'), requestedRole: tr('请求角色', 'Requested role'),
+                selectedRole: tr('实际选择', 'Observed selection'), selectionReason: tr('选择依据', 'Selection reason'),
+                step: tr('操作步骤', 'Step'), receipt: tr('回执', 'Receipt'),
+              }[fact.field] || fact.field
+              const kind = fact.superseded ? tr('已更正', 'Superseded')
+                : fact.kind === 'inferred' ? tr('推测', 'Inferred')
+                  : fact.kind === 'confirmed' ? tr('人工确认', 'User confirmed') : tr('直接观察', 'Observed')
+              const source = [new Date(fact.timeMs).toLocaleString(), fact.sourceApp, '#' + fact.seq].filter(Boolean).join(' · ')
+              const entry = node('li', label + ' · ' + fact.value + ' · ' + kind)
+              entry.append(node('p', source + ' · ' + fact.quote, 'field-hint'))
+              entries.append(entry)
+            }
+            evidence.append(entries)
+          }, { once: true })
+          row.append(evidence)
+        }
         if (item.outcome) row.append(node('p', item.outcome))
         const running = ['waitingTarget', 'running'].includes(item.run?.status)
         if (item.createdMs && item.completedMs) {
