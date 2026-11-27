@@ -540,6 +540,15 @@ async fn main() -> anyhow::Result<()> {
             }),
         )
         .route(
+            "/updates.mjs",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+                    include_str!("../static/updates.mjs"),
+                )
+            }),
+        )
+        .route(
             "/schedules.mjs",
             get(|| async {
                 (

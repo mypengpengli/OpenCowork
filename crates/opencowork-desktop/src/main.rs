@@ -10,9 +10,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tao::dpi::LogicalSize;
 use tao::event::{Event, WindowEvent};
-use tao::event_loop::{ControlFlow, EventLoop};
+use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tao::window::WindowBuilder;
 use wry::WebViewBuilder;
+mod updater;
+use updater::{UpdateEvent, Updater};
 
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -63,7 +65,9 @@ fn run() -> anyhow::Result<()> {
         return Err(error);
     }
 
-    let event_loop = EventLoop::new();
+    let event_loop = EventLoopBuilder::<UpdateEvent>::with_user_event().build();
+    let update_proxy = event_loop.create_proxy();
+    let updater = Updater::new(update_proxy.clone());
     let window = WindowBuilder::new()
         .with_title("OpenCowork Desktop")
         .with_inner_size(LogicalSize::new(1480.0, 980.0))
@@ -71,14 +75,54 @@ fn run() -> anyhow::Result<()> {
         .build(&event_loop)
         .context("failed to create desktop window")?;
 
-    let _webview = WebViewBuilder::new()
+    let allowed_origin = shell_url.clone();
+    let webview = WebViewBuilder::new()
         .with_url(&shell_url)
+        .with_initialization_script("window.__OPENCOWORK_DESKTOP__ = true;")
+        .with_ipc_handler(move |request| {
+            if !request.uri().to_string().starts_with(&allowed_origin) {
+                return;
+            }
+            let Ok(message) = serde_json::from_str::<serde_json::Value>(request.body()) else {
+                return;
+            };
+            let event = match message["action"].as_str() {
+                Some("updates:status") => UpdateEvent::Status,
+                Some("updates:check") => UpdateEvent::Check,
+                Some("updates:install") => UpdateEvent::Install,
+                Some("updates:auto") => match message["enabled"].as_bool() {
+                    Some(enabled) => UpdateEvent::Auto(enabled),
+                    None => return,
+                },
+                _ => return,
+            };
+            let _ = update_proxy.send_event(event);
+        })
         .with_devtools(cfg!(debug_assertions))
         .build(&window)
         .context("failed to build desktop webview")?;
+    updater.start();
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
+
+        if let Event::UserEvent(action) = &event {
+            match action {
+                UpdateEvent::Check => updater.check(),
+                UpdateEvent::Auto(enabled) => {
+                    if let Err(error) = updater.set_auto(*enabled) { updater.error(error); }
+                    if *enabled { updater.check(); }
+                },
+                UpdateEvent::Install => match updater.install() {
+                    Ok(true) => { let _ = terminate_shell_process(&mut shell_child); *control_flow = ControlFlow::Exit; },
+                    Ok(false) => {},
+                    Err(error) => updater.error(error),
+                },
+                UpdateEvent::Status | UpdateEvent::Changed => {
+                    let _ = webview.evaluate_script(&format!("window.dispatchEvent(new CustomEvent('opencowork:update', {{detail:{}}}));", updater.snapshot()));
+                }
+            }
+        }
 
         if let Event::WindowEvent {
             event: WindowEvent::CloseRequested,

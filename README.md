@@ -53,9 +53,13 @@ git pull --ff-only
 
 ### 安装 Windows 客户端
 
-从 [Release 下载 Windows 安装程序](https://github.com/mypengpengli/OpenCowork/releases/download/v0.6.0/OpenCowork-0.6.0-Setup-x64.exe)，双击 `OpenCowork-0.6.0-Setup-x64.exe` 完成安装，然后从桌面或开始菜单打开 OpenCowork。Release 只提供这一个安装文件。
+从 [Release 下载 Windows 安装程序](https://github.com/mypengpengli/OpenCowork/releases/download/v0.6.1/OpenCowork-0.6.1-Setup-x64.exe)，双击 `OpenCowork-0.6.1-Setup-x64.exe` 完成安装，然后从桌面或开始菜单打开 OpenCowork。Release 只提供这一个安装文件。
 
 安装到当前用户账户，不需要管理员权限。已有 WebView2 时直接使用；缺少时由安装程序补齐，需要联网。可在 Windows「已安装的应用」中卸载；升级和卸载保留工作区、会话与模型设置。
+
+从 0.6.1 开始，安装版默认在启动后和每 6 小时检查本仓库最新正式 Release，发现新版会后台下载并核对 GitHub 提供的 SHA256。下载完成后提示“退出并更新”，经用户确认后退出当前客户端、安装并重新打开，不会强制打断正在使用的客户端。也可在 **设置 → 环境 → 软件更新** 手动检查或关闭自动检查。更新需要能够访问 GitHub；网络失败可重试。旧版 0.6.0 没有更新器，需要手动安装 0.6.1 一次。源码启动版本继续使用 Git 和重新构建更新。
+
+发布 main 新版时递增 Cargo 工作区版本，使用 `scripts/package-installer.ps1` 生成对应版本的 EXE，将它上传至同版本 `vX.Y.Z` 的正式 Release 并标记 Latest；下载文件名保持 `OpenCowork-X.Y.Z-Setup-x64.exe`。应上传并核验安装包后再发布 Release。AS 的实验版本使用独立名称及预发布渠道，不能替换 main 的正式 Latest。自动更新的完整性检查不替代代码签名，Windows 对未签名程序的拦截仍需可信签名解决。
 
 - 桌面运行需要 Windows 10／11 x64 和 WebView2；无需安装 Rust、MSVC 或 Node.js。
 - 内置浏览器工具还需要本机安装 Chrome 或 Edge；无需浏览器扩展。

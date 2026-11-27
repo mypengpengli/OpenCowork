@@ -4,6 +4,7 @@ import { initHistorySearch } from '/history-search.mjs'
 import { readChatStream, appendChatEvent } from '/chat-stream.mjs'
 import { initFeaturePanels } from '/features.mjs'
 import { initSchedules } from '/schedules.mjs'
+import { initUpdates } from '/updates.mjs'
 import { appendDraft, processMessageIndexes, processMessageGroups, resolveSlashInvocation, coalesceAsync, completeSlashInput } from '/ui-controls.mjs'
 let fullHistorySearch
 let featurePanels
@@ -7411,6 +7412,7 @@ initSessionActions()
 window.addEventListener('opencowork:composer-state', updateComposerState)
 featurePanels = initFeaturePanels({state, request, composer: els.composerInput, status: setComposerStatus, openSession: loadSession, prepareTask, setView})
 schedulesPage = initSchedules({state, request, openSession: async id => { await loadSession(id); setView('chat') }})
+initUpdates({state})
 
 async function openFileReference(path, line = 1) {
   let relative = String(path).replaceAll('\\', '/')

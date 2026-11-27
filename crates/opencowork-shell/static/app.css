@@ -19,6 +19,9 @@
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
 }
 
+.app-update-banner { position: fixed; top: 18px; right: 22px; z-index: 1100; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; max-width: calc(100vw - 32px); padding: 14px 18px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--bg-elevated); box-shadow: var(--shadow); }
+.app-update-banner[hidden] { display: none; }
+
 /* Scheduled tasks share the main navigation and keep drafts outside polling lists. */
 #schedules-view { padding: 28px; overflow: auto; }
 #schedules-view > .page-header, .schedule-content { width: min(1080px, 100%); margin-inline: auto; }

@@ -10,3 +10,6 @@ anyhow.workspace = true
 reqwest.workspace = true
 tao.workspace = true
 wry.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"

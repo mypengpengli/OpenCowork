@@ -1950,7 +1950,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "opencowork-agents"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "opencowork-runtime",
  "serde",
@@ -1960,7 +1960,7 @@ dependencies = [
 
 [[package]]
 name = "opencowork-api"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "libc",
  "reqwest",
@@ -1971,7 +1971,7 @@ dependencies = [
 
 [[package]]
 name = "opencowork-app"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "opencowork-api",
  "opencowork-mcp",
@@ -1985,7 +1985,7 @@ dependencies = [
 
 [[package]]
 name = "opencowork-cli"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "opencowork-agents",
  "opencowork-api",
@@ -2002,24 +2002,27 @@ dependencies = [
 
 [[package]]
 name = "opencowork-commands"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "opencowork-runtime",
 ]
 
 [[package]]
 name = "opencowork-desktop"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
  "tao",
  "wry",
 ]
 
 [[package]]
 name = "opencowork-lsp"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "lsp-types",
  "serde",
@@ -2030,7 +2033,7 @@ dependencies = [
 
 [[package]]
 name = "opencowork-mcp"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "reqwest",
  "serde",
@@ -2041,7 +2044,7 @@ dependencies = [
 
 [[package]]
 name = "opencowork-plugins"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "opencowork-runtime",
  "serde",
@@ -2052,7 +2055,7 @@ dependencies = [
 
 [[package]]
 name = "opencowork-runtime"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "base64",
  "libc",
@@ -2069,7 +2072,7 @@ dependencies = [
 
 [[package]]
 name = "opencowork-shell"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -2095,7 +2098,7 @@ dependencies = [
 
 [[package]]
 name = "opencowork-skills"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "glob",
  "walkdir",
@@ -2103,7 +2106,7 @@ dependencies = [
 
 [[package]]
 name = "opencowork-tools"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "base64",
  "glob",

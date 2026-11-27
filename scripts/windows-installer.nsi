@@ -27,6 +27,49 @@ Var TestMode
 Var RegistrationName
 Var WorkspaceDir
 Var WebViewPresent
+Var IsUpdate
+Var WaitRemaining
+Var FilesLocked
+
+!macro FILE_GUARD PREFIX
+Function ${PREFIX}EnsureFilesAvailable
+  check_files_again:
+  StrCpy $FilesLocked "0"
+  IfFileExists "$INSTDIR\opencowork-desktop.exe" 0 check_shell_file
+  ClearErrors
+  FileOpen $R0 "$INSTDIR\opencowork-desktop.exe" a
+  ${If} ${Errors}
+    StrCpy $FilesLocked "1"
+  ${Else}
+    FileClose $R0
+  ${EndIf}
+  check_shell_file:
+  IfFileExists "$INSTDIR\opencowork-shell.exe" 0 files_checked
+  ClearErrors
+  FileOpen $R0 "$INSTDIR\opencowork-shell.exe" a
+  ${If} ${Errors}
+    StrCpy $FilesLocked "1"
+  ${Else}
+    FileClose $R0
+  ${EndIf}
+  files_checked:
+  ${If} $FilesLocked == "1"
+    ${If} $WaitRemaining > 0
+      IntOp $WaitRemaining $WaitRemaining - 1
+      Sleep 250
+      Goto check_files_again
+    ${EndIf}
+    IfSilent files_locked_silent
+    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "请先关闭这个安装目录下的 OpenCowork，然后点击重试。" IDRETRY check_files_again
+    Abort
+    files_locked_silent:
+      SetErrorLevel 1
+      Abort
+  ${EndIf}
+FunctionEnd
+!macroend
+!insertmacro FILE_GUARD ""
+!insertmacro FILE_GUARD "un."
 
 !define MUI_ABORTWARNING
 !define MUI_WELCOMEPAGE_TEXT "安装 OpenCowork 到当前用户账户，并创建桌面和开始菜单快捷方式。$\r$\n$\r$\n首次补齐运行组件时需要联网。"
@@ -56,41 +99,28 @@ Function .onInit
   SetRegView 64
   StrCpy $TestMode "0"
   StrCpy $RegistrationName "OpenCowork"
+  StrCpy $IsUpdate "0"
+  StrCpy $WaitRemaining "0"
   ${GetParameters} $R0
+  ClearErrors
+  ${GetOptions} $R0 "/UPDATE" $R1
+  ${IfNot} ${Errors}
+    StrCpy $IsUpdate "1"
+    StrCpy $WaitRemaining "120"
+  ${EndIf}
   ClearErrors
   ${GetOptions} $R0 "/TESTMODE" $R1
   ${IfNot} ${Errors}
     StrCpy $TestMode "1"
     StrCpy $RegistrationName "OpenCowork-InstallerTest"
   ${EndIf}
-  ${If} $TestMode != "1"
-    check_running_app:
-      FindWindow $R0 "" "OpenCowork Desktop"
-      ${If} $R0 != 0
-        IfSilent running_app_silent
-        MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "请先关闭 OpenCowork，然后点击重试。" IDRETRY check_running_app
-        Abort
-        running_app_silent:
-          SetErrorLevel 1
-          Abort
-      ${EndIf}
-  ${EndIf}
+  Call EnsureFilesAvailable
 FunctionEnd
 
 Function un.onInit
   ReadINIStr $TestMode "$INSTDIR\installation.ini" "Installation" "TestMode"
-  ${If} $TestMode != "1"
-    check_running_app:
-      FindWindow $R0 "" "OpenCowork Desktop"
-      ${If} $R0 != 0
-        IfSilent running_app_silent
-        MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "请先关闭 OpenCowork，然后点击重试。" IDRETRY check_running_app
-        Abort
-        running_app_silent:
-          SetErrorLevel 1
-          Abort
-      ${EndIf}
-  ${EndIf}
+  StrCpy $WaitRemaining "0"
+  Call un.EnsureFilesAvailable
 FunctionEnd
 
 
@@ -122,6 +152,7 @@ Function DetectWebView
 FunctionEnd
 
 Section "OpenCowork" MainSection
+  Call EnsureFilesAvailable
   Call DetectWebView
   ${If} $WebViewPresent != "1"
     InitPluginsDir
@@ -162,6 +193,12 @@ Section "OpenCowork" MainSection
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\$RegistrationName" "QuietUninstallString" '$\"$INSTDIR\Uninstall.exe$\" /S'
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\$RegistrationName" "NoModify" 1
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\$RegistrationName" "NoRepair" 1
+  ${If} $IsUpdate == "1"
+  ${AndIf} $TestMode != "1"
+    IfSilent 0 update_restart_done
+    ExecShell "open" "$INSTDIR\opencowork-desktop.exe"
+    update_restart_done:
+  ${EndIf}
 SectionEnd
 
 Section "Uninstall"
